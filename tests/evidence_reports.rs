@@ -1446,6 +1446,65 @@ fn finish_stops_at_step_5_with_sd620_until_the_case_passed_n_times() {
     assert!(!r.dir.join(FOLDER).exists());
 }
 
+/// D70 item 3: SD620 reads the class of the acceptance, so a branch that sets
+/// `routine` on an intent that the base has as `higher-risk` does not skip the
+/// level `reliable` (before: the class of the head, and `finish` exited 0).
+#[test]
+fn a_branch_that_lowers_the_class_of_the_base_does_not_skip_sd620_in_finish() {
+    let setup = |class_in_branch: &str| {
+        let r = Repo::with_config(&config("standard", &reliable(3, "higher-risk")));
+        r.write(".gitignore", "reports/\n");
+        r.write("docs/requirements/valves.md", VALVES);
+        r.write("src/valves.py", "x = 1\n");
+        r.write(
+            &format!("{FOLDER}/intent.md"),
+            "---\nstatus: accepted\nclass: higher-risk\n---\n# Dose\n\n## Intent\n\nFlush the line.\n",
+        );
+        r.write(
+            &format!("{FOLDER}/plan.md"),
+            "---\nstatus: approved\n---\n# Plan\n\n## Files\n\n- `src/valves.py`\n- `tests/test_valves.py`\n\n## Order\n\n- Edit the code.\n\n## Risks\n\n- None.\n\n## Proof\n\n- A test.\n",
+        );
+        r.write(
+            &format!("{FOLDER}/spec.md"),
+            &format!("---\nstatus: approved\n---\n# Spec\n\n## Delta\n\n- ADD {TAG}: The controller SHALL flush the line.\n"),
+        );
+        r.commit("base");
+        origin_head(&r.dir, "main");
+        r.git(&["checkout", "-q", "-b", "feature"]);
+        if !class_in_branch.is_empty() {
+            r.write(
+                &format!("{FOLDER}/intent.md"),
+                &format!("---\nstatus: accepted\nclass: {class_in_branch}\n---\n# Dose\n\n## Intent\n\nFlush the line.\n"),
+            );
+            r.commit("set the class");
+        }
+        r.write("tests/test_valves.py", PY_TEST);
+        r.commit("test");
+        for i in 0..2 {
+            r.write(
+                &format!("reports/run{i}.xml"),
+                &junit(
+                    "pytest",
+                    &[("tests.test_valves", "test_closes_on_timeout", "")],
+                ),
+            );
+        }
+        stamp(&r);
+        r
+    };
+    // The base has `higher-risk`, the branch sets `routine`, and the case passed
+    // 2 times: SD620.
+    let r = setup("routine");
+    let (code, out, err) = r.run(&["finish", "dose"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(err.contains("step 5"), "{err}");
+    assert!(
+        out.contains("SD620") && out.contains("passed 2 times"),
+        "{out}"
+    );
+    assert!(r.dir.join(FOLDER).exists());
+}
+
 #[test]
 fn a_requirement_with_no_pass_gives_sd620_when_sd617_is_off() {
     // With SD617 on, the requirement is SD617 and no SD620.

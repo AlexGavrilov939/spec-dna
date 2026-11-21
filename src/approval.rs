@@ -230,6 +230,8 @@ pub struct Branch {
     stop: Option<Fail>,
     /// The number of commits. The index `n` stands for the working tree.
     n: usize,
+    /// The ids of the commits of the walk, the oldest first.
+    commits: Vec<String>,
     entries: HashMap<String, Vec<Entry>>,
     /// For each path, the indexes of the commits that changed it.
     touches: HashMap<String, Vec<usize>>,
@@ -254,6 +256,7 @@ impl Branch {
         let mut b = Branch {
             stop: None,
             n: 0,
+            commits: Vec::new(),
             entries: HashMap::new(),
             touches: HashMap::new(),
             base: statuses(base),
@@ -267,6 +270,7 @@ impl Branch {
             }
         };
         b.n = walk.commits.len();
+        b.commits = walk.commits.iter().map(|c| c.commit.clone()).collect();
         // The first stop of D13: an incomplete history of a shallow clone.
         if walk.shallow
             && (walk.merge_base.is_none() || walk.commits.iter().any(|c| c.parents.is_empty()))
@@ -435,6 +439,28 @@ impl Branch {
             Some(How::Unapproved(f)) if f.reason == Reason::TookBack => How::Unapproved(f.clone()),
             _ => How::Unapproved(Fail::new(Reason::NoCommit)),
         }
+    }
+
+    /// The place of a commit in the walk, from 0, or `None` if the walk does not
+    /// list it.
+    pub fn position(&self, commit: &str) -> Option<usize> {
+        self.commits.iter().position(|c| c == commit)
+    }
+
+    /// The place in the walk of the newest approval commit of the artifact `path`:
+    /// a commit that set the approval status, by an approver, changing the `status`
+    /// line alone (D11). `None` if no such commit exists. The stop rule of the
+    /// acceptance counts the rejected records that come after it (design 0.8.0,
+    /// D74 item 4).
+    pub fn last_approval(&self, path: &str) -> Option<usize> {
+        self.entries
+            .get(path)?
+            .iter()
+            .filter_map(|e| match &e.how {
+                How::Approved(a) => Some(a.order),
+                How::Unapproved(_) => None,
+            })
+            .max()
     }
 
     /// The reason that stops the rule, or `None`.

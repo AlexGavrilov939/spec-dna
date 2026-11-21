@@ -120,6 +120,9 @@ pub struct Config {
     /// higher-risk change needs. An integer from 1 to 3. The default is
     /// `DEFAULT_HIGHER_RISK_ACCEPTORS` (design 0.8.0, D3 item 7).
     pub higher_risk_acceptors: u32,
+    /// `[change] acceptance-for`. `None`: the key is absent, so the profile gives
+    /// the value ([`Config::acceptance_for`]). `init` writes nothing.
+    pub change_acceptance_for: Option<AcceptanceFor>,
     /// `[change] invariants`: the spec declares the rules that the change must
     /// keep true, and SD936 and SD937 read them (design 0.8.0, D6). The default
     /// is false.
@@ -292,6 +295,49 @@ impl Approval {
     }
 }
 
+/// Which changes need an acceptance record (`[change] acceptance-for`, design
+/// 0.8.0, D70). The order is the order of the strictness: the need reads the
+/// stricter of the head and the base configuration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum AcceptanceFor {
+    /// No change needs a record by the key. A matched role of `[owners]` still does.
+    None,
+    /// Only a `higher-risk` change needs a record.
+    HigherRisk,
+    /// Each change that has a plan needs a record.
+    All,
+}
+
+impl AcceptanceFor {
+    pub fn name(self) -> &'static str {
+        match self {
+            AcceptanceFor::None => "none",
+            AcceptanceFor::HigherRisk => "higher-risk",
+            AcceptanceFor::All => "all",
+        }
+    }
+
+    fn from_name(s: &str) -> Option<AcceptanceFor> {
+        [
+            AcceptanceFor::None,
+            AcceptanceFor::HigherRisk,
+            AcceptanceFor::All,
+        ]
+        .into_iter()
+        .find(|a| a.name() == s)
+    }
+
+    /// The value that a profile gives when the file has no key (ADR 0032): `all`
+    /// in `strict`, else `higher-risk`. In `lite` the codes are off, so the value
+    /// has an effect only with a rule that turns on the group `acceptance`.
+    pub fn of_profile(profile: Profile) -> AcceptanceFor {
+        match profile {
+            Profile::Strict => AcceptanceFor::All,
+            Profile::Standard | Profile::Lite => AcceptanceFor::HigherRisk,
+        }
+    }
+}
+
 /// The default of `[change] max-fanout`.
 pub const DEFAULT_MAX_FANOUT: u32 = 8;
 
@@ -315,6 +361,7 @@ struct ChangeTable {
     max_fanout: u32,
     max_task_files: u32,
     higher_risk_acceptors: u32,
+    acceptance_for: Option<AcceptanceFor>,
     invariants: bool,
     base: Option<String>,
     approval: Approval,
@@ -333,6 +380,7 @@ impl ChangeTable {
             max_fanout: DEFAULT_MAX_FANOUT,
             max_task_files: DEFAULT_MAX_TASK_FILES,
             higher_risk_acceptors: DEFAULT_HIGHER_RISK_ACCEPTORS,
+            acceptance_for: None,
             invariants: false,
             base: None,
             approval: Approval::Base,
@@ -405,6 +453,14 @@ impl ChangeTable {
                 return Err("`change.higher-risk-acceptors` must be an integer from 1 to 3".into());
             }
         };
+        let acceptance_for = match f.opt_str("acceptance-for")? {
+            None => None,
+            Some(a) => Some(AcceptanceFor::from_name(&a).ok_or_else(|| {
+                format!(
+                    "`change.acceptance-for` must be \"none\", \"higher-risk\" or \"all\", not `{a}`"
+                )
+            })?),
+        };
         let invariants = match f.take("invariants") {
             None => false,
             Some(Value::Boolean(b)) => *b,
@@ -458,6 +514,7 @@ impl ChangeTable {
             max_fanout,
             max_task_files,
             higher_risk_acceptors,
+            acceptance_for,
             invariants,
             base,
             approval,
@@ -1044,7 +1101,7 @@ impl Profile {
             // The acceptance record (design 0.8.0, D3). Off in `lite`. The codes
             // need no key: `accept` and `finish` use them where a change has a
             // plan that needs a record.
-            "SD927" | "SD928" | "SD929" | "SD930" | "SD931" | "SD933" | "SD935" => {
+            "SD927" | "SD928" | "SD929" | "SD930" | "SD931" | "SD933" | "SD935" | "SD941" => {
                 (None, Some(E), Some(E))
             }
             // The invariants and the deviations (design 0.8.0, D6 and D7). Off
@@ -1078,7 +1135,7 @@ pub const GROUPS: [(&str, &[&str]); 11] = [
         "acceptance",
         &[
             "SD927", "SD928", "SD929", "SD930", "SD931", "SD933", "SD935", "SD936", "SD937",
-            "SD938", "SD939", "SD940",
+            "SD938", "SD939", "SD940", "SD941",
         ],
     ),
     ("lint", &["SD801", "SD802", "SD803", "SD804", "SD805"]),
@@ -1118,7 +1175,7 @@ fn is_change_code(code: Code) -> bool {
 }
 
 /// True for a code of the group `acceptance` (design 0.8.0, D3).
-fn is_acceptance_code(code: Code) -> bool {
+pub(crate) fn is_acceptance_code(code: Code) -> bool {
     GROUPS
         .iter()
         .any(|g| g.0 == "acceptance" && g.1.contains(&code.code()))
@@ -1763,6 +1820,7 @@ impl Config {
             max_fanout: change.max_fanout,
             max_task_files: change.max_task_files,
             higher_risk_acceptors: change.higher_risk_acceptors,
+            change_acceptance_for: change.acceptance_for,
             change_invariants: change.invariants,
             change_base: change.base,
             change_approval: change.approval,
@@ -1776,6 +1834,13 @@ impl Config {
             h.intent_dirs = dirs;
         }
         Ok(cfg)
+    }
+
+    /// `[change] acceptance-for` as the run time reads it: the value of the file,
+    /// or the default of the profile when the key is absent (ADR 0032).
+    pub fn acceptance_for(&self) -> AcceptanceFor {
+        self.change_acceptance_for
+            .unwrap_or_else(|| AcceptanceFor::of_profile(self.profile))
     }
 
     /// True if the primary subtag of `language` is `en`. The word lists of the
@@ -4127,6 +4192,54 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
         assert_eq!(with("", "").unwrap().higher_risk_acceptors, 1);
     }
 
+    /// `[change] acceptance-for` (design 0.8.0, D70 and ADR 0032): 3 values, and
+    /// the default follows the profile at run time. The file keeps `None` for an
+    /// absent key, so `init` writes nothing and a profile change moves the default.
+    #[test]
+    fn the_key_acceptance_for_takes_3_values_and_defaults_by_profile() {
+        use AcceptanceFor::{All, HigherRisk, None as Nothing};
+        let text = |keys: &str| format!("[change]\npolicy = \"three-class\"\n{keys}\n");
+        for (profile, want) in [
+            ("lite", HigherRisk),
+            ("standard", HigherRisk),
+            ("strict", All),
+        ] {
+            let head = format!("profile = \"{profile}\"");
+            let c = with(&head, &text("")).unwrap();
+            assert_eq!(c.change_acceptance_for, None, "{profile}");
+            assert_eq!(c.acceptance_for(), want, "{profile}");
+            // A key in the file replaces the default of the profile.
+            for (v, key) in [("none", Nothing), ("higher-risk", HigherRisk), ("all", All)] {
+                let c = with(&head, &text(&format!("acceptance-for = \"{v}\""))).unwrap();
+                assert_eq!(c.change_acceptance_for, Some(key), "{profile} {v}");
+                assert_eq!(c.acceptance_for(), key, "{profile} {v}");
+            }
+        }
+        assert_eq!(with("", "").unwrap().acceptance_for(), HigherRisk);
+        for bad in ["\"routine\"", "\"\"", "\"All\""] {
+            let e = with("", &text(&format!("acceptance-for = {bad}"))).unwrap_err();
+            assert!(e.contains("`change.acceptance-for` must be"), "{bad}: {e}");
+            assert!(
+                e.contains("\"none\"") && e.contains("\"higher-risk\""),
+                "{e}"
+            );
+        }
+        for bad in ["true", "1"] {
+            let e = with("", &text(&format!("acceptance-for = {bad}"))).unwrap_err();
+            assert!(e.contains("`change.acceptance-for` must be"), "{bad}: {e}");
+        }
+    }
+
+    /// The order of the 3 values is the order of the strictness: the need reads the
+    /// stricter of the head and the base (D70 item 6).
+    #[test]
+    fn acceptance_for_orders_none_below_higher_risk_below_all() {
+        use AcceptanceFor::{All, HigherRisk, None as Nothing};
+        assert!(Nothing < HigherRisk && HigherRisk < All);
+        assert_eq!(HigherRisk.max(All), All);
+        assert_eq!(Nothing.max(HigherRisk), HigherRisk);
+    }
+
     #[test]
     fn the_profile_rows_of_the_change_codes() {
         use Severity::{Error as E, Warning as W};
@@ -4410,6 +4523,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
         assert_eq!(
             ckeys,
             [
+                "acceptance-for",
                 "approval",
                 "approvers",
                 "base",
@@ -4425,6 +4539,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             ]
         );
         for (k, bad) in [
+            ("acceptance-for", "1"),
             ("approval", "1"),
             ("approvers", "1"),
             ("base", "1"),

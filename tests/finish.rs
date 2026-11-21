@@ -1973,8 +1973,15 @@ const S5_DELTA: &str = "- ADD requirements/valves#sensor-timeout: When a sensor 
 const S5_ATTEMPT: &str = "\n[[attempt]]\nacceptor = 1\ntext = \"Sent a NaN value after the timeout.\"\noutcome = \"held\"\n";
 
 fn s5_config(profile: &str, keys: &str, rules: &str) -> String {
+    // The tests of the record need a record for each change, so the fixture sets
+    // `acceptance-for = "all"` unless the test sets the key itself (D70).
+    let all = if keys.contains("acceptance-for") {
+        ""
+    } else {
+        "acceptance-for = \"all\"\n"
+    };
     format!(
-        "profile = \"{profile}\"\n\n[change]\npolicy = \"three-class\"\ngate = \"block\"\n{keys}\n[rules]\nSD608 = \"off\"\n{rules}\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.rules]\ntypes = [\"rule\"]\nmoves-to = [\"requirements\"]\n\n[layers.intent]\ntypes = [\"intent\", \"spec\", \"plan\"]\nmoves-to = [\"requirements\", \"rules\"]\nkeep = \"until-finished\"\n"
+        "profile = \"{profile}\"\n\n[change]\npolicy = \"three-class\"\ngate = \"block\"\n{all}{keys}\n[rules]\nSD608 = \"off\"\n{rules}\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.rules]\ntypes = [\"rule\"]\nmoves-to = [\"requirements\"]\n\n[layers.intent]\ntypes = [\"intent\", \"spec\", \"plan\"]\nmoves-to = [\"requirements\", \"rules\"]\nkeep = \"until-finished\"\n"
     )
 }
 

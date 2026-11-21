@@ -1,8 +1,10 @@
 //! The rules around the acceptance record that `finish` and `check` share
-//! (design 0.8.0, D3 items 1, 3, 7, 8 and 9).
+//! (design 0.8.0, D3 items 1, 3, 7, 8 and 9, and D70).
 //!
-//! - One function, `needs_record`, implements the rule "a change that needs a
-//!   record" (item 1). `finish` (step 5.2), `check` and `next` call it.
+//! - The rule "a change that needs a record" (D70): [`need_config`] reads the
+//!   configuration, [`record_class`] gives the class of the change for the
+//!   acceptance, and [`decide`] joins them with the rule of the plan. `finish`
+//!   (step 5.2), `check` and `next` call these functions.
 //! - The archive file of a finished change: its path and its name rule
 //!   (item 3).
 //! - The checks that read a record: the rules of a valid record with the compare
@@ -13,8 +15,9 @@
 //! severity of the profile (the group `acceptance` of `config.rs`).
 
 use crate::accept::{self, Composed, Texts};
+use crate::approval::Branch;
 use crate::change::{self, Change};
-use crate::config::{self, Config, Version};
+use crate::config::{self, AcceptanceFor, Config, Version};
 use crate::diag::{Code, Diag};
 use crate::git::{Git, Limited, read_limited};
 use crate::lifecycle::Diff;
@@ -28,6 +31,21 @@ use std::sync::Arc;
 
 /// The folder of the archive files (design 0.8.0, D3 item 3).
 pub const ARCHIVE_DIR: &str = ".spec-dna/accepted";
+
+/// The codes of the record that `check` reads in the diff and `finish` reads in
+/// step 5.2. The configuration of the need decides which of them are on
+/// ([`NeedConfig::gate`]).
+pub const CODES: [Code; 9] = [
+    Code::AcceptanceMissing,
+    Code::AcceptanceInvalid,
+    Code::AcceptanceStale,
+    Code::AcceptanceRejected,
+    Code::SelfAccepted,
+    Code::AcceptorMissing,
+    Code::RecordEdited,
+    Code::RecordIncomplete,
+    Code::AcceptanceRerun,
+];
 
 /// The first version whose plans need an acceptance record.
 const FIRST_VERSION: Version = Version(0, 8, 0);
@@ -180,18 +198,20 @@ pub enum Need {
     /// plan is older than 0.8.0.
     No(Option<String>),
     /// A record is needed. `shallow` is true if the clone is shallow and the
-    /// history has no commit that added the plan.
-    Yes { shallow: bool },
+    /// history has no commit that added the plan. `branch_cut` is true if a
+    /// shallow clone cuts the branch, so the class of the change reads as
+    /// `higher-risk` (D70 item 2).
+    Yes { shallow: bool, branch_cut: bool },
 }
 
-/// The rule of D3 item 1, for a change that has a plan and is not closed. The
-/// caller checks both.
+/// The plan part of the rule of D3 item 1 and D70 item 5, for a change that has a
+/// plan and is not closed. The caller checks both. [`decide`] calls it when a
+/// reason for a record exists.
 ///
-/// A record is needed when the acceptance is on (SD927 is not off) and the plan
-/// is new:
-/// - a plan that the base tree does not have (a commit of the branch added it,
-///   or no commit did) is always new (Q43). So a branch cannot set the pin back
-///   for one commit to skip the record;
+/// The plan is new when:
+/// - the plan is not in the tree of the base (a commit of the branch added it, or
+///   no commit did). The plan is then always new (Q43). So a branch cannot set the
+///   pin back for one commit to skip the record;
 /// - a plan that the base tree has is new if the newest commit that added it,
 ///   and that is an ancestor of the lifecycle base, pinned 0.8.0 or later in
 ///   `spec-dna.toml`. A pin before 0.8.0 gives no record, with a note. If no
@@ -199,29 +219,408 @@ pub enum Need {
 ///   result is the stricter one.
 ///
 /// `plan_in_base` tells if the tree of `base_rev` has the plan at `plan_path`.
-pub fn needs_record(
-    cfg: &Config,
+fn plan_is_new(
     git: &Git,
     base_rev: &str,
     plan_path: &str,
     plan_in_base: bool,
 ) -> Result<Need, String> {
-    if cfg.is_off(Code::AcceptanceMissing) {
-        return Ok(Need::No(None));
-    }
     if !plan_in_base {
-        return Ok(Need::Yes { shallow: false });
+        return Ok(Need::Yes {
+            shallow: false,
+            branch_cut: false,
+        });
     }
     match pin_when_added(git, base_rev, plan_path)? {
         None => Ok(Need::Yes {
             shallow: git.is_shallow(),
+            branch_cut: false,
         }),
         Some(pin) if pin.as_deref().is_some_and(is_before_0_8) => Ok(Need::No(Some(format!(
             "`{plan_path}` was added when spec-dna.toml pinned {}, before 0.8.0, so `finish` needs no acceptance record; `finish` does not compare the brief of a record in the folder, and `check` does",
             pin.unwrap_or_default()
         )))),
-        Some(_) => Ok(Need::Yes { shallow: false }),
+        Some(_) => Ok(Need::Yes {
+            shallow: false,
+            branch_cut: false,
+        }),
     }
+}
+
+// The configuration of the need (D70 item 6).
+
+/// The configuration of the lifecycle base tree, as the need reads it.
+#[derive(Clone, Debug)]
+enum BaseConfig {
+    /// The base tree has no `spec-dna.toml` (a pull request that adopts
+    /// spec-dna). It has nothing to lower, so the head decides.
+    Absent,
+    Parsed(Box<Config>),
+    /// The base tree has a `spec-dna.toml` that does not parse. The need then
+    /// reads the strictest values.
+    Unreadable,
+}
+
+/// The values that the need, [`record_class`], SD933, `next` and `finish` read
+/// from the configuration. A branch can edit `spec-dna.toml`, so each value is the
+/// stricter of the head and the configuration in the tree of the lifecycle base
+/// (D70 item 6): the acceptance is on when SD927 is on in one of them,
+/// `acceptance-for` is the stricter value, `high-risk-paths` and
+/// `high-risk-layers` are the union, and `higher-risk-acceptors` is the larger
+/// value. The commits between the base and the head add nothing, because they
+/// cannot lower the base.
+#[derive(Clone, Debug)]
+pub struct NeedConfig {
+    /// True if SD927 is on in the head or in the base.
+    pub on: bool,
+    /// The stricter `[change] acceptance-for`, each with the default of its profile.
+    pub acceptance_for: AcceptanceFor,
+    /// The union of the globs of `[change] high-risk-paths`.
+    pub high_risk_paths: Vec<String>,
+    /// The union of the layers of `[change] high-risk-layers`.
+    pub high_risk_layers: Vec<String>,
+    /// The larger value of `[change] higher-risk-acceptors`.
+    pub higher_risk_acceptors: u32,
+    /// The configuration whose severities decide the codes of the group
+    /// `acceptance`: the head, or the base when the head turns off a code of the
+    /// group that the base has on. So a branch cannot turn the group off with its own `profile`, `[rules]`
+    /// or `[change]`.
+    gate: Config,
+    base: BaseConfig,
+}
+
+impl NeedConfig {
+    /// The configuration that decides the codes of the group `acceptance`.
+    pub fn gate(&self) -> &Config {
+        &self.gate
+    }
+
+    /// True if the head or the base tree has `[change] approval = "branch"`. SD941
+    /// is used only then (D74 item 7), and a branch cannot turn it off with its own
+    /// `spec-dna.toml`.
+    pub fn approval_branch(&self, head: &Config) -> bool {
+        head.change_approval == config::Approval::Branch
+            || matches!(&self.base, BaseConfig::Parsed(b) if b.change_approval == config::Approval::Branch)
+    }
+
+    /// The roles of `[owners]` that match one of `role_paths`, in the union of the
+    /// head and the base table (D77). See [`matched_roles`].
+    pub fn matched_roles(&self, head: &Config, role_paths: &[String]) -> Vec<String> {
+        let mut roles = matched_roles(head, role_paths);
+        if let BaseConfig::Parsed(b) = &self.base {
+            roles.extend(matched_roles(b, role_paths));
+        }
+        roles.sort();
+        roles.dedup();
+        roles
+    }
+}
+
+/// The union of 2 lists, in the order of the first list and then the new items.
+fn union(a: &[String], b: &[String]) -> Vec<String> {
+    let mut out = a.to_vec();
+    out.extend(b.iter().filter(|x| !a.contains(x)).cloned());
+    out
+}
+
+/// The configuration that gives the strictest values, for a base configuration
+/// that does not parse: the profile `strict`, no rule and the policy
+/// `three-class`.
+fn strictest(head: &Config) -> Config {
+    let mut c = head.clone();
+    c.profile = config::Profile::Strict;
+    c.rules.clear();
+    for r in &mut c.roots {
+        r.rules.clear();
+        r.profile = None;
+    }
+    c.change_policy = config::ChangePolicy::ThreeClass;
+    c.change_acceptance_for = Some(AcceptanceFor::All);
+    c
+}
+
+/// Reads the configuration of the need ([`NeedConfig`]): the head and the tree
+/// of `base_rev`. A base with no `spec-dna.toml` leaves the head alone. A base
+/// whose file does not parse gives the strictest values.
+pub fn need_config(head: &Config, git: &Git, base_rev: &str) -> Result<NeedConfig, String> {
+    let text = git
+        .read_at(&[(base_rev.to_string(), config::FILE_NAME.to_string())])?
+        .into_iter()
+        .next()
+        .flatten();
+    let base = match text {
+        None => BaseConfig::Absent,
+        Some(b) => match Config::parse(&String::from_utf8_lossy(&b)) {
+            Ok(c) => BaseConfig::Parsed(Box::new(c)),
+            Err(_) => BaseConfig::Unreadable,
+        },
+    };
+    let mut nc = need_config_of_head(head);
+    // True if the head turns off a code of the group `acceptance` that `other` has
+    // on. The head is then the weaker configuration for that code.
+    let weaker = |other: &Config| {
+        crate::diag::Code::ALL
+            .iter()
+            .any(|&c| config::is_acceptance_code(c) && head.is_off(c) && !other.is_off(c))
+    };
+    match &base {
+        BaseConfig::Absent => {}
+        BaseConfig::Parsed(b) => {
+            if !nc.on && !b.is_off(Code::AcceptanceMissing) {
+                nc.on = true;
+            }
+            if weaker(b) {
+                nc.gate = (**b).clone();
+            }
+            nc.acceptance_for = nc.acceptance_for.max(b.acceptance_for());
+            nc.high_risk_paths = union(&head.high_risk_paths, &b.high_risk_paths);
+            nc.high_risk_layers = union(&head.high_risk_layers, &b.high_risk_layers);
+            nc.higher_risk_acceptors = nc.higher_risk_acceptors.max(b.higher_risk_acceptors);
+        }
+        BaseConfig::Unreadable => {
+            nc.on = true;
+            let strict = strictest(head);
+            if weaker(&strict) {
+                nc.gate = strict;
+            }
+            nc.acceptance_for = AcceptanceFor::All;
+        }
+    }
+    nc.base = base;
+    Ok(nc)
+}
+
+/// The configuration of the need when git names no base: the head alone.
+pub fn need_config_of_head(head: &Config) -> NeedConfig {
+    NeedConfig {
+        on: !head.is_off(Code::AcceptanceMissing),
+        acceptance_for: head.acceptance_for(),
+        high_risk_paths: head.high_risk_paths.clone(),
+        high_risk_layers: head.high_risk_layers.clone(),
+        higher_risk_acceptors: head.higher_risk_acceptors,
+        gate: head.clone(),
+        base: BaseConfig::Absent,
+    }
+}
+
+// The roles of `[owners]` (D70 item 7 and D77).
+
+/// The roles of `[owners]` that match one of `role_paths`, sorted. The table
+/// `[owners]` is built in slice S6, so no configuration has one now, and the
+/// result is empty. The need, SD933 and the brief all read the roles through this
+/// one function, so S6 changes this body only.
+pub fn matched_roles(_cfg: &Config, _role_paths: &[String]) -> Vec<String> {
+    Vec::new()
+}
+
+/// The code paths that a role of `[owners]` reads for one change (D70 item 7):
+///
+/// - each code path of the diff that `scope` of the change matches;
+/// - each code path of the diff that no scope of a change of the diff matches
+///   (`other_scopes` are the scopes of the other changes of the diff). A path that
+///   `Files` leaves out thus still needs its role;
+/// - when the diff has no code path in `scope`, the code paths in `scope` that
+///   changed since the commit that added the plan (`since_plan`).
+///
+/// The result is sorted, with no duplicate. Slice S6 passes it to
+/// [`NeedConfig::matched_roles`] and to the brief.
+#[allow(dead_code)] // The reader is the table `[owners]` of slice S6.
+pub fn role_paths(
+    diff_code: &[String],
+    scope: &[String],
+    other_scopes: &[&[String]],
+    since_plan: &[String],
+) -> Vec<String> {
+    let mut out: Vec<String> = diff_code
+        .iter()
+        .filter(|p| {
+            change::in_scope(scope, p) || !other_scopes.iter().any(|s| change::in_scope(s, p))
+        })
+        .cloned()
+        .collect();
+    if !diff_code.iter().any(|p| change::in_scope(scope, p)) {
+        out.extend(
+            since_plan
+                .iter()
+                .filter(|p| change::in_scope(scope, p))
+                .cloned(),
+        );
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+// The class of the change for the acceptance (D70 items 2 to 4).
+
+/// What [`record_class`] reads.
+pub struct ClassInput<'a> {
+    pub nc: &'a NeedConfig,
+    pub git: &'a Git,
+    pub base_rev: &'a str,
+    /// The folder of the change, from the repository root.
+    pub folder: &'a str,
+    /// The change in the head tree. `None` when the diff deletes the folder
+    /// (D70 item 4).
+    pub head: Option<&'a Change>,
+    /// True if the minimum class of SD917 is `higher-risk`
+    /// ([`crate::lifecycle::minimum_is_higher_risk`]). It runs last, because it is
+    /// the most costly part.
+    pub minimum: &'a dyn Fn() -> bool,
+}
+
+/// The class of a change for the acceptance, and a flag for a cut history.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RecordClass {
+    pub class: Class,
+    /// True if a shallow clone cuts the branch, so the class is `higher-risk` as
+    /// the stricter result, and SD927 names `fetch-depth: 0`.
+    pub shallow: bool,
+}
+
+/// True if the text of an `intent.md` has `class: higher-risk`.
+fn text_is_higher_risk(bytes: &[u8]) -> bool {
+    parse(&String::from_utf8_lossy(bytes))
+        .front_matter
+        .and_then(|f| match f.get("class") {
+            Some((crate::frontmatter::Value::Str(v), _)) => Some(v.trim() == "higher-risk"),
+            _ => None,
+        })
+        .unwrap_or(false)
+}
+
+/// True if the text of an `intent.md` has no valid `class`: it is absent, empty
+/// or not `routine` or `higher-risk` (`class_unset` of the head intent).
+fn text_class_is_unset(bytes: &[u8]) -> bool {
+    parse(&String::from_utf8_lossy(bytes))
+        .front_matter
+        .and_then(|f| match f.get("class") {
+            Some((crate::frontmatter::Value::Str(v), _)) => {
+                Some(crate::model::Class::from_name(v.trim()).is_none())
+            }
+            _ => None,
+        })
+        .unwrap_or(true)
+}
+
+/// The class of the change for the acceptance (D70 items 2 to 4). It is
+/// `higher-risk` when one of these is true. Else it is `routine`.
+///
+/// - The intent of the head has `class: higher-risk`, or its `class` is absent,
+///   empty or not valid.
+/// - The intent in the tree of the lifecycle base has `class: higher-risk`.
+/// - A commit of the branch has an intent with `class: higher-risk`
+///   ([`Git::first_parent_commits`]).
+/// - A shallow clone cuts the branch.
+/// - The minimum class of SD917 is `higher-risk`.
+///
+/// Thus a branch cannot lower or remove the class to skip the record. Where the
+/// diff deletes the folder, the head has no intent, and the function reads the
+/// other points. The head is read first and the walk of the commits second, so a
+/// change that the head already marks costs no git read. The `high-risk-paths` and
+/// `high-risk-layers` are those of the need ([`NeedConfig`]).
+pub fn record_class(i: &ClassInput) -> Result<RecordClass, String> {
+    let higher = |shallow| {
+        Ok(RecordClass {
+            class: Class::HigherRisk,
+            shallow,
+        })
+    };
+    if i.head
+        .is_some_and(|c| c.intent.is_some() && (c.class == Class::HigherRisk || c.class_unset))
+    {
+        return higher(false);
+    }
+    let path = format!("{}/intent.md", i.folder);
+    // The base tree and each commit of the branch, in one batch.
+    let commits = if i.git.range_is_cut(i.base_rev) {
+        return higher(true);
+    } else {
+        i.git.first_parent_commits(i.base_rev)?
+    };
+    let mut specs: Vec<(String, String)> = vec![(i.base_rev.to_string(), path.clone())];
+    specs.extend(commits.iter().map(|c| (c.clone(), path.clone())));
+    let texts = i.git.read_at(&specs)?;
+    if texts.iter().flatten().any(|b| text_is_higher_risk(b)) {
+        return higher(false);
+    }
+    // The diff deletes the folder (D70 item 4): the newest intent of the change
+    // takes the place of the intent of the head. It is the intent at the last
+    // commit of the branch that has the folder, else in the base tree. An absent,
+    // empty or invalid class there is `higher-risk`, as for the head. The ratchet
+    // above counts only an explicit `higher-risk`.
+    if i.head.is_none()
+        && texts
+            .iter()
+            .rev()
+            .flatten()
+            .next()
+            .is_some_and(|b| text_class_is_unset(b))
+    {
+        return higher(false);
+    }
+    if (i.minimum)() {
+        return higher(false);
+    }
+    Ok(RecordClass {
+        class: Class::Routine,
+        shallow: false,
+    })
+}
+
+// The need (D70 item 1).
+
+/// What the rule decides for one change: the need, and the class of the change
+/// for the acceptance. `finish`, `next` and `check` read the class for SD933 and
+/// for SD620 (`reliable-for`), also where no record is needed.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Decision {
+    pub need: Need,
+    pub class: Class,
+}
+
+/// The rule "a change that needs a record" (D70 item 1), for a change that has a
+/// plan and is not closed. The caller checks both. A record is needed when the
+/// acceptance is on, the plan is new ([`plan_is_new`]) and one reason holds:
+/// `acceptance-for` is `all`; it is `higher-risk` and the class is `higher-risk`;
+/// or a role of `[owners]` matches (`roles` is the result of
+/// [`NeedConfig::matched_roles`]). A matched role needs a record also with
+/// `acceptance-for = "none"`.
+pub fn decide(
+    i: &ClassInput,
+    plan_path: &str,
+    plan_in_base: bool,
+    roles: &[String],
+) -> Result<Decision, String> {
+    let rc = record_class(i)?;
+    let class = rc.class;
+    let nc = i.nc;
+    if !nc.on {
+        return Ok(Decision {
+            need: Need::No(None),
+            class,
+        });
+    }
+    let reason = !roles.is_empty()
+        || match nc.acceptance_for {
+            AcceptanceFor::All => true,
+            AcceptanceFor::HigherRisk => class == Class::HigherRisk,
+            AcceptanceFor::None => false,
+        };
+    if !reason {
+        return Ok(Decision {
+            need: Need::No(None),
+            class,
+        });
+    }
+    let need = match plan_is_new(i.git, i.base_rev, plan_path, plan_in_base)? {
+        Need::Yes { shallow, .. } => Need::Yes {
+            shallow,
+            branch_cut: rc.shallow,
+        },
+        other => other,
+    };
+    Ok(Decision { need, class })
 }
 
 /// True if a pin is a version before 0.8.0.
@@ -310,13 +709,18 @@ pub fn added_before(
 
 /// The message of SD927 for a missing record. `where_` names the place that
 /// should have it.
-pub fn missing_message(slug: &str, where_: &str, shallow: bool) -> String {
+pub fn missing_message(slug: &str, where_: &str, shallow: bool, branch_cut: bool) -> String {
     let mut m = format!(
         "the change `{slug}` needs an acceptance record, and {where_}; give the output of `spec-dna accept {slug} --brief`, unchanged, to an agent `acceptor`, and commit the record that it writes"
     );
     if shallow {
         m.push_str(
             "; the clone is shallow, so the commit that added the plan is not in the history: fetch the full history (`fetch-depth: 0`)",
+        );
+    }
+    if branch_cut {
+        m.push_str(
+            "; the clone is shallow and cuts the branch, so the class of the change cannot be read and counts as `higher-risk`: fetch the full history (`fetch-depth: 0`)",
         );
     }
     m
@@ -340,6 +744,15 @@ pub fn plan_facts(ch: &Change, corpus: &Corpus) -> PlanFacts {
     }
 }
 
+/// Where a record is: the folder of a change, or an archive file. A record of
+/// format 1 in a folder is not valid, and in an archive file no rule of format 2
+/// applies to it (D72 item 3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Place {
+    Folder,
+    Archive,
+}
+
 /// Reads a record and checks the rules of a valid record (SD928, without the
 /// compare of the brief). It returns the record, if the text reads, and one text
 /// for each broken rule.
@@ -348,10 +761,12 @@ pub fn read_record(
     text: &str,
     slug: &str,
     facts: PlanFacts,
+    place: Place,
 ) -> (Option<Record>, Vec<String>) {
     let intent_dirs = crate::lifecycle::intent_dirs(cfg);
     let is_code = |p: &str| tree::is_code_path(cfg, p, &intent_dirs);
     let expect = Expect {
+        archive: place == Place::Archive,
         slug,
         plan_has_files: facts.has_files,
         tasks_have_files: facts.tasks_have_files,
@@ -392,11 +807,13 @@ pub fn self_accepted(rec: &Record) -> Vec<String> {
 }
 
 /// SD933: the record has fewer acceptor entries than the class of the change
-/// needs. The roles of `[owners]` are a later slice, so none adds to the count.
-pub fn acceptors_missing(cfg: &Config, class: Class, rec: &Record) -> Option<String> {
+/// needs (D70 item 3): 1 for a `routine` change, and `higher_risk` (the value of
+/// `[change] higher-risk-acceptors` of [`NeedConfig`]) for a `higher-risk` change.
+/// The roles of `[owners]` are a later slice, so none adds to the count.
+pub fn acceptors_missing(class: Class, higher_risk: u32, rec: &Record) -> Option<String> {
     let needed = match class {
         Class::Routine => 1,
-        Class::HigherRisk => cfg.higher_risk_acceptors as usize,
+        Class::HigherRisk => higher_risk as usize,
     };
     (rec.acceptors.len() < needed).then(|| {
         format!(
@@ -555,11 +972,12 @@ pub fn sections_of(
 /// with SD928 off it passes, as no other check can read it.
 pub fn first_stop(
     cfg: &Config,
-    class: Class,
+    (class, higher_risk): (Class, u32),
     rec: Option<&Record>,
     problems: Vec<String>,
     stale: Option<String>,
     sec: &Sections,
+    rerun: Option<&str>,
 ) -> Option<(Code, Vec<String>)> {
     let on = |c: Code| !cfg.is_off(c);
     if on(Code::AcceptanceInvalid) && !problems.is_empty() {
@@ -583,9 +1001,15 @@ pub fn first_stop(
         }
     }
     if on(Code::AcceptorMissing)
-        && let Some(why) = acceptors_missing(cfg, class, rec)
+        && let Some(why) = acceptors_missing(class, higher_risk, rec)
     {
         return Some((Code::AcceptorMissing, vec![why]));
+    }
+    // The stop rule (D74): the record comes after 2 rejected records.
+    if on(Code::AcceptanceRerun)
+        && let Some(why) = rerun
+    {
+        return Some((Code::AcceptanceRerun, vec![why.to_string()]));
     }
     for code in [Code::InvariantInvalid, Code::InvariantStale] {
         let found = section_messages(sec, code);
@@ -777,10 +1201,12 @@ pub fn stale_reasons(
     }
     let entries = tree::entries_of(git, cfg)?;
     let now = record::tree_hash(&entries, &rec.paths);
-    if !tree::matches(&rec.tree, &now) {
+    // The record is fresh against the tree of the last link of its chain (D73 item 6).
+    if !tree::matches(rec.last_tree(), &now) {
         why.push(format!(
             "{} that `paths` lists is {now}, and the record has {}",
-            CODE_MARKS[0], rec.tree
+            CODE_MARKS[0],
+            rec.last_tree()
         ));
     }
     if let Some(diff) = diff {
@@ -873,19 +1299,13 @@ pub fn stale(
 
 // The compare of the brief (SD928, item 8).
 
-/// The identity of an entry: its role, session and brief.
+/// The identity of an entry: its roles (joined with `,`), session and brief.
 fn triple(a: &Acceptor) -> (String, String, String) {
     (
-        a.role.clone(),
+        a.roles.join(","),
         a.session.clone(),
         a.brief.to_ascii_lowercase(),
     )
-}
-
-fn triples(text: Option<&[u8]>) -> HashSet<(String, String, String)> {
-    text.and_then(|b| Record::parse(&String::from_utf8_lossy(b)).ok())
-        .map(|r| r.acceptors.iter().map(triple).collect())
-        .unwrap_or_default()
 }
 
 /// True if `s` is 16 hexadecimal digits.
@@ -940,11 +1360,53 @@ fn declared_of(
 }
 
 /// Where the tree of an entry comes from.
-enum Source {
+#[derive(Clone, Debug, PartialEq)]
+pub enum Source {
     Commit(String),
     /// No commit has the entry: the index with `--staged`, else the working
     /// tree.
     Head,
+}
+
+/// The 3 files of a change and the configuration of one source (a commit, or the
+/// head tree).
+fn read_files(git: &Git, folder: &str, source: &Source) -> Result<Files, String> {
+    let names = ["intent.md", "spec.md", "plan.md"];
+    let mut texts: Vec<Option<String>> = Vec::new();
+    match source {
+        Source::Commit(c) => {
+            let mut specs: Vec<(String, String)> = names
+                .iter()
+                .map(|n| (c.clone(), format!("{folder}/{n}")))
+                .collect();
+            specs.push((c.clone(), config::FILE_NAME.to_string()));
+            texts.extend(git.read_at(&specs)?.into_iter().map(text_of));
+        }
+        Source::Head => {
+            for n in names {
+                // A working tree with `core.autocrlf` has CRLF, and `accept --brief`
+                // reads the files of `HEAD` with LF (ADR 0019).
+                let read = git.head_file_limited(&format!("{folder}/{n}"), DOC_READ_LIMIT)?;
+                texts.push(
+                    text_of(read).map(|t| {
+                        String::from_utf8_lossy(&record::to_lf(t.as_bytes())).into_owned()
+                    }),
+                );
+            }
+        }
+    }
+    let mut it = texts.into_iter();
+    Ok(Files {
+        intent: it.next().flatten(),
+        spec: it.next().flatten(),
+        plan: it.next().flatten(),
+        cfg: it.next().flatten().and_then(|t| Config::parse(&t).ok()),
+    })
+}
+
+/// The identity of a follow-up: its session and brief.
+fn follow_identity(u: &record::FollowUp) -> (String, String) {
+    (u.session.clone(), u.brief.to_ascii_lowercase())
 }
 
 /// The problems of the compare: for each entry that the branch adds to the
@@ -970,13 +1432,18 @@ pub fn brief_problems(
 ) -> Result<Vec<String>, String> {
     let rec_path = format!("{folder}/{}", record::FILE_NAME);
     let slug = folder.rsplit('/').next().unwrap_or(folder);
-    let base_triples = triples(
-        git.read_at(&[(base_rev.to_string(), rec_path.clone())])?
-            .into_iter()
-            .next()
-            .flatten()
-            .as_deref(),
-    );
+    let base_raw = git
+        .read_at(&[(base_rev.to_string(), rec_path.clone())])?
+        .into_iter()
+        .next()
+        .flatten();
+    let base_rec = base_raw
+        .as_ref()
+        .and_then(|b| Record::parse(&String::from_utf8_lossy(b)).ok());
+    let base_triples: HashSet<(String, String, String)> = base_rec
+        .as_ref()
+        .map(|r| r.acceptors.iter().map(triple).collect())
+        .unwrap_or_default();
     // The entries to compare: those that the base does not have, and whose
     // `brief` is a hash (the rules of a valid record report any other value).
     let entries: Vec<(usize, &Acceptor)> = rec
@@ -985,13 +1452,34 @@ pub fn brief_problems(
         .enumerate()
         .filter(|(_, a)| is_hash(&a.brief) && !base_triples.contains(&triple(a)))
         .collect();
-    if entries.is_empty() {
+    // The follow-ups that the base does not have (D73 item 5).
+    let base_follow: HashSet<(String, String)> = base_rec
+        .as_ref()
+        .map(|r| r.follow_ups.iter().map(follow_identity).collect())
+        .unwrap_or_default();
+    let follow: Vec<usize> = rec
+        .follow_ups
+        .iter()
+        .enumerate()
+        .filter(|(_, u)| is_hash(&u.brief) && !base_follow.contains(&follow_identity(u)))
+        .map(|(j, _)| j)
+        .collect();
+    // The rule of D74 item 2 reads the history for a record that says `accepted`.
+    let rule2 = rec.result == "accepted";
+    if entries.is_empty() && follow.is_empty() && !rule2 {
         return Ok(Vec::new());
     }
     if git.range_is_cut(base_rev) {
-        let list: Vec<String> = entries.iter().map(|(i, _)| (i + 1).to_string()).collect();
+        if entries.is_empty() && follow.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut list: Vec<String> = entries
+            .iter()
+            .map(|(i, _)| format!("acceptor {}", i + 1))
+            .collect();
+        list.extend(follow.iter().map(|j| format!("follow-up {}", j + 1)));
         return Ok(vec![format!(
-            "the history of the branch (`{base_rev}` to its tip) is cut (a shallow clone), so the brief of acceptor {} cannot be compared with its adding commit; fetch the full history (`fetch-depth: 0`)",
+            "the history of the branch (`{base_rev}` to its tip) is cut (a shallow clone), so the brief of {} cannot be compared with its adding commit; fetch the full history (`fetch-depth: 0`)",
             list.join(", ")
         )]);
     }
@@ -1000,10 +1488,20 @@ pub fn brief_problems(
         .iter()
         .map(|c| (c.clone(), rec_path.clone()))
         .collect();
-    let per_commit: Vec<HashSet<(String, String, String)>> = git
-        .read_at(&specs)?
+    let raw = git.read_at(&specs)?;
+    let mut states: Vec<State> = vec![state_of(base_raw.as_deref())];
+    states.extend(raw.iter().map(|b| state_of(b.as_deref())));
+    let per_rec: Vec<Option<Record>> = raw
         .into_iter()
-        .map(|t| triples(t.as_deref()))
+        .map(|t| t.and_then(|b| Record::parse(&String::from_utf8_lossy(&b)).ok()))
+        .collect();
+    let per_commit: Vec<HashSet<(String, String, String)>> = per_rec
+        .iter()
+        .map(|r| {
+            r.as_ref()
+                .map(|r| r.acceptors.iter().map(triple).collect())
+                .unwrap_or_default()
+        })
         .collect();
     // The files of each source, read once.
     let mut cache: Vec<(String, Files)> = Vec::new();
@@ -1040,39 +1538,7 @@ pub fn brief_problems(
             ),
         };
         if !cache.iter().any(|(k, _)| *k == key) {
-            let names = ["intent.md", "spec.md", "plan.md"];
-            let mut texts: Vec<Option<String>> = Vec::new();
-            match &source {
-                Source::Commit(c) => {
-                    let mut specs: Vec<(String, String)> = names
-                        .iter()
-                        .map(|n| (c.clone(), format!("{folder}/{n}")))
-                        .collect();
-                    specs.push((c.clone(), config::FILE_NAME.to_string()));
-                    texts.extend(git.read_at(&specs)?.into_iter().map(text_of));
-                }
-                Source::Head => {
-                    for n in names {
-                        // A working tree with `core.autocrlf` has CRLF, and `accept
-                        // --brief` reads the files of `HEAD` with LF (ADR 0019).
-                        let read =
-                            git.head_file_limited(&format!("{folder}/{n}"), DOC_READ_LIMIT)?;
-                        texts.push(text_of(read).map(|t| {
-                            String::from_utf8_lossy(&record::to_lf(t.as_bytes())).into_owned()
-                        }));
-                    }
-                }
-            }
-            let mut it = texts.into_iter();
-            cache.push((
-                key.clone(),
-                Files {
-                    intent: it.next().flatten(),
-                    spec: it.next().flatten(),
-                    plan: it.next().flatten(),
-                    cfg: it.next().flatten().and_then(|t| Config::parse(&t).ok()),
-                },
-            ));
+            cache.push((key.clone(), read_files(git, folder, &source)?));
         }
         let files = &cache.iter().find(|(k, _)| *k == key).expect("cached").1;
         let (Some(intent), Some(plan)) = (&files.intent, &files.plan) else {
@@ -1084,10 +1550,17 @@ pub fn brief_problems(
         };
         let at = files.cfg.as_ref().unwrap_or(cfg);
         let decl = declared_of(at, git, base_rev, folder, files)?;
+        // An entry of a record of format 1 has the brief of format 1.
+        let format = if rec.format == record::FORMAT_1 {
+            record::BRIEF_FORMAT_1
+        } else {
+            record::BRIEF_FORMAT
+        };
         let text = accept::brief_text(
             at,
             slug,
-            &a.role,
+            format,
+            &a.roles,
             &Texts {
                 intent,
                 spec: files.spec.as_deref(),
@@ -1108,7 +1581,764 @@ pub fn brief_problems(
             ));
         }
     }
+    // No edit clears a rejection (D74 item 2).
+    if rule2 {
+        let runs = Runs {
+            base_rev: base_rev.to_string(),
+            commits: commits.clone(),
+            lives: lives(&states, head_state(Some(rec))),
+        };
+        if let Some(at) = runs.head_life_rejected_at() {
+            out.push(rejection_not_cleared(&at));
+        }
+    }
+    if !rec.follow_ups.is_empty() {
+        let chain = Chain {
+            cfg,
+            git,
+            base_rev,
+            folder,
+            rec,
+            commits,
+            per_rec,
+            base_rec,
+        };
+        out.extend(chain.problems(&follow)?);
+    }
     Ok(out)
+}
+
+// The count of the rejected records (design 0.8.0, D74).
+
+/// What one commit (or the head tree) has of the record: the file, and its top
+/// result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct State {
+    pub exists: bool,
+    /// True if the file reads and its top `result` is `rejected`.
+    pub rejected: bool,
+}
+
+/// The state of a file that git gave, or `None` for an absent file.
+pub fn state_of(bytes: Option<&[u8]>) -> State {
+    match bytes {
+        None => State {
+            exists: false,
+            rejected: false,
+        },
+        Some(b) => State {
+            exists: true,
+            rejected: says_rejected(&String::from_utf8_lossy(b)),
+        },
+    }
+}
+
+/// True if the top-level `result` of a record text is `rejected`. The count of the
+/// stop rule reads it leniently: a record that the strict reader refuses (an unknown
+/// key, a syntax error) still counts, or an agent could keep it from the count. The
+/// text is read as generic TOML first. If even that fails, a scan of the lines before
+/// the first table reads `result = "rejected"`, which is the strictest honest reading.
+/// SD928 keeps the strict reader for the rules of a valid record.
+fn says_rejected(text: &str) -> bool {
+    if let Ok(t) = text.parse::<toml::Table>() {
+        return t.get("result").and_then(toml::Value::as_str) == Some("rejected");
+    }
+    for line in text.lines() {
+        let l = line.trim();
+        if l.starts_with('[') {
+            break;
+        }
+        if let Some(v) = l.strip_prefix("result").map(str::trim_start)
+            && let Some(v) = v.strip_prefix('=')
+        {
+            let v = v.split('#').next().unwrap_or("").trim();
+            if v == "\"rejected\"" || v == "'rejected'" {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// The state of the record of the head, if the head has one.
+pub fn head_state(rec: Option<&Record>) -> Option<State> {
+    rec.map(|r| State {
+        exists: true,
+        rejected: r.result == "rejected",
+    })
+}
+
+/// One life of a record: an unbroken run of commits of the branch that hold the
+/// file `<folder>/acceptance.toml` (D74 item 1). A commit with no such file ends
+/// the life, and the next record starts a new one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Life {
+    pub first: Pos,
+    /// The first commit where the record says `rejected`. A life with `Some` counts
+    /// as one rejected record, whatever number of commits or entries it has.
+    pub rejected_at: Option<Pos>,
+}
+
+/// The lives of a record. `states` are the state in the base tree, then the state
+/// at each commit of the branch, the oldest first. `head` is the record of the head
+/// tree: it continues the life of the last commit if that commit has the file, else
+/// it starts a life. A record that the base holds starts a life that counts once,
+/// also when the branch keeps it.
+pub fn lives(states: &[State], head: Option<State>) -> Vec<Life> {
+    let mut out: Vec<Life> = Vec::new();
+    let mut open = false;
+    let all = states
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            (
+                if i == 0 {
+                    Pos::Base
+                } else {
+                    Pos::Commit(i - 1)
+                },
+                *s,
+            )
+        })
+        .chain(head.map(|h| (Pos::Head, h)));
+    for (pos, s) in all {
+        if !s.exists {
+            open = false;
+            continue;
+        }
+        if !open {
+            out.push(Life {
+                first: pos,
+                rejected_at: None,
+            });
+            open = true;
+        }
+        let life = out.last_mut().expect("a life is open");
+        if s.rejected && life.rejected_at.is_none() {
+            life.rejected_at = Some(pos);
+        }
+    }
+    out
+}
+
+/// The lives of the record of a change, with the commits that name them.
+pub struct Runs {
+    base_rev: String,
+    commits: Vec<String>,
+    lives: Vec<Life>,
+}
+
+impl Runs {
+    /// Reads the record at the base and at each commit of the branch, in one batch.
+    /// `head` is the record of the head. `None` if a shallow clone cuts the branch:
+    /// the count is not known then.
+    pub fn load(
+        git: &Git,
+        base_rev: &str,
+        folder: &str,
+        head: Option<State>,
+    ) -> Result<Option<Runs>, String> {
+        if git.range_is_cut(base_rev) {
+            return Ok(None);
+        }
+        let rec_path = format!("{folder}/{}", record::FILE_NAME);
+        let commits = git.first_parent_commits(base_rev)?;
+        let mut specs: Vec<(String, String)> = vec![(base_rev.to_string(), rec_path.clone())];
+        specs.extend(commits.iter().map(|c| (c.clone(), rec_path.clone())));
+        let states: Vec<State> = git
+            .read_at(&specs)?
+            .iter()
+            .map(|b| state_of(b.as_deref()))
+            .collect();
+        Ok(Some(Runs {
+            base_rev: base_rev.to_string(),
+            lives: lives(&states, head),
+            commits,
+        }))
+    }
+
+    /// The number of records (lives).
+    pub fn total(&self) -> usize {
+        self.lives.len()
+    }
+
+    /// The number of rejected records.
+    pub fn rejected_total(&self) -> usize {
+        self.lives
+            .iter()
+            .filter(|l| l.rejected_at.is_some())
+            .count()
+    }
+
+    /// The first 7 characters of the commit of a place.
+    fn id(&self, p: Pos) -> String {
+        let full = match p {
+            Pos::Base => self.base_rev.as_str(),
+            Pos::Commit(i) => self.commits[i].as_str(),
+            Pos::Head => return "HEAD".to_string(),
+        };
+        full[..full.len().min(7)].to_string()
+    }
+
+    /// The rejected records that count for the stop: the lives that say `rejected`
+    /// after the newest approval commit of `plan.md` (D74 item 4). With no
+    /// approval in the branch, or with `base`, each rejected life counts. Each item
+    /// is the number of the life and the commit where it said `rejected`.
+    pub fn rejected_since(&self, approval: Option<(&Branch, &str)>) -> Vec<(usize, String)> {
+        let last = approval.and_then(|(b, path)| b.last_approval(path).map(|a| (b, a)));
+        self.lives
+            .iter()
+            .enumerate()
+            .filter_map(|(i, l)| l.rejected_at.map(|p| (i, p)))
+            .filter(|(_, p)| match (last, p) {
+                (None, _) => true,
+                (Some(_), Pos::Base) => false,
+                (Some(_), Pos::Head) => true,
+                (Some((b, a)), Pos::Commit(i)) => {
+                    b.position(&self.commits[*i]).is_none_or(|x| x > a)
+                }
+            })
+            .map(|(i, p)| (i, self.id(p)))
+            .collect()
+    }
+
+    /// The index of the last life, which holds the record of the head, or the last
+    /// record of the branch.
+    pub fn last_life(&self) -> Option<usize> {
+        self.lives.len().checked_sub(1)
+    }
+
+    /// The commit where the life that holds the head said `rejected`, if it said so
+    /// in a commit before the head tree.
+    pub fn head_life_rejected_at(&self) -> Option<String> {
+        match self.lives.last()?.rejected_at? {
+            Pos::Head => None,
+            p => Some(self.id(p)),
+        }
+    }
+}
+
+/// The text of SD941 (D74 item 6): the record comes after 2 rejected records, and
+/// no approval commit of `plan.md` comes after the second. `since` is
+/// [`Runs::rejected_since`]; the record of the head is the last life, which the 2
+/// do not include. `None` when the rule does not hold.
+pub fn rerun_message(slug: &str, runs: &Runs, since: &[(usize, String)]) -> Option<String> {
+    let last = runs.last_life()?;
+    let earlier: Vec<&str> = since
+        .iter()
+        .filter(|(i, _)| *i != last)
+        .map(|(_, id)| id.as_str())
+        .collect();
+    (earlier.len() >= 2).then(|| {
+        format!(
+            "the record of the change `{slug}` comes after {} rejected records ({}), and no approval commit of `plan.md` comes after the second; a third run needs the word of the owner: set `status: draft` in plan.md, then the approver runs `spec-dna approve {slug} plan`",
+            earlier.len(),
+            earlier.join(", ")
+        )
+    })
+}
+
+/// The text of SD941 for a shallow clone that cuts the branch: the count is not
+/// known, which is the stricter result (D74 item 3).
+pub fn rerun_cut_message(slug: &str, base_rev: &str) -> String {
+    format!(
+        "the history of the branch (`{base_rev}` to its tip) is cut (a shallow clone), so the rejected records of the change `{slug}` cannot be counted; fetch the full history (`fetch-depth: 0`)"
+    )
+}
+
+/// The text of the item of `next` that waits for the owner (D74 item 5). `since`
+/// is [`Runs::rejected_since`]. With `branch`, it adds the way to the word of the
+/// owner.
+pub fn wait_text(slug: &str, since: &[(usize, String)], branch: bool) -> String {
+    let ids: Vec<&str> = since.iter().map(|(_, id)| id.as_str()).collect();
+    let mut t = format!(
+        "wait for the owner: {} acceptance records of {slug} say `rejected` ({}); a third run needs the word of the owner",
+        ids.len(),
+        ids.join(", ")
+    );
+    if branch {
+        t.push_str(&format!(
+            ": set `status: draft` in plan.md, then the approver runs `spec-dna approve {slug} plan`"
+        ));
+    }
+    t
+}
+
+/// The problem of D74 item 2: no edit clears a rejection. The record of the head
+/// says `accepted`, and an earlier commit of its life said `rejected`.
+pub fn rejection_not_cleared(rejected_at: &str) -> String {
+    format!(
+        "the record said `rejected` at {rejected_at}; a later edit cannot accept it: fix the code, delete the record, commit, and accept again"
+    )
+}
+
+/// What the stop rule finds for one change (D74): the numbers for the line
+/// `Acceptance runs:`, the rejected records that count for the stop, and the text
+/// of SD941.
+#[derive(Clone, Debug, Default)]
+pub struct StopFacts {
+    /// The number of records of the branch, and how many say `rejected`.
+    pub total: usize,
+    pub rejected_total: usize,
+    /// The rejected records after the newest approval of the plan ([`Runs::rejected_since`]).
+    pub since: Vec<(usize, String)>,
+    /// SD941 (`branch` only): the text, when the record needs the word of the owner.
+    pub rerun: Option<String>,
+    /// True if the approval of the branch is the rule in force.
+    pub branch: bool,
+}
+
+/// Reads the stop facts of the change in `folder`. `head` is the record of the head
+/// (`None` where the diff deletes the folder). `trees` are the base tree and the
+/// head tree for the walk of the approvals (D74 item 4), which the rule reads only
+/// when 2 records say `rejected` and the mode is `branch`. A shallow clone that cuts
+/// the branch gives no count, and with `branch` it gives SD941 with the fix
+/// `fetch-depth: 0`.
+pub fn stop_facts(
+    cfg: &Config,
+    nc: &NeedConfig,
+    git: &Git,
+    base_rev: &str,
+    folder: &str,
+    head: Option<State>,
+    trees: (&Corpus, &Corpus),
+) -> Result<StopFacts, String> {
+    let slug = folder.rsplit('/').next().unwrap_or(folder);
+    let branch = nc.approval_branch(cfg);
+    let Some(runs) = Runs::load(git, base_rev, folder, head)? else {
+        return Ok(StopFacts {
+            rerun: branch.then(|| rerun_cut_message(slug, base_rev)),
+            branch,
+            ..StopFacts::default()
+        });
+    };
+    let plan = format!("{folder}/plan.md");
+    let walk = (branch && runs.rejected_total() >= 2)
+        .then(|| Branch::read(cfg, git, base_rev, trees.0, trees.1));
+    let since = runs.rejected_since(walk.as_ref().map(|b| (b, plan.as_str())));
+    let rerun = if branch {
+        rerun_message(slug, &runs, &since)
+    } else {
+        None
+    };
+    Ok(StopFacts {
+        total: runs.total(),
+        rejected_total: runs.rejected_total(),
+        since,
+        rerun,
+        branch,
+    })
+}
+
+// The chain of the record and its follow-ups (design 0.8.0, D73).
+
+/// Where a link of the chain has its adding commit (D73 item 3). The order is the
+/// order of the history: the base, a commit of the branch (by its index in the
+/// list of the commits), then the head tree.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Pos {
+    Base,
+    Commit(usize),
+    Head,
+}
+
+/// The oldest commit of the latest unbroken run of commits for which `has` is true,
+/// as in D3 item 8.
+fn run_start(has: &[bool]) -> Option<usize> {
+    let mut run: Option<usize> = None;
+    for (i, h) in has.iter().enumerate() {
+        if *h {
+            run.get_or_insert(i);
+        } else {
+            run = None;
+        }
+    }
+    run
+}
+
+/// The diff of a fix, as the follow-up brief and the checks read it.
+#[derive(Clone, Debug, Default)]
+pub struct Fix {
+    /// The hash of `paths` in the tree that the fix binds.
+    pub to_tree: String,
+    /// The paths of `paths` whose entry (mode and object id) differs.
+    pub paths: Vec<String>,
+    /// The part `=== fix ===`: one line for each path.
+    pub lines: Vec<String>,
+    /// The text of `git diff` with the fixed options.
+    pub diff: String,
+    /// The paths of the fix that are binary files.
+    pub binary: Vec<String>,
+}
+
+/// The record, the commits of the branch and the records at each of them: what the
+/// chain of the follow-ups reads. `brief_problems` builds it from the reads that it
+/// makes for the entries, and `accept --follow-up` loads it ([`Chain::load`]).
+pub struct Chain<'a> {
+    pub cfg: &'a Config,
+    pub git: &'a Git,
+    pub base_rev: &'a str,
+    pub folder: &'a str,
+    pub rec: &'a Record,
+    commits: Vec<String>,
+    per_rec: Vec<Option<Record>>,
+    base_rec: Option<Record>,
+}
+
+impl<'a> Chain<'a> {
+    /// Reads the commits of the branch and the record at the base and at each of
+    /// them. A shallow clone that cuts the branch gives an error that names
+    /// `fetch-depth: 0`.
+    pub fn load(
+        cfg: &'a Config,
+        git: &'a Git,
+        base_rev: &'a str,
+        folder: &'a str,
+        rec: &'a Record,
+    ) -> Result<Chain<'a>, String> {
+        if git.range_is_cut(base_rev) {
+            return Err(format!(
+                "the history of the branch (`{base_rev}` to its tip) is cut (a shallow clone), so the commits of the follow-ups cannot be read; fetch the full history (`fetch-depth: 0`)"
+            ));
+        }
+        let rec_path = format!("{folder}/{}", record::FILE_NAME);
+        let commits = git.first_parent_commits(base_rev)?;
+        let mut specs: Vec<(String, String)> = vec![(base_rev.to_string(), rec_path.clone())];
+        specs.extend(commits.iter().map(|c| (c.clone(), rec_path.clone())));
+        let mut all = git
+            .read_at(&specs)?
+            .into_iter()
+            .map(|t| t.and_then(|b| Record::parse(&String::from_utf8_lossy(&b)).ok()));
+        let base_rec = all.next().flatten();
+        Ok(Chain {
+            cfg,
+            git,
+            base_rev,
+            folder,
+            rec,
+            commits,
+            per_rec: all.collect(),
+            base_rec,
+        })
+    }
+
+    fn short(c: &str) -> &str {
+        &c[..c.len().min(12)]
+    }
+
+    /// The position of the adding commit of the record (the oldest adding commit of
+    /// its entries `[[acceptor]]`).
+    pub fn record_pos(&self) -> Pos {
+        let base: HashSet<(String, String, String)> = self
+            .base_rec
+            .as_ref()
+            .map(|r| r.acceptors.iter().map(triple).collect())
+            .unwrap_or_default();
+        self.rec
+            .acceptors
+            .iter()
+            .map(|a| {
+                let t = triple(a);
+                if base.contains(&t) {
+                    return Pos::Base;
+                }
+                let has: Vec<bool> = self
+                    .per_rec
+                    .iter()
+                    .map(|r| {
+                        r.as_ref()
+                            .is_some_and(|r| r.acceptors.iter().any(|x| triple(x) == t))
+                    })
+                    .collect();
+                run_start(&has).map_or(Pos::Head, Pos::Commit)
+            })
+            .min()
+            .unwrap_or(Pos::Head)
+    }
+
+    /// The position of the adding commit of each follow-up. A follow-up that the
+    /// record of the base has takes the base (D73 item 3).
+    pub fn follow_positions(&self) -> Vec<Pos> {
+        let base: HashSet<(String, String)> = self
+            .base_rec
+            .as_ref()
+            .map(|r| r.follow_ups.iter().map(follow_identity).collect())
+            .unwrap_or_default();
+        self.rec
+            .follow_ups
+            .iter()
+            .map(|u| {
+                let id = follow_identity(u);
+                if base.contains(&id) {
+                    return Pos::Base;
+                }
+                let has: Vec<bool> = self
+                    .per_rec
+                    .iter()
+                    .map(|r| {
+                        r.as_ref()
+                            .is_some_and(|r| r.follow_ups.iter().any(|x| follow_identity(x) == id))
+                    })
+                    .collect();
+                run_start(&has).map_or(Pos::Head, Pos::Commit)
+            })
+            .collect()
+    }
+
+    pub fn source(&self, p: Pos) -> Source {
+        match p {
+            Pos::Base => Source::Commit(self.base_rev.to_string()),
+            Pos::Commit(i) => Source::Commit(self.commits[i].clone()),
+            Pos::Head => Source::Head,
+        }
+    }
+
+    fn place(&self, s: &Source) -> String {
+        match s {
+            Source::Commit(c) => format!("its adding commit {}", Self::short(c)),
+            Source::Head => format!(
+                "the {} that holds the entry (no commit has it yet)",
+                if self.git.is_staged() {
+                    "index"
+                } else {
+                    "working tree"
+                }
+            ),
+        }
+    }
+
+    /// The code entries of `paths` in a source: the tree of a commit, or the head
+    /// tree (the index with `--staged`, else the working tree).
+    fn entries(&self, s: &Source) -> Result<Vec<tree::Entry>, String> {
+        match s {
+            Source::Commit(c) => self.git.tree_entries_at(c, &self.rec.paths),
+            Source::Head => tree::entries_of(self.git, self.cfg),
+        }
+    }
+
+    /// The hash of `paths` in a source.
+    pub fn tree_in(&self, s: &Source) -> Result<String, String> {
+        Ok(record::tree_hash(&self.entries(s)?, &self.rec.paths))
+    }
+
+    /// The diff of the fix between 2 sources (D73 item 4).
+    pub fn fix(&self, from: &Source, to: &Source) -> Result<Fix, String> {
+        let (a, b) = (self.entries(from)?, self.entries(to)?);
+        let find = |v: &[tree::Entry], p: &str| {
+            v.iter()
+                .find(|e| e.2 == p.as_bytes())
+                .map(|(m, o, _)| (m.clone(), o.clone()))
+        };
+        let mut fix = Fix {
+            to_tree: record::tree_hash(&b, &self.rec.paths),
+            ..Fix::default()
+        };
+        for p in &self.rec.paths {
+            let (x, y) = (find(&a, p), find(&b, p));
+            if x == y {
+                continue;
+            }
+            let side = |e: Option<(String, String)>| {
+                e.map_or("absent absent".to_string(), |(m, o)| format!("{m} {o}"))
+            };
+            fix.lines.push(format!("{p} {} {}", side(x), side(y)));
+            fix.paths.push(p.clone());
+        }
+        if let Source::Commit(c) = from {
+            let to_rev = match to {
+                Source::Commit(t) => Some(t.as_str()),
+                Source::Head => None,
+            };
+            fix.diff =
+                String::from_utf8_lossy(&self.git.follow_diff(c, to_rev, &fix.paths)?).into_owned();
+            fix.binary = self.git.follow_binary_paths(c, to_rev, &fix.paths)?;
+        }
+        Ok(fix)
+    }
+
+    /// The number of bytes of the diff of the whole chain: `paths` from the commit
+    /// of the record to `to`. Zero when the record has no commit yet.
+    pub fn chain_diff_len(&self, to: &Source) -> Result<usize, String> {
+        let Source::Commit(c0) = self.source(self.record_pos()) else {
+            return Ok(0);
+        };
+        let to_rev = match to {
+            Source::Commit(t) => Some(t.as_str()),
+            Source::Head => None,
+        };
+        Ok(self.git.follow_diff(&c0, to_rev, &self.rec.paths)?.len())
+    }
+
+    /// The follow-up brief for the follow-up after the first `before` follow-ups.
+    /// `from_tree` is the tree of the last link, `to` the source that the follow-up
+    /// binds, and `fix` the diff of the fix. The files and the keys are those of
+    /// `to`, as the compare of SD928 reads them.
+    pub fn brief(
+        &self,
+        before: usize,
+        from_tree: &str,
+        to: &Source,
+        fix: &Fix,
+    ) -> Result<String, String> {
+        let files = read_files(self.git, self.folder, to)?;
+        let Some(plan) = &files.plan else {
+            return Err(format!(
+                "the tree of {} has no `plan.md` in `{}`",
+                self.place(to),
+                self.folder
+            ));
+        };
+        let at = files.cfg.as_ref().unwrap_or(self.cfg);
+        let decl = declared_of(at, self.git, self.base_rev, self.folder, &files)?;
+        let deviations: Vec<String> = decl
+            .deviations
+            .iter()
+            .map(|(id, kind, text)| format!("{id} ({kind}): {text}"))
+            .collect();
+        let delta = files
+            .spec
+            .as_deref()
+            .map(|s| record::section_text(s, "Delta"))
+            .unwrap_or_default();
+        let proof = record::section_text(plan, "Proof");
+        let notes: Vec<record::BriefNote> = self
+            .rec
+            .open_notes(before)
+            .into_iter()
+            .map(|n| {
+                let f = &self.rec.findings[n - 1];
+                record::BriefNote {
+                    number: n,
+                    path: &f.path,
+                    line: f.line,
+                    text: &f.text,
+                }
+            })
+            .collect();
+        let slug = self.folder.rsplit('/').next().unwrap_or(self.folder);
+        Ok(record::follow_up_brief(&record::FollowUpBrief {
+            slug,
+            delta: &delta,
+            invariants: &decl.invariants,
+            deviations: &deviations,
+            proof: &proof,
+            notes: &notes,
+            from_tree,
+            to_tree: &fix.to_tree,
+            fix: &fix.lines,
+            diff: &fix.diff,
+        }))
+    }
+
+    /// The problems of the follow-ups that the branch adds, by the rules of D73
+    /// item 5. `follow` lists their indexes. A follow-up that the base has was
+    /// compared in its own pull request, but its `closes` count for the rule of the
+    /// note that 2 follow-ups close.
+    pub fn problems(&self, follow: &[usize]) -> Result<Vec<String>, String> {
+        let rec = self.rec;
+        let record_pos = self.record_pos();
+        let positions = self.follow_positions();
+        let mut closed: Vec<i64> = Vec::new();
+        let mut out: Vec<String> = Vec::new();
+        for (j, u) in rec.follow_ups.iter().enumerate() {
+            let before = closed.clone();
+            closed.extend(u.closes.iter().copied());
+            if !follow.contains(&j) {
+                continue;
+            }
+            let at = format!("follow-up {}", j + 1);
+            // `closes`.
+            if u.closes.is_empty() {
+                out.push(format!(
+                    "{at}: `closes` is empty; it names each note that the fix closes, at least one"
+                ));
+            }
+            let mut seen: Vec<i64> = Vec::new();
+            for n in &u.closes {
+                match usize::try_from(*n).ok().and_then(|i| rec.findings.get(i.wrapping_sub(1))) {
+                    None => out.push(format!("{at}: `closes` names the finding {n}, and the record has no such finding")),
+                    Some(f) if f.severity != record::NOTE => out.push(format!(
+                        "{at}: `closes` names the finding {n}, which is not a note (a follow-up closes a note, never a blocker)"
+                    )),
+                    Some(_) => {}
+                }
+                if before.contains(n) || seen.contains(n) {
+                    out.push(format!(
+                        "{at}: `closes` names the note {n} more than once in the chain"
+                    ));
+                }
+                seen.push(*n);
+            }
+            // The 2 links and the fix.
+            let (prev_pos, prev_tree, prev_name) = if j == 0 {
+                (record_pos, rec.tree.as_str(), "the record".to_string())
+            } else {
+                (
+                    positions[j - 1],
+                    rec.follow_ups[j - 1].tree.as_str(),
+                    format!("follow-up {}", j),
+                )
+            };
+            let (prev, cur) = (self.source(prev_pos), self.source(positions[j]));
+            let prev_now = self.tree_in(&prev)?;
+            if !tree::matches(prev_tree, &prev_now) {
+                out.push(format!(
+                    "{at}: {prev_name} has `tree` {prev_tree}, and the code of its commit has the hash {prev_now}"
+                ));
+            }
+            let fix = self.fix(&prev, &cur)?;
+            if !tree::matches(&u.tree, &fix.to_tree) {
+                out.push(format!(
+                    "{at}: `tree` is {}, and the code of {} has the hash {}",
+                    u.tree,
+                    self.place(&cur),
+                    fix.to_tree
+                ));
+            }
+            if fix.paths.is_empty() {
+                out.push(format!(
+                    "{at}: the diff of the fix is empty: the code of `paths` is the same in the commit of {prev_name} and in its own commit"
+                ));
+            } else if !u
+                .closes
+                .iter()
+                .filter_map(|n| {
+                    usize::try_from(*n)
+                        .ok()
+                        .and_then(|i| rec.findings.get(i.wrapping_sub(1)))
+                })
+                .any(|f| fix.paths.contains(&f.path))
+            {
+                out.push(format!(
+                    "{at}: the diff of the fix changes no path of a note that `closes` names"
+                ));
+            }
+            for p in &fix.binary {
+                out.push(format!(
+                    "{at}: the diff of the fix has the binary file `{p}`, and the budget measures text; a full run follows"
+                ));
+            }
+            let len = self.chain_diff_len(&cur)?;
+            if len > record::MAX_CHAIN_DIFF {
+                out.push(format!(
+                    "{at}: the diff of the chain has {len} bytes, more than {} bytes for the whole chain; a full run follows",
+                    record::MAX_CHAIN_DIFF
+                ));
+            }
+            // The brief of the tree of its commit.
+            let want = record::follow_up_brief_hash(&self.brief(j, prev_tree, &cur, &fix)?)
+                .unwrap_or_default();
+            if !want.eq_ignore_ascii_case(&u.brief) {
+                out.push(format!(
+                    "the brief of follow-up {} is not the follow-up brief of {}; remove the entry, and run `spec-dna accept {} --follow-up` again from a new brief",
+                    j + 1,
+                    self.place(&cur),
+                    self.folder.rsplit('/').next().unwrap_or(self.folder)
+                ));
+            }
+        }
+        Ok(out)
+    }
 }
 
 // The bytes of an archive file (SD935).
@@ -1180,6 +2410,20 @@ pub struct FinishFacts {
     /// size limit and never follows a link.
     pub record: RecordFile,
     pub need: Need,
+    /// The class of the change for the acceptance ([`record_class`]). `finish`
+    /// reads it for SD933 and for SD620.
+    pub class: Class,
+    /// The value of `[change] higher-risk-acceptors` that SD933 reads: the larger
+    /// of the head and the base ([`NeedConfig`]).
+    pub acceptors: u32,
+    /// The configuration that decides the codes of the group `acceptance`
+    /// ([`NeedConfig::gate`]).
+    pub gate: Config,
+    /// The records of the branch and the rejected ones, for the line `Acceptance
+    /// runs:` (D74 item 7). `Some` when the branch has 2 or more.
+    pub runs: Option<(usize, usize)>,
+    /// The text of SD941, if the record needs the word of the owner.
+    pub rerun: Option<String>,
     /// The problems of the compare of the briefs (SD928).
     pub brief_problems: Vec<String>,
     /// The reason of SD929, if the record is stale.
@@ -1205,31 +2449,70 @@ pub enum RecordFile {
 }
 
 /// The rule "a change that needs a record" for a change of the head tree: the
-/// one function that `finish`, `next` and `check` use (design 0.8.0, D3 item 1).
-/// It returns `None` when the rule does not apply: the acceptance is off, the
-/// change has no plan, it is closed, or git names no lifecycle base. `base` and
-/// `base_rev` are the lifecycle tree and its commit.
+/// one function that `finish` and `next` use (design 0.8.0, D3 item 1 and D70).
+/// It returns `None` when the rule does not apply: the change has no plan, it is
+/// closed, or git names no lifecycle base. Else it returns the need and the class
+/// for the acceptance, also when no record is needed, because SD620 reads the
+/// class. `nc` is [`need_config`] of the run. `base` and `base_rev` are the
+/// lifecycle tree and its commit. `diff` is the diff of the head against the base.
+#[allow(clippy::too_many_arguments)]
 pub fn need_for_change(
     repo: &Repo,
     cfg: &Config,
+    nc: &NeedConfig,
     ch: &Change,
     head: &Corpus,
     base: Option<&Corpus>,
     base_rev: Option<&str>,
-) -> Result<Option<Need>, Fatal> {
+    diff: Option<&Diff>,
+) -> Result<Option<Decision>, Fatal> {
     let (Some(plan), Some(base), Some(base_rev)) = (&ch.plan, base, base_rev) else {
         return Ok(None);
     };
-    if ch.intent_status() == "closed" || cfg.is_off(Code::AcceptanceMissing) {
+    if ch.intent_status() == "closed" {
         return Ok(None);
     }
     let plan_path = &head.docs[plan.doc as usize].path;
-    needs_record(
-        cfg,
-        &repo.git,
-        base_rev,
+    let minimum = || {
+        let (head_layers, base_layers) = (
+            crate::check::doc_layers(cfg, head),
+            crate::check::doc_layers(cfg, base),
+        );
+        let none = Diff::default();
+        let diff = diff.unwrap_or(&none);
+        let facts = crate::lifecycle::MinimumFacts {
+            config: cfg,
+            high_risk_layers: &nc.high_risk_layers,
+            high_risk_paths: &nc.high_risk_paths,
+            head,
+            base,
+            head_layers: &head_layers,
+            base_layers: &base_layers,
+            diff,
+        };
+        // No other change touches the diff: each path of the diff is a path of
+        // this change.
+        let sole = !change::collect(head)
+            .iter()
+            .filter(|c| c.dir != ch.dir)
+            .any(|c| diff.under(&c.dir).next().is_some());
+        crate::lifecycle::minimum_is_higher_risk(&facts, ch, head, false, sole)
+    };
+    // Slice S6 builds the role paths of the change ([`role_paths`]). Until then the
+    // table `[owners]` is empty, so no role matches.
+    let roles = nc.matched_roles(cfg, &[]);
+    decide(
+        &ClassInput {
+            nc,
+            git: &repo.git,
+            base_rev,
+            folder: &ch.dir,
+            head: Some(ch),
+            minimum: &minimum,
+        },
         plan_path,
         base.by_path.contains_key(plan_path),
+        &roles,
     )
     .map(Some)
     .map_err(Fatal::Io)
@@ -1248,28 +2531,64 @@ pub fn finish_facts(
     base_rev: Option<&str>,
     diff: Option<&Diff>,
 ) -> Result<Option<FinishFacts>, Fatal> {
-    let need = need_for_change(repo, cfg, ch, head, base, base_rev)?;
+    // The configuration of the need: the head and the tree of the base. With no
+    // base, the head alone.
+    let nc = match base_rev {
+        Some(r) => need_config(cfg, &repo.git, r).map_err(Fatal::Io)?,
+        None => need_config_of_head(cfg),
+    };
+    let decision = need_for_change(repo, cfg, &nc, ch, head, base, base_rev, diff)?;
     let record_path = format!("{}/{}", ch.dir, record::FILE_NAME);
     let record = match read_limited(&repo.root.join(&record_path), READ_LIMIT) {
         Limited::Absent => RecordFile::Absent,
         Limited::Bytes(b) => RecordFile::Text(String::from_utf8_lossy(&b).into_owned()),
         other => RecordFile::Unreadable(unreadable_message(&record_path, &other)),
     };
-    if need.is_none() && record == RecordFile::Absent {
+    if decision.is_none() && record == RecordFile::Absent {
         return Ok(None);
     }
+    let (need, class) = match decision {
+        Some(d) => (d.need, d.class),
+        None => (Need::No(None), ch.class),
+    };
     let archive = next_archive_path(&ch.slug, &|p| repo.root.join(p).exists());
+    let gate = nc.gate().clone();
     let mut f = FinishFacts {
         record,
         ignored: repo.git.ignore_rule(&archive),
         archive,
-        need: need.unwrap_or(Need::No(None)),
+        need,
+        class,
+        acceptors: nc.higher_risk_acceptors,
+        gate,
+        runs: None,
+        rerun: None,
         brief_problems: Vec::new(),
         stale: None,
         sections: Sections::default(),
     };
+    let gate = &f.gate.clone();
+    // The count of D74. It needs the 2 trees for the walk of the approvals.
+    if let (Some(base_rev), Some(base)) = (base_rev, base) {
+        let head_rec = match &f.record {
+            RecordFile::Text(t) => Some(state_of(Some(t.as_bytes()))),
+            _ => None,
+        };
+        let sf = stop_facts(
+            cfg,
+            &nc,
+            &repo.git,
+            base_rev,
+            &ch.dir,
+            head_rec,
+            (base, head),
+        )
+        .map_err(Fatal::Io)?;
+        f.runs = (sf.total >= 2).then_some((sf.total, sf.rejected_total));
+        f.rerun = sf.rerun;
+    }
     if matches!(f.need, Need::Yes { .. }) {
-        f.sections = sections_of(cfg, &repo.git, base_rev, ch, head).map_err(Fatal::Io)?;
+        f.sections = sections_of(gate, &repo.git, base_rev, ch, head).map_err(Fatal::Io)?;
     }
     let (Need::Yes { .. }, Some(base_rev)) = (&f.need, base_rev) else {
         return Ok(Some(f));
@@ -1280,11 +2599,11 @@ pub fn finish_facts(
     let Ok(rec) = Record::parse(text) else {
         return Ok(Some(f));
     };
-    if !cfg.is_off(Code::AcceptanceInvalid) {
+    if !gate.is_off(Code::AcceptanceInvalid) {
         f.brief_problems =
             brief_problems(cfg, &repo.git, base_rev, &ch.dir, &rec).map_err(Fatal::Io)?;
     }
-    if !cfg.is_off(Code::AcceptanceStale) {
+    if !gate.is_off(Code::AcceptanceStale) {
         let plan = PlanScope::of(ch, head);
         f.stale =
             stale(cfg, &repo.git, &rec, diff, &plan, Some(base_rev), false).map_err(Fatal::Io)?;
@@ -1298,11 +2617,11 @@ mod tests {
 
     fn rec(acceptors: &[(&str, &str, &str)]) -> Record {
         let mut text = String::from(
-            "format = 1\nchange = \"demo\"\nscope = []\npaths = []\ntree = \"0123456789abcdef\"\nresult = \"accepted\"\nacknowledged-by = []\n",
+            "format = 2\nchange = \"demo\"\nscope = []\npaths = []\ntree = \"0123456789abcdef\"\nresult = \"accepted\"\nacknowledged-by = []\n",
         );
         for (role, session, agent) in acceptors {
             text.push_str(&format!(
-                "\n[[acceptor]]\nrole = \"{role}\"\nbrief = \"0123456789abcdef\"\nsession = \"{session}\"\nagent = \"{agent}\"\nresult = \"accepted\"\n"
+                "\n[[acceptor]]\nroles = [\"{role}\"]\nbrief = \"0123456789abcdef\"\nsession = \"{session}\"\nagent = \"{agent}\"\nresult = \"accepted\"\n"
             ));
         }
         Record::parse(&text).unwrap()
@@ -1499,6 +2818,130 @@ mod tests {
         assert_eq!(f("docs/intent/acceptance.toml"), None);
     }
 
+    fn st(exists: bool, rejected: bool) -> State {
+        State { exists, rejected }
+    }
+
+    /// D74 item 1: a life is an unbroken run of commits that hold the file.
+    #[test]
+    fn a_life_is_an_unbroken_run_of_commits_that_hold_the_record() {
+        let (none, ok, bad) = (st(false, false), st(true, false), st(true, true));
+        // The base, then 5 commits: a record that says `rejected` in 2 commits, a
+        // commit with no file, and a second record.
+        let l = lives(&[none, bad, bad, none, ok, ok], None);
+        assert_eq!(l.len(), 2);
+        assert_eq!(l[0].first, Pos::Commit(0));
+        assert_eq!(l[0].rejected_at, Some(Pos::Commit(0)));
+        assert_eq!(l[1].first, Pos::Commit(3));
+        assert_eq!(l[1].rejected_at, None);
+        // A record that says `ok` and then `rejected` is one life that counts once.
+        let l = lives(&[none, ok, bad, bad], None);
+        assert_eq!(l.len(), 1);
+        assert_eq!(l[0].rejected_at, Some(Pos::Commit(1)));
+        // The base holds a record, and the branch keeps it: one life.
+        let l = lives(&[bad, bad, bad], None);
+        assert_eq!(
+            (l.len(), l[0].first, l[0].rejected_at),
+            (1, Pos::Base, Some(Pos::Base))
+        );
+        // The head continues the life of the last commit, or starts a life.
+        assert_eq!(lives(&[none, ok], Some(bad)).len(), 1);
+        assert_eq!(lives(&[none, ok, none], Some(ok)).len(), 2);
+        assert_eq!(lives(&[none, none], None).len(), 0);
+        assert_eq!(
+            lives(&[none, bad, none], None)[0].rejected_at,
+            Some(Pos::Commit(0))
+        );
+    }
+
+    /// The count reads `result` leniently: a record that the strict reader refuses
+    /// still counts as rejected.
+    #[test]
+    fn the_count_reads_the_result_of_a_record_that_does_not_parse() {
+        let head = "format = 2\nchange = \"demo\"\nresult = \"rejected\"  # why\n";
+        assert!(says_rejected(head));
+        // An unknown key: valid TOML, so the generic reader gives `result`.
+        assert!(says_rejected(&format!("{head}\n[[attempt]]\nmood = 5\n")));
+        // A syntax error after the top-level keys: the line scan.
+        assert!(says_rejected(&format!("{head}\n[[finding]\nx = 1\n")));
+        assert!(says_rejected("result = 'rejected'\n[[a]\n"));
+        assert!(!says_rejected("result = \"accepted\"\n[[finding]\n"));
+        // A `result` below a table is no top-level key.
+        assert!(!says_rejected(
+            "format = 2\n[[finding]\nresult = \"rejected\"\n"
+        ));
+        assert!(!says_rejected("not toml = = ="));
+    }
+
+    #[test]
+    fn the_head_state_reads_the_result_of_the_record() {
+        let r = rec(&[("acceptor", "s1", "unknown")]);
+        assert_eq!(head_state(Some(&r)), Some(st(true, false)));
+        let mut r2 = r.clone();
+        r2.result = "rejected".to_string();
+        assert_eq!(head_state(Some(&r2)), Some(st(true, true)));
+        assert_eq!(head_state(None), None);
+        assert_eq!(state_of(None), st(false, false));
+        assert_eq!(state_of(Some(b"not toml = =")), st(true, false));
+    }
+
+    #[test]
+    fn the_texts_of_the_stop_name_the_records_and_the_way_to_the_owner() {
+        let since = vec![(0, "3f2a9c1".to_string()), (1, "9c1b7e0".to_string())];
+        assert_eq!(
+            wait_text("demo", &since, false),
+            "wait for the owner: 2 acceptance records of demo say `rejected` (3f2a9c1, 9c1b7e0); a third run needs the word of the owner"
+        );
+        assert!(wait_text("demo", &since, true).ends_with(
+            ": set `status: draft` in plan.md, then the approver runs `spec-dna approve demo plan`"
+        ));
+        let runs = Runs {
+            base_rev: "b".repeat(40),
+            commits: vec![],
+            lives: vec![
+                Life {
+                    first: Pos::Commit(0),
+                    rejected_at: Some(Pos::Commit(0)),
+                },
+                Life {
+                    first: Pos::Commit(1),
+                    rejected_at: Some(Pos::Commit(1)),
+                },
+                Life {
+                    first: Pos::Commit(2),
+                    rejected_at: None,
+                },
+            ],
+        };
+        // The gate counts the 2 rejected records before the last life.
+        let m = rerun_message(
+            "demo",
+            &runs,
+            &[(0, "aaaaaaa".into()), (1, "bbbbbbb".into())],
+        )
+        .unwrap();
+        assert!(
+            m.contains("after 2 rejected records (aaaaaaa, bbbbbbb)"),
+            "{m}"
+        );
+        assert!(m.contains("spec-dna approve demo plan"), "{m}");
+        // The last life itself is no earlier record.
+        assert!(
+            rerun_message(
+                "demo",
+                &runs,
+                &[(1, "bbbbbbb".into()), (2, "ccccccc".into())]
+            )
+            .is_none()
+        );
+        assert!(
+            rejection_not_cleared("3f2a9c1").starts_with(
+                "the record said `rejected` at 3f2a9c1; a later edit cannot accept it"
+            )
+        );
+        assert!(rerun_cut_message("demo", "abc").contains("fetch-depth: 0"));
+    }
+
     #[test]
     fn two_entries_with_a_claim_in_common_give_sd931_and_unknown_gives_none() {
         let same = rec(&[("acceptor", "s1", "a1"), ("reviewer", "s1", "a1")]);
@@ -1519,19 +2962,113 @@ mod tests {
 
     #[test]
     fn the_count_of_acceptors_follows_the_class_and_the_key() {
-        let cfg = |n: u32| {
-            Config::parse(&format!(
-                "spec-dna = \"0.1.0\"\n[change]\npolicy = \"three-class\"\nhigher-risk-acceptors = {n}\n[[roots]]\npath = \"docs\"\n"
-            ))
-            .unwrap()
-        };
         let one = rec(&[("acceptor", "s1", "unknown")]);
         let two = rec(&[("acceptor", "s1", "unknown"), ("acceptor", "s2", "unknown")]);
-        assert!(acceptors_missing(&cfg(3), Class::Routine, &one).is_none());
-        assert!(acceptors_missing(&cfg(2), Class::HigherRisk, &one).is_some());
-        assert!(acceptors_missing(&cfg(2), Class::HigherRisk, &two).is_none());
-        assert!(acceptors_missing(&cfg(3), Class::HigherRisk, &two).is_some());
-        assert!(acceptors_missing(&cfg(1), Class::HigherRisk, &one).is_none());
+        assert!(acceptors_missing(Class::Routine, 3, &one).is_none());
+        assert!(acceptors_missing(Class::HigherRisk, 2, &one).is_some());
+        assert!(acceptors_missing(Class::HigherRisk, 2, &two).is_none());
+        assert!(acceptors_missing(Class::HigherRisk, 3, &two).is_some());
+        assert!(acceptors_missing(Class::HigherRisk, 1, &one).is_none());
+    }
+
+    /// D70 item 7: the role paths of one change.
+    #[test]
+    fn the_role_paths_of_a_change_follow_item_7() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<String>>();
+        let mine = s(&["src/a/**"]);
+        let other = s(&["src/b/**"]);
+        // A path in my scope, and a path that no scope matches (`Files` left it
+        // out); a path of another change is not mine.
+        let diff = s(&["src/a/x.rs", "src/b/y.rs", "src/c/z.rs"]);
+        assert_eq!(
+            role_paths(&diff, &mine, &[other.as_slice()], &[]),
+            s(&["src/a/x.rs", "src/c/z.rs"])
+        );
+        // With no other change, each path of the diff is a role path.
+        assert_eq!(role_paths(&diff, &mine, &[], &[]), diff);
+        // No code path in my scope: the paths in scope since the plan.
+        let since = s(&["src/a/old.rs", "src/b/old.rs"]);
+        let only_other = s(&["src/b/y.rs"]);
+        assert_eq!(
+            role_paths(&only_other, &mine, &[other.as_slice()], &since),
+            s(&["src/a/old.rs"])
+        );
+        // With a path in scope in the diff, `since_plan` adds nothing.
+        assert_eq!(
+            role_paths(&s(&["src/a/x.rs"]), &mine, &[], &since),
+            s(&["src/a/x.rs"])
+        );
+        // Sorted, with no duplicate.
+        assert_eq!(
+            role_paths(
+                &s(&["src/a/z.rs", "src/a/b.rs", "src/a/z.rs"]),
+                &mine,
+                &[],
+                &[]
+            ),
+            s(&["src/a/b.rs", "src/a/z.rs"])
+        );
+    }
+
+    #[test]
+    fn the_roles_of_owners_are_empty_until_slice_s6() {
+        let cfg = Config::parse(
+            "spec-dna = \"0.1.0\"\n[change]\npolicy = \"three-class\"\n[[roots]]\npath = \"docs\"\n",
+        )
+        .unwrap();
+        assert!(matched_roles(&cfg, &["src/a.rs".to_string()]).is_empty());
+        let nc = need_config_of_head(&cfg);
+        assert!(nc.matched_roles(&cfg, &["src/a.rs".to_string()]).is_empty());
+    }
+
+    fn standard(change: &str, rules: &str) -> Config {
+        Config::parse(&format!(
+            "spec-dna = \"0.1.0\"\nprofile = \"standard\"\n[change]\npolicy = \"three-class\"\n{change}\n[rules]\n{rules}\n[[roots]]\npath = \"docs\"\n"
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn the_need_config_of_the_head_alone_reads_the_head() {
+        let c = standard(
+            "acceptance-for = \"all\"\nhigh-risk-paths = [\"src/db/**\"]\nhigher-risk-acceptors = 2",
+            "",
+        );
+        let nc = need_config_of_head(&c);
+        assert!(nc.on);
+        assert_eq!(nc.acceptance_for, AcceptanceFor::All);
+        assert_eq!(nc.high_risk_paths, ["src/db/**"]);
+        assert_eq!(nc.higher_risk_acceptors, 2);
+        let off = standard("", "acceptance = \"off\"");
+        assert!(!need_config_of_head(&off).on);
+    }
+
+    #[test]
+    fn the_union_keeps_the_order_and_adds_each_new_item_once() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<String>>();
+        assert_eq!(
+            union(&s(&["a", "b"]), &s(&["b", "c", "c"])),
+            s(&["a", "b", "c", "c"])
+        );
+        assert_eq!(union(&s(&[]), &s(&["x"])), s(&["x"]));
+    }
+
+    #[test]
+    fn the_strictest_configuration_has_the_acceptance_on_for_all() {
+        let off = standard("acceptance-for = \"none\"", "acceptance = \"off\"");
+        assert!(off.is_off(Code::AcceptanceMissing));
+        let s = strictest(&off);
+        assert!(!s.is_off(Code::AcceptanceMissing));
+        assert_eq!(s.acceptance_for(), AcceptanceFor::All);
+    }
+
+    #[test]
+    fn a_text_with_class_higher_risk_is_higher_risk_and_no_other_text_is() {
+        let t = |class: &str| format!("---\nstatus: accepted\n{class}---\n# T\n");
+        assert!(text_is_higher_risk(t("class: higher-risk\n").as_bytes()));
+        assert!(!text_is_higher_risk(t("class: routine\n").as_bytes()));
+        assert!(!text_is_higher_risk(t("").as_bytes()));
+        assert!(!text_is_higher_risk(b"# No front matter\n"));
     }
 
     #[test]
@@ -1544,9 +3081,13 @@ mod tests {
 
     #[test]
     fn the_message_of_a_missing_record_names_the_shallow_clone_only_when_it_is_one() {
-        let plain = missing_message("demo", "`x` is absent", false);
+        let plain = missing_message("demo", "`x` is absent", false, false);
         assert!(plain.contains("accept demo --brief") && !plain.contains("fetch-depth"));
-        let shallow = missing_message("demo", "`x` is absent", true);
+        let shallow = missing_message("demo", "`x` is absent", true, false);
         assert!(shallow.contains("fetch-depth: 0"));
+        assert!(!shallow.contains("cuts the branch"));
+        let cut = missing_message("demo", "`x` is absent", false, true);
+        assert!(cut.contains("cuts the branch") && cut.contains("fetch-depth: 0"));
+        assert!(!cut.contains("added the plan"));
     }
 }

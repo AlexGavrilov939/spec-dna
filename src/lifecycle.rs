@@ -1562,15 +1562,6 @@ impl<'a> Ctx<'a> {
         }
     }
 
-    /// The tree and the layers that the targets of the delta of a change
-    /// resolve in.
-    fn target_tree(&self, ch: &DiffChange) -> (&Corpus, &[Option<usize>]) {
-        match ch.side {
-            Side::Base => (self.base, &self.base_layers),
-            _ => (self.head, &self.head_layers),
-        }
-    }
-
     /// The paths of the documents that an id names: the documents of the trees,
     /// or the places that a new document with that id can have.
     fn named_paths(&self, id: &str) -> Vec<String> {
@@ -1614,34 +1605,6 @@ impl<'a> Ctx<'a> {
             out
         })
     }
-
-    /// The layer of the document that a delta line names. A new document has
-    /// the layer of its place.
-    fn target_layer(&self, ch: &DiffChange, id: &str) -> Option<usize> {
-        let (c, layers) = self.target_tree(ch);
-        match c.resolve(id) {
-            Res::Found(i, None, _) => layers[i as usize],
-            Res::Missing => {
-                let rel = format!("{id}.md");
-                let ty = self
-                    .config
-                    .layers
-                    .place_type(&rel)
-                    .unwrap_or(DocType::Requirements);
-                self.config.layers.layer_of(&rel, ty)
-            }
-            _ => None,
-        }
-    }
-
-    fn layer_name(&self, layer: Option<usize>) -> Option<&str> {
-        layer.map(|l| self.config.layers.layers()[l].name.as_str())
-    }
-
-    fn is_high_risk_layer(&self, layer: Option<usize>) -> bool {
-        self.layer_name(layer)
-            .is_some_and(|n| self.config.high_risk_layers.iter().any(|h| h == n))
-    }
 }
 
 /// Runs the checks of the diff against the lifecycle base: SD905 (the part for
@@ -1663,29 +1626,30 @@ pub fn base_checks(
     diff: &Diff,
 ) -> Result<BaseReport, String> {
     let on = |k: Code| !config.is_off(k);
-    if config.change_policy == ChangePolicy::None
-        || ![
-            Code::FanOut,
-            Code::GateApprovalMissing,
-            Code::OutsidePlan,
-            Code::ClassTooLow,
-            Code::TruthChangedWithoutChange,
-            Code::FinishIncomplete,
-            Code::DeltaEvidenceMissing,
-            Code::DecisionNeededUnaccepted,
-            Code::DeltaInvalid,
-            Code::IncidentEvalMissing,
-            Code::AcceptanceMissing,
-            Code::AcceptanceInvalid,
-            Code::AcceptanceStale,
-            Code::AcceptanceRejected,
-            Code::SelfAccepted,
-            Code::AcceptorMissing,
-            Code::RecordEdited,
-            Code::RecordIncomplete,
-        ]
+    // The codes of the group `acceptance` follow the configuration of the need:
+    // the head, or the base when the head turns the acceptance off (D70 item 6).
+    // So a branch cannot skip a record with its own `profile`, `[rules]` or
+    // `[change]`.
+    let nc = crate::acceptance::need_config(config, git, base_rev)?;
+    let acceptance_on = crate::acceptance::CODES
         .iter()
-        .any(|&k| on(k))
+        .any(|&k| !nc.gate().is_off(k));
+    if !acceptance_on
+        && (config.change_policy == ChangePolicy::None
+            || ![
+                Code::FanOut,
+                Code::GateApprovalMissing,
+                Code::OutsidePlan,
+                Code::ClassTooLow,
+                Code::TruthChangedWithoutChange,
+                Code::FinishIncomplete,
+                Code::DeltaEvidenceMissing,
+                Code::DecisionNeededUnaccepted,
+                Code::DeltaInvalid,
+                Code::IncidentEvalMissing,
+            ]
+            .iter()
+            .any(|&k| on(k)))
     {
         return Ok(BaseReport::default());
     }
@@ -1719,8 +1683,8 @@ pub fn base_checks(
     if on(Code::FanOut) {
         out.extend(routine_fan_out(&ctx, &changes));
     }
-    out.extend(finished_checks(&ctx, &changes));
-    out.extend(record_checks(&ctx, &changes)?);
+    out.extend(finished_checks(&ctx, &changes, &nc)?);
+    out.extend(record_checks(&ctx, &changes, &nc)?);
     if on(Code::IncidentEvalMissing) {
         out.extend(incident_eval_missing(&ctx)?);
     }
@@ -1736,8 +1700,15 @@ pub fn base_checks(
             exempt.extend(b.files(base));
         }
     }
+    // The codes of the group `acceptance` take their severity from the
+    // configuration of the need; the other codes take it from the head.
+    let (acceptance, other): (Vec<Diag>, Vec<Diag>) = out
+        .into_iter()
+        .partition(|d| config::is_acceptance_code(d.code));
+    let mut diags = crate::check::apply_severity(config, other);
+    diags.extend(crate::check::apply_severity(nc.gate(), acceptance));
     Ok(BaseReport {
-        diags: crate::check::apply_severity(config, out),
+        diags,
         exempt,
         born: changes.iter().any(|c| c.origin == Origin::Born),
         approvals,
@@ -2437,12 +2408,175 @@ fn shared_path(config: &Config, path: &str) -> bool {
 
 /// True if a glob of `high-risk-paths` matches the path.
 fn high_risk_path(config: &Config, path: &str) -> Option<String> {
+    first_glob(&config.high_risk_paths, path)
+}
+
+/// The first glob of `globs` that matches `path`.
+fn first_glob(globs: &[String], path: &str) -> Option<String> {
     let path = path.trim_start_matches("./").trim_start_matches('/');
-    config
-        .high_risk_paths
+    globs
         .iter()
         .find(|g| crate::glob::matches(g, path))
         .cloned()
+}
+
+/// What the minimum class of a change reads (SD917, design 0.6.0): the globs of
+/// `high-risk-paths`, the layers of `high-risk-layers`, the 2 trees and the diff.
+/// `class_too_low` builds it with the lists of the head configuration. The
+/// acceptance builds it with the lists of the need ([`crate::acceptance::need_config`]),
+/// so SD917 and the class of the record share one rule (D70 item 2).
+pub struct MinimumFacts<'a> {
+    pub config: &'a Config,
+    pub high_risk_layers: &'a [String],
+    pub high_risk_paths: &'a [String],
+    pub head: &'a Corpus,
+    pub base: &'a Corpus,
+    pub head_layers: &'a [Option<usize>],
+    pub base_layers: &'a [Option<usize>],
+    pub diff: &'a Diff,
+}
+
+impl MinimumFacts<'_> {
+    fn layer_name(&self, layer: Option<usize>) -> Option<&str> {
+        layer.map(|l| self.config.layers.layers()[l].name.as_str())
+    }
+
+    fn is_high_risk_layer(&self, layer: Option<usize>) -> bool {
+        self.layer_name(layer)
+            .is_some_and(|n| self.high_risk_layers.iter().any(|h| h == n))
+    }
+
+    /// The layer of the document that a delta line names. A new document has the
+    /// layer of its place. `base_side` reads the base tree (a change that the diff
+    /// deletes), else the head tree.
+    fn target_layer(&self, base_side: bool, id: &str) -> Option<usize> {
+        let (c, layers) = if base_side {
+            (self.base, self.base_layers)
+        } else {
+            (self.head, self.head_layers)
+        };
+        match c.resolve(id) {
+            Res::Found(i, None, _) => layers[i as usize],
+            Res::Missing => {
+                let rel = format!("{id}.md");
+                let ty = self
+                    .config
+                    .layers
+                    .place_type(&rel)
+                    .unwrap_or(DocType::Requirements);
+                self.config.layers.layer_of(&rel, ty)
+            }
+            _ => None,
+        }
+    }
+
+    fn layer_of_path(&self, path: &str) -> String {
+        self.head
+            .docs
+            .iter()
+            .chain(&self.base.docs)
+            .find(|d| d.path == path)
+            .and_then(|d| self.layer_name(crate::check::doc_layer(self.config, d)))
+            .unwrap_or("")
+            .to_string()
+    }
+
+    /// The requirements that the diff changes in a layer of `high-risk-layers`.
+    pub fn risky(&self) -> Vec<ReqChange> {
+        if self.high_risk_layers.is_empty() {
+            return Vec::new();
+        }
+        let wanted = |d: &Doc| {
+            requirement_doc(d) && self.is_high_risk_layer(crate::check::doc_layer(self.config, d))
+        };
+        requirement_changes(self.base, self.head, wanted)
+    }
+
+    /// Why the minimum class of one change is `higher-risk`, or `None`: the target
+    /// of the reason and its text. The reasons, in order: a delta line that names a
+    /// requirement of a layer of `high-risk-layers`; with no delta, a changed
+    /// requirement of such a layer in a path of the change; a path of the diff or
+    /// of `files` that matches `high-risk-paths`. `mine` tells if a path of the
+    /// diff is a path of this change. `risky` is [`MinimumFacts::risky`].
+    fn reason(
+        &self,
+        risky: &[ReqChange],
+        files: &[String],
+        targets: &[String],
+        delta_count: usize,
+        base_side: bool,
+        mine: &dyn Fn(&str) -> bool,
+    ) -> Option<(String, String)> {
+        for id in targets {
+            let layer = self.target_layer(base_side, id);
+            if self.is_high_risk_layer(layer) {
+                return Some((
+                    id.clone(),
+                    format!(
+                        "the delta targets `{id}` in the layer `{}` of `high-risk-layers`",
+                        self.layer_name(layer).unwrap_or("")
+                    ),
+                ));
+            }
+        }
+        if delta_count == 0
+            && let Some(r) = risky.iter().find(|r| mine(&r.path))
+        {
+            return Some((
+                r.doc.clone(),
+                format!(
+                    "the diff changes the requirement `{}#{}` in the layer `{}` of `high-risk-layers`",
+                    r.doc,
+                    r.key,
+                    self.layer_of_path(&r.path)
+                ),
+            ));
+        }
+        let from_diff = self
+            .diff
+            .files
+            .iter()
+            .map(|(p, _)| p.as_str())
+            .filter(|p| mine(p))
+            .find_map(|p| first_glob(self.high_risk_paths, p).map(|g| (p.to_string(), g)));
+        let from_plan = files
+            .iter()
+            .find_map(|f| first_glob(self.high_risk_paths, f).map(|g| (f.clone(), g)));
+        from_diff.or(from_plan).map(|(p, g)| {
+            (
+                g.clone(),
+                format!("`{p}` matches `{g}` of `high-risk-paths`"),
+            )
+        })
+    }
+}
+
+/// True if the minimum class of the change `ch` of `corpus` is `higher-risk`
+/// (SD917): the rule of [`MinimumFacts`] for a change that the head tree has.
+/// `base_side` is true when `corpus` is the base tree (the change that a diff
+/// deletes). `sole` is true when no other change touches the diff, so each path
+/// of the diff is a path of this change.
+pub fn minimum_is_higher_risk(
+    f: &MinimumFacts,
+    ch: &Change,
+    corpus: &Corpus,
+    base_side: bool,
+    sole: bool,
+) -> bool {
+    let files = ch.files(corpus);
+    let lines = ch.delta(corpus);
+    let targets: Vec<String> = lines
+        .iter()
+        .filter_map(|l| l.parsed.as_ref().ok().map(|d| d.id.clone()))
+        .collect();
+    let mine = |p: &str| sole || change::in_scope(&files, p);
+    let risky = if lines.is_empty() {
+        f.risky()
+    } else {
+        Vec::new()
+    };
+    f.reason(&risky, &files, &targets, lines.len(), base_side, &mine)
+        .is_some()
 }
 
 /// SD917: the class of an intent is lower than the minimum that the diff gives.
@@ -2450,25 +2584,19 @@ fn high_risk_path(config: &Config, path: &str) -> Option<String> {
 /// `high-risk-paths` and a requirement of a layer of `high-risk-layers`.
 fn class_too_low(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
     let config = ctx.config;
+    let facts = MinimumFacts {
+        config,
+        high_risk_layers: &config.high_risk_layers,
+        high_risk_paths: &config.high_risk_paths,
+        head: ctx.head,
+        base: ctx.base,
+        head_layers: &ctx.head_layers,
+        base_layers: &ctx.base_layers,
+        diff: ctx.diff,
+    };
     // The requirements that the diff changes in a layer of `high-risk-layers`.
-    let risky = if config.high_risk_layers.is_empty() {
-        Vec::new()
-    } else {
-        let wanted = |d: &Doc| {
-            requirement_doc(d) && ctx.is_high_risk_layer(crate::check::doc_layer(config, d))
-        };
-        requirement_changes(ctx.base, ctx.head, wanted)
-    };
-    let layer_of_path = |path: &str| -> String {
-        ctx.head
-            .docs
-            .iter()
-            .chain(&ctx.base.docs)
-            .find(|d| d.path == path)
-            .and_then(|d| ctx.layer_name(crate::check::doc_layer(config, d)))
-            .unwrap_or("")
-            .to_string()
-    };
+    let risky = facts.risky();
+    let layer_of_path = |path: &str| -> String { facts.layer_of_path(path) };
     let mut out = Vec::new();
     if changes.is_empty() {
         for (id, list) in by_document(&risky) {
@@ -2510,53 +2638,14 @@ fn class_too_low(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
             continue;
         }
         let mine = |path: &str| sole || change::in_scope(&ch.files, path);
-        let mut reason: Option<(String, String)> = None;
-        for id in &ch.targets {
-            let layer = ctx.target_layer(ch, id);
-            if ctx.is_high_risk_layer(layer) {
-                reason = Some((
-                    id.clone(),
-                    format!(
-                        "the delta targets `{id}` in the layer `{}` of `high-risk-layers`",
-                        ctx.layer_name(layer).unwrap_or("")
-                    ),
-                ));
-                break;
-            }
-        }
-        if reason.is_none()
-            && ch.delta_count == 0
-            && let Some(r) = risky.iter().find(|r| mine(&r.path))
-        {
-            reason = Some((
-                r.doc.clone(),
-                format!(
-                    "the diff changes the requirement `{}#{}` in the layer `{}` of `high-risk-layers`",
-                    r.doc,
-                    r.key,
-                    layer_of_path(&r.path)
-                ),
-            ));
-        }
-        if reason.is_none() {
-            let from_diff = ctx
-                .diff
-                .files
-                .iter()
-                .map(|(p, _)| p.as_str())
-                .filter(|p| mine(p))
-                .find_map(|p| high_risk_path(config, p).map(|g| (p.to_string(), g)));
-            let from_plan = ch
-                .files
-                .iter()
-                .find_map(|f| high_risk_path(config, f).map(|g| (f.clone(), g)));
-            if let Some((p, g)) = from_diff.or(from_plan) {
-                reason = Some((
-                    g.clone(),
-                    format!("`{p}` matches `{g}` of `high-risk-paths`"),
-                ));
-            }
-        }
+        let reason = facts.reason(
+            &risky,
+            &ch.files,
+            &ch.targets,
+            ch.delta_count,
+            matches!(ch.side, Side::Base),
+            &mine,
+        );
         if let Some((target, why)) = reason {
             out.push(crate::check::diag(
                 &ctx.corpus(ch).docs[intent.doc as usize],
@@ -2618,7 +2707,11 @@ fn routine_fan_out(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
 /// tree, so an edit of them in the pull request of `finish` has no effect
 /// (design, "Finish"). Only the scope of SD913 also reads the newest plan of
 /// the branch ([`branch_version`]).
-fn finished_checks(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
+fn finished_checks(
+    ctx: &Ctx,
+    changes: &[DiffChange],
+    nc: &crate::acceptance::NeedConfig,
+) -> Result<Vec<Diag>, String> {
     let on = |k: Code| !ctx.config.is_off(k);
     let sole = changes.len() == 1;
     let mut out = Vec::new();
@@ -2637,7 +2730,24 @@ fn finished_checks(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
             let mine = |path: &str| sole || change::in_scope(&ch.files, path);
             // SD916, SD617 and SD620 are 3 checks of one function. A code that
             // is off gives no diagnostic, so each stays as the profile sets it.
-            let reliable = crate::evidence::reliable_for(ctx.config, ch.change.class);
+            // The class is the class of the acceptance (D70 item 3), so a branch
+            // cannot lower the class of the base to skip SD620. It is read only when
+            // the key `reliable-for` asks for the class.
+            let class = if ctx.config.evidence_reliable_for == config::ReliableFor::HigherRisk {
+                let minimum = || minimum_for(ctx, changes, ch, nc);
+                crate::acceptance::record_class(&crate::acceptance::ClassInput {
+                    nc,
+                    git: ctx.git,
+                    base_rev: ctx.base_rev,
+                    folder: &ch.change.dir,
+                    head: None,
+                    minimum: &minimum,
+                })?
+                .class
+            } else {
+                ch.change.class
+            };
+            let reliable = crate::evidence::reliable_for(ctx.config, class);
             out.extend(
                 evidence_missing(ctx.head, ctx.base, ctx.base, &ch.change, &mine, reliable)
                     .into_iter()
@@ -2660,7 +2770,46 @@ fn finished_checks(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
             out.extend(interfaces_absent(ctx.head, spec, &added));
         }
     }
-    out
+    Ok(out)
+}
+
+/// True if the minimum class (SD917) of a change that the diff deletes, or that
+/// the branch added and deleted, is `higher-risk`. The lists of
+/// `high-risk-paths` and `high-risk-layers` are those of the need
+/// ([`crate::acceptance::NeedConfig`]).
+fn minimum_for(
+    ctx: &Ctx,
+    changes: &[DiffChange],
+    ch: &DiffChange,
+    nc: &crate::acceptance::NeedConfig,
+) -> bool {
+    let facts = MinimumFacts {
+        config: ctx.config,
+        high_risk_layers: &nc.high_risk_layers,
+        high_risk_paths: &nc.high_risk_paths,
+        head: ctx.head,
+        base: ctx.base,
+        head_layers: &ctx.head_layers,
+        base_layers: &ctx.base_layers,
+        diff: ctx.diff,
+    };
+    let sole = changes.len() == 1;
+    let mine = |path: &str| sole || change::in_scope(&ch.files, path);
+    let risky = if ch.delta_count == 0 {
+        facts.risky()
+    } else {
+        Vec::new()
+    };
+    facts
+        .reason(
+            &risky,
+            &ch.files,
+            &ch.targets,
+            ch.delta_count,
+            matches!(ch.side, Side::Base),
+            &mine,
+        )
+        .is_some()
 }
 
 /// The checks of the acceptance record (design 0.8.0, D3 item 9), in 3 places.
@@ -2676,22 +2825,17 @@ fn finished_checks(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
 ///   that stays in the folder of the base does not count, so a folder that a
 ///   person deletes with no `finish` gives SD927.
 /// - A diff that changes or deletes a file of the archive folder (SD935).
-fn record_checks(ctx: &Ctx, changes: &[DiffChange]) -> Result<Vec<Diag>, String> {
+fn record_checks(
+    ctx: &Ctx,
+    changes: &[DiffChange],
+    nc: &crate::acceptance::NeedConfig,
+) -> Result<Vec<Diag>, String> {
     use crate::acceptance as acc;
+    // The head configuration reads the paths and the layers; the codes follow the
+    // configuration of the need (D70 item 6).
     let cfg = ctx.config;
-    let on = |k: Code| !cfg.is_off(k);
-    let any_on = [
-        Code::AcceptanceMissing,
-        Code::AcceptanceInvalid,
-        Code::AcceptanceStale,
-        Code::AcceptanceRejected,
-        Code::SelfAccepted,
-        Code::AcceptorMissing,
-        Code::RecordEdited,
-        Code::RecordIncomplete,
-    ]
-    .iter()
-    .any(|&k| on(k));
+    let on = |k: Code| !nc.gate().is_off(k);
+    let any_on = acc::CODES.iter().any(|&k| on(k));
     if !any_on {
         return Ok(Vec::new());
     }
@@ -2712,7 +2856,7 @@ fn record_checks(ctx: &Ctx, changes: &[DiffChange]) -> Result<Vec<Diag>, String>
             .unwrap_or_default()
     };
     // A record that the diff adds or changes.
-    if on(Code::AcceptanceInvalid) || on(Code::SelfAccepted) {
+    if on(Code::AcceptanceInvalid) || on(Code::SelfAccepted) || on(Code::AcceptanceRerun) {
         for (p, kind) in &ctx.diff.files {
             if *kind == PathChange::Deleted {
                 continue;
@@ -2744,7 +2888,12 @@ fn record_checks(ctx: &Ctx, changes: &[DiffChange]) -> Result<Vec<Diag>, String>
                 // An archive file names its change in the field `change`.
                 None => acc::archive_owner(p, &text),
             };
-            let (rec, mut problems) = acc::read_record(cfg, &text, &slug, facts_of(&slug));
+            let place = if folder.is_some() {
+                acc::Place::Folder
+            } else {
+                acc::Place::Archive
+            };
+            let (rec, mut problems) = acc::read_record(cfg, &text, &slug, facts_of(&slug), place);
             if let (Some(rec), Some((dir, _)), true) = (&rec, &folder, on(Code::AcceptanceInvalid))
             {
                 problems.extend(acc::brief_problems(cfg, ctx.git, ctx.base_rev, dir, rec)?);
@@ -2752,6 +2901,23 @@ fn record_checks(ctx: &Ctx, changes: &[DiffChange]) -> Result<Vec<Diag>, String>
             if on(Code::AcceptanceInvalid) {
                 for m in problems {
                     out.push(path_diag(p, Code::AcceptanceInvalid, &slug, m));
+                }
+            }
+            // The stop rule (D74): the record comes after 2 rejected records.
+            if let (Some(rec), Some((dir, _)), true) = (&rec, &folder, on(Code::AcceptanceRerun))
+                && nc.approval_branch(cfg)
+            {
+                let sf = acc::stop_facts(
+                    cfg,
+                    nc,
+                    ctx.git,
+                    ctx.base_rev,
+                    dir,
+                    acc::head_state(Some(rec)),
+                    (ctx.base, ctx.head),
+                )?;
+                if let Some(m) = sf.rerun {
+                    out.push(path_diag(p, Code::AcceptanceRerun, &slug, m));
                 }
             }
             if let Some(rec) = &rec
@@ -2774,18 +2940,49 @@ fn record_checks(ctx: &Ctx, changes: &[DiffChange]) -> Result<Vec<Diag>, String>
         if c.intent_status() == "closed" {
             continue;
         }
-        let need = if deleted {
-            let plan_path = &ctx.corpus(ch).docs[plan.doc as usize].path;
-            acc::needs_record(cfg, ctx.git, ctx.base_rev, plan_path, true)?
-        } else if cfg.is_off(Code::AcceptanceMissing) {
-            acc::Need::No(None)
-        } else {
-            acc::Need::Yes { shallow: false }
-        };
-        let acc::Need::Yes { shallow } = need else {
+        // The rule of D70 for a change that the diff deletes (its plan is in the
+        // base tree) and for a change that the branch added and deleted (its plan is
+        // new). The head has no intent, so the class reads the base tree, the commits
+        // of the branch and SD917 (item 4).
+        let plan_path = &ctx.corpus(ch).docs[plan.doc as usize].path;
+        let minimum = || minimum_for(ctx, changes, ch, nc);
+        let decision = acc::decide(
+            &acc::ClassInput {
+                nc,
+                git: ctx.git,
+                base_rev: ctx.base_rev,
+                folder: &c.dir,
+                head: None,
+                minimum: &minimum,
+            },
+            plan_path,
+            deleted,
+            &nc.matched_roles(cfg, &[]),
+        )?;
+        let acc::Need::Yes {
+            shallow,
+            branch_cut,
+        } = decision.need
+        else {
             continue;
         };
+        let class = decision.class;
         let record_path = format!("{}/{}", c.dir, crate::record::FILE_NAME);
+        // The stop rule (D74 item 6) also runs where the diff deletes the folder.
+        if on(Code::AcceptanceRerun) && nc.approval_branch(cfg) {
+            let sf = acc::stop_facts(
+                cfg,
+                nc,
+                ctx.git,
+                ctx.base_rev,
+                &c.dir,
+                None,
+                (ctx.base, ctx.head),
+            )?;
+            if let Some(m) = sf.rerun {
+                out.push(path_diag(&record_path, Code::AcceptanceRerun, &c.slug, m));
+            }
+        }
         // The archive file that the diff adds for this change: the file whose
         // field `change` is the slug, the newest number of the slug. The name of
         // a file decides nothing: `fix-2.toml` can be the archive of the change
@@ -2843,6 +3040,7 @@ fn record_checks(ctx: &Ctx, changes: &[DiffChange]) -> Result<Vec<Diag>, String>
                         c.slug
                     ),
                     shallow,
+                    branch_cut,
                 ),
             ));
             continue;
@@ -2886,7 +3084,7 @@ fn record_checks(ctx: &Ctx, changes: &[DiffChange]) -> Result<Vec<Diag>, String>
             out.push(path_diag(&archive, Code::AcceptanceRejected, &c.slug, m));
         }
         if on(Code::AcceptorMissing)
-            && let Some(m) = acc::acceptors_missing(cfg, c.class, &rec)
+            && let Some(m) = acc::acceptors_missing(class, nc.higher_risk_acceptors, &rec)
         {
             out.push(path_diag(&archive, Code::AcceptorMissing, &c.slug, m));
         }

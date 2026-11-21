@@ -316,29 +316,41 @@ pin or configuration, 4 git or write error, 5 no folder or no file.",
     ),
     (
         "accept",
-        "accept <slug> [--role <name>] [--session <id>] [--base <rev>]\naccept <slug> --brief [--role <name>] [--base <rev>]",
+        "accept <slug> [--role <name>]... [--session <id>] [--base <rev>]\naccept <slug> --brief [--role <name>]... [--base <rev>]\naccept <slug> --follow-up [--session <id>] [--base <rev>]\naccept <slug> --follow-up --brief [--base <rev>]",
         "Writes the acceptance record of the change <slug>, or prints its brief. The
 acceptor is an agent that did not write the code. The first form writes the
-skeleton `acceptance.toml` in the folder of the change: the scope of the plan,
-the code paths of the diff that the scope matches, the hash of their content,
-one [[proof]] for each requirement that the change adds or changes, one
+skeleton `acceptance.toml` in the folder of the change (format 2): the scope of
+the plan, the code paths of the diff that the scope matches, the hash of their
+content, one [[proof]] for each requirement that the change adds or changes, one
 [[invariant]] for each item of `Invariants` of the spec (with [change]
 invariants), one [[deviation]] for each item of `Deviations` of the plan, and one
 [[acceptor]] entry with the value pending in each field that the acceptor still
 writes. With --session, the entry names that session; without it, or with an
-empty value, it names `unknown`. A second run adds one [[acceptor]] entry,
-with the same role or another, and prints its number. If the code that the
-record lists changed, it refuses: delete the record and accept again. The
-second form writes no file. It prints the brief: one text that is a function of
-the committed files of the repository, with the first line
-`spec-dna-brief 1 <slug> <role>` (the role is `acceptor` without --role) and
-the hash of the text on the last line. Give the whole output of --brief,
-unchanged, as the prompt of the acceptor. Both forms refuse (exit 1) while the
+empty value, it names `unknown`. --role can come more than once: the entry
+holds the sorted roles, and `acceptor` without --role. A second run adds one
+[[acceptor]] entry, with the same roles or others, and prints its number. If the
+code that the record lists changed, it refuses: delete the record and accept
+again. The record of the pre-release (format 1) is refused too. The second form
+writes no file. It prints the brief: one text that is a function of the
+committed files of the repository, with the first line
+`spec-dna-brief 2 <slug> <roles>` (the roles are those of --role, with `,`
+between them, and `acceptor` without --role) and the hash of the text on the
+last line. Give the whole output of --brief, unchanged, as the prompt of the
+acceptor. Both forms refuse (exit 1) while the
 folder of the change, except acceptance.toml, or spec-dna.toml has an edit that
 HEAD does not have: commit the work, then accept. The base is the merge base of
 --base (default: origin/HEAD, then [change] base) and HEAD. Exit codes: 0
 written or printed, 1 a refusal, 2 usage, 3 pin or configuration, 4 git or file
-error, 5 no folder for the slug.",
+error, 5 no folder for the slug. With --follow-up, the command checks the fix of
+a note after the record, with no full run. --follow-up --brief prints the
+follow-up brief: the first line `spec-dna-follow-up 2 <slug>`, the delta, the
+invariants, the deviations and the proof of the change, the open notes, the 2
+trees, the part `=== fix ===`, the diff, and the hash of the text before the
+diff on the last line. --follow-up adds a [[follow-up]] entry with the computed
+tree and the open notes in `closes`. Both refuse (exit 1), and name a full run,
+when the record has no open note or says `rejected`, the diff of the fix is
+empty, binary, or changes no path of an open note, or the diff of the chain has
+more than 16384 bytes.",
     ),
     (
         "next",
@@ -625,8 +637,10 @@ struct Args {
     reports: bool,
     /// `--brief` of `accept` (D3).
     brief: bool,
-    /// `--role <name>` of `accept` (D3).
-    role: Option<String>,
+    /// `--follow-up` of `accept` (D73).
+    follow_up: bool,
+    /// `--role <name>` of `accept` (D3). It can come more than once (D72).
+    roles: Vec<String>,
     /// `--session <id>` of `accept` (D3).
     session: Option<String>,
 }
@@ -718,7 +732,8 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         compare: None,
         reports: false,
         brief: false,
-        role: None,
+        follow_up: false,
+        roles: Vec::new(),
         session: None,
     };
     let mut it = raw.into_iter();
@@ -742,7 +757,11 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--staged" => a.staged = true,
             "--reports" => a.reports = true,
             "--brief" => a.brief = true,
-            "--role" => a.role = Some(value("--role")?),
+            "--follow-up" => a.follow_up = true,
+            "--role" => {
+                let v = value("--role")?;
+                a.roles.push(v);
+            }
             "--session" => a.session = Some(value("--session")?),
             "--no-cache" => a.no_cache = true,
             "--include-inactive" => a.include_inactive = true,
@@ -937,7 +956,8 @@ fn run(a: Args) -> Result<u8, Fatal> {
     if a.command != "accept" {
         for (given, name) in [
             (a.brief, "--brief"),
-            (a.role.is_some(), "--role"),
+            (a.follow_up, "--follow-up"),
+            (!a.roles.is_empty(), "--role"),
             (a.session.is_some(), "--session"),
         ] {
             if given {
@@ -3298,12 +3318,18 @@ fn accept(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             "--session is an option of the form that writes the record; `accept <slug> --brief` takes --role only".into(),
         ));
     }
+    if a.follow_up && !a.roles.is_empty() {
+        return Err(Fatal::Usage(
+            "--role is an option of the full record; `accept <slug> --follow-up` takes --session and --brief only".into(),
+        ));
+    }
     accept::run(
         repo,
         &a.positional[0],
         &accept::Opts {
             brief: a.brief,
-            role: a.role.as_deref(),
+            follow_up: a.follow_up,
+            roles: &a.roles,
             session: a.session.as_deref(),
             base: a.base.as_deref(),
             json: a.json,
@@ -4069,6 +4095,12 @@ fn report_finish(slug: &str, folder: &str, a: &Args, plan: &finish::Plan, pin: &
                 })),
             );
         }
+        if let Some((n, r)) = plan.runs {
+            o = o.raw(
+                "acceptance_runs",
+                &Obj::new().num("runs", n).num("rejected", r).end(),
+            );
+        }
         println!(
             "{}",
             o.raw("hours", &plan.hours.json())
@@ -4145,6 +4177,14 @@ fn report_finish(slug: &str, folder: &str, a: &Args, plan: &finish::Plan, pin: &
         println!("{line}");
         println!(
             "add this line to the commit message of the change; keep it in the squash message"
+        );
+    }
+    // The records of the branch (design 0.8.0, D74 item 7): the merge acknowledges
+    // the runs, as it acknowledges a deviation.
+    if let Some((n, r)) = plan.runs {
+        println!("Acceptance runs: {n}, {r} rejected");
+        println!(
+            "add this line to the commit message of the change; the merge of the pull request acknowledges the runs"
         );
     }
     // Step 5.3: the `[[deviation]]` entries of the record, with their verdicts.

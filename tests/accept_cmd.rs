@@ -33,7 +33,7 @@ const PLAN_TEXT: &str = "---\nstatus: approved\n---\n# Valve timeout\n\n## Files
 
 fn config(profile: &str, change: &str) -> String {
     format!(
-        "profile = \"{profile}\"\n\n[change]\npolicy = \"three-class\"\ngate = \"block\"\n{change}\n[rules]\nSD608 = \"off\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.intent]\ntypes = [\"intent\", \"spec\", \"plan\"]\nmoves-to = [\"requirements\"]\nkeep = \"until-finished\"\n"
+        "profile = \"{profile}\"\n\n[change]\npolicy = \"three-class\"\nacceptance-for = \"all\"\ngate = \"block\"\n{change}\n[rules]\nSD608 = \"off\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.intent]\ntypes = [\"intent\", \"spec\", \"plan\"]\nmoves-to = [\"requirements\"]\nkeep = \"until-finished\"\n"
     )
 }
 
@@ -127,10 +127,10 @@ fn the_brief_has_the_first_line_the_files_whole_the_fields_and_its_own_hash() {
     let r = built();
     let b = brief(&r, &[]);
     assert!(
-        b.starts_with(&format!("spec-dna-brief 1 {SLUG} acceptor\n")),
+        b.starts_with(&format!("spec-dna-brief 2 {SLUG} acceptor\n")),
         "{b}"
     );
-    // The fixed text of the format, about 3 KB, comes before the files.
+    // The fixed text of the format, about 4 KB, comes before the files.
     let fixed_end = b.find("=== intent.md ===").unwrap();
     assert!(
         (2000..=4500).contains(&fixed_end),
@@ -197,7 +197,7 @@ fn the_role_changes_the_first_line_and_the_hash() {
     let plain = brief(&r, &[]);
     let role = brief(&r, &["--role", "security-reviewer"]);
     assert!(
-        role.starts_with(&format!("spec-dna-brief 1 {SLUG} security-reviewer\n")),
+        role.starts_with(&format!("spec-dna-brief 2 {SLUG} security-reviewer\n")),
         "{role}"
     );
     assert_ne!(last_line(&plain), last_line(&role));
@@ -214,6 +214,102 @@ fn the_role_changes_the_first_line_and_the_hash() {
     assert_eq!(rest(&plain), rest(&role));
     // The role `acceptor` is the role that `--role` leaves out.
     assert_eq!(brief(&r, &["--role", "acceptor"]), plain);
+}
+
+/// D72 item 4: `--role` can come more than once. The roles are sorted with no
+/// duplicate, in the first line of the brief and in the entry of the skeleton.
+#[test]
+fn the_role_can_come_more_than_once_and_the_roles_are_sorted_in_the_line_and_the_entry() {
+    let r = built();
+    let two = brief(
+        &r,
+        &["--role", "security-reviewer", "--role", "db-reviewer"],
+    );
+    assert!(
+        two.starts_with(&format!(
+            "spec-dna-brief 2 {SLUG} db-reviewer,security-reviewer\n"
+        )),
+        "{two}"
+    );
+    // The order and a repeat change nothing.
+    let swapped = brief(
+        &r,
+        &[
+            "--role",
+            "db-reviewer",
+            "--role",
+            "security-reviewer",
+            "--role",
+            "db-reviewer",
+        ],
+    );
+    assert_eq!(two, swapped);
+    assert_ne!(last_line(&two), last_line(&brief(&r, &[])));
+    // The skeleton has one entry with both roles, and the number 1.
+    let (code, out, err) = accept(
+        &r,
+        &[
+            SLUG,
+            "--session",
+            "s1",
+            "--role",
+            "security-reviewer",
+            "--role",
+            "db-reviewer",
+        ],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    let t = r.read(RECORD);
+    assert!(
+        t.contains(
+            "[[acceptor]]\nroles = [\"db-reviewer\", \"security-reviewer\"]\nbrief = \"pending\"\n"
+        ),
+        "{t}"
+    );
+    assert_eq!(t.matches("[[acceptor]]").count(), 1);
+    // The JSON field is `roles`, an array of strings, and no field `role` (D72
+    // item 6).
+    std::fs::remove_file(r.dir.join(RECORD)).unwrap();
+    let (code, out, err) = accept(
+        &r,
+        &[
+            SLUG,
+            "--session",
+            "s1",
+            "--role",
+            "b-one",
+            "--role",
+            "a-two",
+            "--json",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("\"roles\":[\"a-two\",\"b-one\"]"), "{out}");
+    assert!(!out.contains("\"role\""), "{out}");
+    // A bad name among the roles is a usage error.
+    let (code, _, err) = accept(&r, &[SLUG, "--brief", "--role", "ok", "--role", "Bad"]);
+    assert_eq!(code, 2, "{err}");
+}
+
+/// D72 item 3: a record of format 1 gets no new entry. The message says to delete
+/// the record and accept again.
+#[test]
+fn a_record_of_format_1_is_refused_for_a_second_entry() {
+    let r = built();
+    write_record(&r);
+    let old = r
+        .read(RECORD)
+        .replace("format = 2", "format = 1")
+        .replace("roles = [\"acceptor\"]", "role = \"acceptor\"");
+    r.write(RECORD, &old);
+    let (code, out, err) = accept(&r, &[SLUG, "--session", "s2"]);
+    assert_eq!(code, 1, "{out}{err}");
+    let all = format!("{out}{err}");
+    assert!(
+        all.contains("format 1 is the format of the pre-release of 0.8.0; delete the record, commit, and accept again"),
+        "{all}"
+    );
+    assert_eq!(r.read(RECORD), old, "the record is not changed");
 }
 
 #[test]
@@ -236,7 +332,7 @@ fn the_skeleton_lists_each_requirement_with_its_proof_state_and_pending() {
     assert!(out.contains(&format!("wrote {RECORD}")), "{out}");
     assert!(out.lines().any(|l| l == "acceptor: 1"), "{out}");
     let t = r.read(RECORD);
-    assert_eq!(field(&t, "format"), "1");
+    assert_eq!(field(&t, "format"), "2");
     assert_eq!(field(&t, "change"), SLUG);
     assert!(t.contains("scope = [\"src/valves.py\", \"tests/test_valves.py\"]\n"));
     assert!(t.contains("paths = [\"src/valves.py\", \"tests/test_valves.py\"]\n"));
@@ -244,7 +340,7 @@ fn the_skeleton_lists_each_requirement_with_its_proof_state_and_pending() {
     assert_eq!(field(&t, "result"), "pending");
     assert!(t.contains("acknowledged-by = []\n"));
     // One acceptor entry with `pending` and the claims.
-    assert!(t.contains("[[acceptor]]\nrole = \"acceptor\"\nbrief = \"pending\"\nsession = \"6c0e2f1a\"\nagent = \"unknown\"\nresult = \"pending\"\n"), "{t}");
+    assert!(t.contains("[[acceptor]]\nroles = [\"acceptor\"]\nbrief = \"pending\"\nsession = \"6c0e2f1a\"\nagent = \"unknown\"\nresult = \"pending\"\n"), "{t}");
     // One proof for each requirement of the delta. The tag proves one of them
     // in no report, so its state is `tagged`; the other has no tag.
     assert!(t.contains("[[proof]]\nrequirement = \"requirements/valves#sensor-alarm\"\nstate = \"none\"\ncases = []\n"), "{t}");
@@ -420,7 +516,7 @@ fn a_second_run_adds_an_acceptor_and_keeps_every_other_byte() {
             "[[attempt]]\nacceptor = 1\ntext = \"Sent a NaN value.\"\noutcome = \"held\"\n"
         )
     );
-    assert!(after.contains("[[acceptor]]\nrole = \"security-reviewer\"\nbrief = \"pending\"\nsession = \"s2\"\nagent = \"unknown\"\nresult = \"pending\"\n"));
+    assert!(after.contains("[[acceptor]]\nroles = [\"security-reviewer\"]\nbrief = \"pending\"\nsession = \"s2\"\nagent = \"unknown\"\nresult = \"pending\"\n"));
     assert_eq!(after.matches("[[acceptor]]").count(), 2);
     // Each byte of the old text is still there, in order.
     let (head, tail) = t.split_once("[[proof]]").unwrap();
@@ -689,7 +785,7 @@ fn the_command_works_in_each_profile() {
     for profile in ["lite", "standard", "strict"] {
         let r = built_with(&config(profile, ""));
         let b = brief(&r, &[]);
-        assert!(b.starts_with("spec-dna-brief 1 "), "{profile}");
+        assert!(b.starts_with("spec-dna-brief 2 "), "{profile}");
         let (code, out, err) = accept(&r, &[SLUG, "--session", "s1"]);
         assert_eq!(code, 0, "{profile}: {out}{err}");
         assert!(r.read(RECORD).contains("[[acceptor]]"), "{profile}");
@@ -704,7 +800,7 @@ fn the_json_forms() {
     let plain = brief(&r, &[]);
     assert!(
         out.starts_with(&format!(
-            "{{\"slug\":\"{SLUG}\",\"role\":\"acceptor\",\"brief\":\""
+            "{{\"slug\":\"{SLUG}\",\"roles\":[\"acceptor\"],\"brief\":\""
         )),
         "{out}"
     );
@@ -715,7 +811,7 @@ fn the_json_forms() {
     assert_eq!(
         out.trim_end(),
         format!(
-            "{{\"slug\":\"{SLUG}\",\"path\":\"{RECORD}\",\"acceptor\":1,\"role\":\"acceptor\",\"session\":\"s1\",\"created\":true}}"
+            "{{\"slug\":\"{SLUG}\",\"path\":\"{RECORD}\",\"acceptor\":1,\"roles\":[\"acceptor\"],\"session\":\"s1\",\"created\":true}}"
         )
     );
     let (_, out, _) = accept(&r, &[SLUG, "--session", "s2", "--json"]);
@@ -735,7 +831,7 @@ fn the_help_lists_the_command_and_its_options() {
         "--role",
         "--session",
         "acceptance.toml",
-        "spec-dna-brief 1",
+        "spec-dna-brief 2",
     ] {
         assert!(out.contains(word), "{word}: {out}");
     }

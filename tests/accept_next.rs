@@ -29,7 +29,7 @@ const PLAN_TEXT: &str = "---\nstatus: approved\n---\n# Valve timeout\n\n## Files
 
 fn config(profile: &str) -> String {
     format!(
-        "profile = \"{profile}\"\n\n[change]\npolicy = \"three-class\"\ngate = \"block\"\n\n[rules]\nSD608 = \"off\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.intent]\ntypes = [\"intent\", \"spec\", \"plan\"]\nmoves-to = [\"requirements\"]\nkeep = \"until-finished\"\n"
+        "profile = \"{profile}\"\n\n[change]\npolicy = \"three-class\"\nacceptance-for = \"all\"\ngate = \"block\"\n\n[rules]\nSD608 = \"off\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.intent]\ntypes = [\"intent\", \"spec\", \"plan\"]\nmoves-to = [\"requirements\"]\nkeep = \"until-finished\"\n"
     )
 }
 
@@ -132,9 +132,13 @@ fn commit_record(r: &Repo, result: &str) {
         .read(RECORD)
         .replacen("brief = \"pending\"", &format!("brief = \"{hash}\""), 1)
         .replace("result = \"pending\"", &format!("result = \"{result}\""));
-    let text = format!(
+    let mut text = format!(
         "{text}\n[[attempt]]\nacceptor = 1\ntext = \"Sent a NaN value after the timeout.\"\noutcome = \"held\"\n"
     );
+    // A `rejected` record has a reason (D72 item 2): a blocker.
+    if result == "rejected" {
+        text.push_str("\n[[finding]]\nacceptor = 1\nseverity = \"blocker\"\npath = \"src/valves.py\"\ntext = \"The timeout is not checked.\"\n");
+    }
     r.write(RECORD, &text);
     r.commit("record");
 }
