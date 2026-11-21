@@ -230,7 +230,7 @@ fn next_text(r: &Repo) -> String {
 
 fn accept_item(out: &str) -> String {
     out.lines()
-        .find(|l| l.ends_with("[skill: accept]") || l.contains("wait for the owner"))
+        .find(|l| l.ends_with("[skill: review]") || l.contains("wait for the owner"))
         .unwrap_or_else(|| panic!("no accept item in\n{out}"))
         .to_string()
 }
@@ -255,7 +255,7 @@ fn two_rejected_records_each_committed_and_deleted_stop_next_with_the_item_of_a_
     // One rejected record: the item is the item `accept` of before.
     let one = next_text(&r);
     assert!(
-        accept_item(&one).contains("accept the change") && !one.contains("[person]"),
+        accept_item(&one).contains("start one agent") && !one.contains("[person]"),
         "{one}"
     );
     round_rejected_and_deleted(&r);
@@ -303,7 +303,7 @@ fn an_approval_of_the_plan_after_the_second_record_gives_the_count_0_again() {
     round_rejected_and_deleted(&r);
     approve_plan_again(&r, APPROVER);
     let item = accept_item(&next_text(&r));
-    assert!(item.contains("accept the change"), "{item}");
+    assert!(item.contains("start one agent"), "{item}");
     // The approval of a person who is no approver does not count.
     let r = branch_flow();
     round_rejected_and_deleted(&r);
@@ -315,7 +315,7 @@ fn an_approval_of_the_plan_after_the_second_record_gives_the_count_0_again() {
     round_rejected_and_deleted(&r);
     approve_plan_again(&r, APPROVER);
     round_rejected_and_deleted(&r);
-    assert!(accept_item(&next_text(&r)).contains("accept the change"));
+    assert!(accept_item(&next_text(&r)).contains("start one agent"));
 }
 
 // The count: lives of a record.
@@ -683,4 +683,32 @@ fn a_rejected_record_that_does_not_parse_still_counts_in_branch_mode() {
         let (_, out, _) = run(&r, &["check"]);
         assert!(has(&out, "SD941"), "{how}: {out}");
     }
+}
+
+#[test]
+fn the_item_of_a_person_has_the_final_wording_with_the_skill_review_and_no_prompt() {
+    let r = base_flow();
+    round_rejected_and_deleted(&r);
+    round_rejected_and_deleted(&r);
+    let item = accept_item(&next_text(&r));
+    let (head, tail) = item.split_once('(').unwrap();
+    assert_eq!(
+        head,
+        "[ ] wait for the owner: 2 acceptance records of valve-timeout say `rejected` "
+    );
+    let (ids, tail) = tail.split_once(')').unwrap();
+    assert_eq!(ids.split(", ").count(), 2);
+    assert_eq!(tail, "; a third run needs the word of the owner [person]");
+    // `--json`: the skill of the step, and the flag of a person; no prompt.
+    let (_, json, _) = run(&r, &["next", SLUG, "--json"]);
+    let at = json.find("wait for the owner").unwrap();
+    let object = &json[json[..at].rfind('{').unwrap()..at + json[at..].find('}').unwrap()];
+    assert!(
+        object.contains("\"skill\":\"review\"") && object.contains("\"person\":true"),
+        "{object}"
+    );
+    assert!(
+        !json.contains("spec-dna accept valve-timeout --brief"),
+        "{json}"
+    );
 }

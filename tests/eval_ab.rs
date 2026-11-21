@@ -1408,7 +1408,6 @@ fn eval_verdict_prints_the_release_for_a_released_name_and_unmeasured_for_the_ot
             "tdd",
             "review",
             "verify",
-            "accept",
             "finish",
             "debug",
             "post-mortem",
@@ -1416,11 +1415,6 @@ fn eval_verdict_prints_the_release_for_a_released_name_and_unmeasured_for_the_ot
         ]
     );
     for (name, verdict, source) in rows {
-        // The skill `accept` is new in 0.8.0 and has no measure yet.
-        if name == "accept" {
-            assert_eq!((verdict.as_str(), source.as_str()), ("unmeasured", "-"));
-            continue;
-        }
         assert!(RELEASED.contains(&name.as_str()), "{name}");
         assert_eq!(source, "release", "{name}");
         let on = RELEASED_ON.contains(&name.as_str());

@@ -658,6 +658,16 @@ impl PlanTask {
         names_finish(&self.text, slug)
     }
 
+    /// Like [`closes_with_finish`](Self::closes_with_finish), and, where the
+    /// acceptance is on (`accept_on`, SD927 is not off), a task whose text names
+    /// `spec-dna accept <slug>` with the slug of its change also closes with
+    /// `finish`: `finish` stops until step 5.2 passes for the record (design
+    /// 0.8.0, D75 item 6). In `lite` the acceptance is off, so such a task stays an
+    /// open task, as in 0.7.1.
+    pub fn closes_with_finish_or_accept(&self, slug: &str, accept_on: bool) -> bool {
+        self.closes_with_finish(slug) || (accept_on && names_command(&self.text, "accept", slug))
+    }
+
     /// True if the text of the task names `spec-dna finish <word>` for any
     /// word, with a slug or none. A task of this kind that is not
     /// [`closes_with_finish`](Self::closes_with_finish) gets the hint of step 0
@@ -672,10 +682,15 @@ const REVIEW_TITLE: &str = "Review by the owner";
 
 /// True if `text` holds `spec-dna finish <slug>` and the slug ends there.
 fn names_finish(text: &str, slug: &str) -> bool {
+    names_command(text, "finish", slug)
+}
+
+/// True if `text` holds `spec-dna <verb> <slug>` and the slug ends there.
+fn names_command(text: &str, verb: &str, slug: &str) -> bool {
     if slug.is_empty() {
         return false;
     }
-    let command = format!("spec-dna finish {slug}");
+    let command = format!("spec-dna {verb} {slug}");
     let mut from = 0;
     while let Some(i) = text[from..].find(&command) {
         let end = from + i + command.len();
@@ -1000,10 +1015,21 @@ fn tasks_of<'a>(items: impl Iterator<Item = &'a ListItem>) -> Vec<PlanTask> {
 /// duplicate, and does not close with `finish` (design 0.7.1, B1). A task of a
 /// person comes after the tasks of an agent: it is the result only if each
 /// open task is a task of a person. `slug` is the slug of the change.
+#[cfg(test)]
 pub fn next_open_task<'a>(tasks: &'a [PlanTask], slug: &str) -> Option<&'a PlanTask> {
-    let mut open = tasks
-        .iter()
-        .filter(|t| !t.closed() && !t.duplicate && !t.closes_with_finish(slug));
+    next_open_task_in(tasks, slug, false)
+}
+
+/// Like [`next_open_task`]. With `accept_on`, a task that names `spec-dna accept
+/// <slug>` closes with `finish` too ([`PlanTask::closes_with_finish_or_accept`]).
+pub fn next_open_task_in<'a>(
+    tasks: &'a [PlanTask],
+    slug: &str,
+    accept_on: bool,
+) -> Option<&'a PlanTask> {
+    let mut open = tasks.iter().filter(|t| {
+        !t.closed() && !t.duplicate && !t.closes_with_finish_or_accept(slug, accept_on)
+    });
     // A task of a person is not for an agent: the first open task of an agent
     // is the next task, if there is one (design 0.8.0, D64).
     let first = open.next()?;
@@ -1026,8 +1052,15 @@ impl Change {
     /// The first open task of the plan, in the order of the file. A task that
     /// closes with `finish` is not open (design 0.7.1, B1). A task of a person
     /// comes after the tasks of an agent (design 0.8.0, D64).
+    #[cfg(test)]
     pub fn next_open_task(&self, corpus: &Corpus) -> Option<PlanTask> {
-        next_open_task(&self.tasks(corpus), &self.slug).cloned()
+        self.next_open_task_in(corpus, false)
+    }
+
+    /// Like [`Change::next_open_task`], with the rule of the acceptance task
+    /// (`accept_on`).
+    pub fn next_open_task_in(&self, corpus: &Corpus, accept_on: bool) -> Option<PlanTask> {
+        next_open_task_in(&self.tasks(corpus), &self.slug, accept_on).cloned()
     }
 
     /// The open questions of the spec: the items `- [ ]` of its `Open

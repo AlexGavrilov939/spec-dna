@@ -16,7 +16,7 @@
 //! no check command and no output text of `claude`.
 
 use crate::adapters::{self, VERSION};
-use crate::config::{Config, Evals};
+use crate::config::{Config, Evals, Profile};
 use crate::config_text::{insert_keys, k, set_value};
 use crate::eval_run::{
     Ctx, EPS, HarnessArm, Limits, Planned, Refusal, RunResult, Tokens, catch_interrupts,
@@ -1035,7 +1035,8 @@ fn prepare(dir: &Path, kind: Kind, arm: Arm, keep_generated: bool) -> Result<(),
                     if let Some(parent) = file.parent() {
                         fs::create_dir_all(parent).map_err(|e| io(&rel, e))?;
                     }
-                    fs::write(&file, skill_file(skill)).map_err(|e| io(&rel, e))?;
+                    fs::write(&file, skill_file(skill, profile_of(dir)))
+                        .map_err(|e| io(&rel, e))?;
                 }
                 Arm::Without => {
                     if let Some(parent) = file.parent() {
@@ -1116,6 +1117,7 @@ pub(crate) fn write_harness_arm(
     };
     h.skills = skills.to_vec();
     h.skills.sort();
+    h.profile = profile_of(dir);
     let text = fs::read_to_string(&toml_path).map_err(|e| io("spec-dna.toml", e))?;
     if text
         .parse::<toml::Table>()
@@ -1271,14 +1273,27 @@ fn rules_off(text: &str) -> Result<String, Fatal> {
 }
 
 /// The file of a skill in the arm `with`: the front matter and the text of
-/// `skill show`.
-fn skill_file(skill: Skill) -> String {
+/// `skill show` for the profile of the project (design 0.8.0, D76 item 3).
+fn skill_file(skill: Skill, profile: Profile) -> String {
     format!(
         "---\nname: {}\ndescription: {}\n---\n\n{}\n",
         skill.name(),
         harness_text::description(skill),
-        harness_text::body(skill)
+        harness_text::body(skill, profile)
     )
+}
+
+/// The profile of the project in the copy `dir`: the key `profile` of its
+/// `spec-dna.toml`. A copy with no file, a file that does not parse and a file
+/// with no valid key have the default profile, as `skill show` outside a project
+/// has. It reads the key only, so a fixture that holds a part of a configuration
+/// works.
+fn profile_of(dir: &Path) -> Profile {
+    fs::read_to_string(dir.join("spec-dna.toml"))
+        .ok()
+        .and_then(|t| t.parse::<toml::Table>().ok())
+        .and_then(|t| Profile::from_name(t.get("profile")?.as_str()?))
+        .unwrap_or(Profile::Standard)
 }
 
 // The analysis and the result.
@@ -2319,11 +2334,11 @@ mod tests {
         t["rules"].as_table().unwrap().clone()
     }
 
-    /// The arm `without` of the skill `accept` has no agent file `acceptor.md`
-    /// either (design 0.8.0, D57): the role comes with the skill, so the edit of
-    /// the skill list is the whole edit.
+    /// The arm `without` of the skill `review` has no agent file `acceptor.md`
+    /// either (design 0.8.0, D57 and D71): the role comes with the skill, so the
+    /// edit of the skill list is the whole edit.
     #[test]
-    fn the_arm_without_of_the_skill_accept_has_no_acceptor_file() {
+    fn the_arm_without_of_the_skill_review_has_no_acceptor_file() {
         for arm in [HarnessArm::Lean, HarnessArm::Full] {
             let has_file = |skills: Vec<Skill>| {
                 let mut h = arm.harness().expect("a harness");
@@ -2332,10 +2347,10 @@ mod tests {
                     .iter()
                     .any(|g| g.path == ".claude/agents/acceptor.md")
             };
-            let with = arm_skills(Kind::Skill(Skill::Accept), Arm::With, arm);
-            let without = arm_skills(Kind::Skill(Skill::Accept), Arm::Without, arm);
-            assert!(with.contains(&Skill::Accept), "{}", arm.name());
-            assert!(!without.contains(&Skill::Accept), "{}", arm.name());
+            let with = arm_skills(Kind::Skill(Skill::Review), Arm::With, arm);
+            let without = arm_skills(Kind::Skill(Skill::Review), Arm::Without, arm);
+            assert!(with.contains(&Skill::Review), "{}", arm.name());
+            assert!(!without.contains(&Skill::Review), "{}", arm.name());
             assert!(has_file(with), "{}", arm.name());
             assert!(!has_file(without), "{}", arm.name());
         }
@@ -2385,6 +2400,64 @@ mod tests {
         fs::remove_file(dir.join("spec-dna.toml")).unwrap();
         adapter_rules_off(&dir).unwrap();
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Design 0.8.0, D76 item 3: the arm `with` writes the text of the profile of the
+    /// project of the copy. A copy with no file, or a file that does not parse, has
+    /// the default profile.
+    #[test]
+    fn the_skill_file_of_the_arm_with_follows_the_profile_of_the_copy() {
+        let dir = std::env::temp_dir().join(format!("spec-dna-profile-of-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        assert_eq!(profile_of(&dir), Profile::Standard);
+        for (text, want) in [
+            ("spec-dna = \"0.7.1\"\nprofile = \"lite\"\n", Profile::Lite),
+            (
+                "spec-dna = \"0.7.1\"\nprofile = \"strict\"\n",
+                Profile::Strict,
+            ),
+            ("spec-dna = \"0.7.1\"\n", Profile::Standard),
+            ("this is not toml", Profile::Standard),
+        ] {
+            fs::write(dir.join("spec-dna.toml"), text).unwrap();
+            assert_eq!(profile_of(&dir), want, "{text}");
+        }
+        let _ = fs::remove_dir_all(&dir);
+        // `lite` has the frozen text of 0.7.1, the other profiles the text of
+        // this release.
+        let lite = skill_file(Skill::Review, Profile::Lite);
+        let standard = skill_file(Skill::Review, Profile::Standard);
+        assert!(!lite.contains("acceptance.toml"), "{lite}");
+        assert!(standard.contains("acceptance.toml"), "{standard}");
+        assert_eq!(standard, skill_file(Skill::Review, Profile::Strict));
+    }
+
+    /// A harness arm writes the files of the generator with the profile of the
+    /// copy: in `lite`, the text of 0.7.1 and no agent `acceptor` (design 0.8.0,
+    /// D71 and D76).
+    #[test]
+    fn a_harness_arm_writes_the_files_of_the_profile_of_the_copy() {
+        for (profile, lite) in [("lite", true), ("standard", false)] {
+            let dir = std::env::temp_dir().join(format!(
+                "spec-dna-harness-arm-{}-{profile}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(
+                dir.join("spec-dna.toml"),
+                format!("spec-dna = \"0.7.1\"\nprofile = \"{profile}\"\n"),
+            )
+            .unwrap();
+            write_harness_arm(&dir, HarnessArm::Lean, &[Skill::Review], false).unwrap();
+            let skill = fs::read_to_string(dir.join(Skill::Review.path())).unwrap();
+            assert_eq!(skill.contains("acceptance.toml"), !lite, "{profile}");
+            assert_eq!(
+                dir.join(".claude/agents/acceptor.md").exists(),
+                !lite,
+                "{profile}"
+            );
+            let _ = fs::remove_dir_all(&dir);
+        }
     }
 
     #[test]

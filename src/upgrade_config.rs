@@ -809,13 +809,12 @@ const SKILL_RENAMES: [(&str, &[&str]); 3] = [
 
 /// The skills that a release adds, each with the first release that has it, in
 /// the order of D2. A project of 0.6 had no way to choose the skills of 0.7.0
-/// (ADR 0023, amendment of 2026-11-19). `accept` comes with the acceptance of
-/// 0.8.0 (ADR 0025).
-const NEW_SKILLS: [(Skill, Version); 7] = [
+/// (ADR 0023, amendment of 2026-11-19). Since 0.7.0, no release adds a skill: the
+/// skill `accept` of 0.8.0 part A merged into `review` (design 0.8.0, D71).
+const NEW_SKILLS: [(Skill, Version); 6] = [
     (Skill::Execute, Version(0, 7, 0)),
     (Skill::Tdd, Version(0, 7, 0)),
     (Skill::Verify, Version(0, 7, 0)),
-    (Skill::Accept, Version(0, 8, 0)),
     (Skill::Finish, Version(0, 7, 0)),
     (Skill::Debug, Version(0, 7, 0)),
     (Skill::PostMortem, Version(0, 7, 0)),
@@ -847,8 +846,7 @@ fn since_label(skills: &[Skill]) -> String {
 /// skill, `init` proposes it for the profile and the level of the text, and
 /// `list` lacks it. The result is empty when the text has no valid pin or level,
 /// when the list is empty, or when the level or the change policy is `none`.
-/// `init` proposes `accept` for no level in the profile `lite`, so `lite` never
-/// gets it. A text that does not parse has no result.
+/// A text that does not parse has no result.
 fn new_skills(table: &Table, list: &[String], on: &dyn Fn(Skill) -> bool) -> (Vec<Skill>, String) {
     let none = (Vec::new(), String::new());
     let pin = table
@@ -910,7 +908,7 @@ fn new_skills(table: &Table, list: &[String], on: &dyn Fn(Skill) -> bool) -> (Ve
 /// version before the release that gave the skill, and `init` proposes the
 /// skill for the profile and the level of the file (ADR 0023, amendment of
 /// 2026-11-19). The skills are `tdd`, `execute`, `verify`, `finish`, `debug` and
-/// `post-mortem` (0.7.0), and `accept` (0.8.0, ADR 0025). `lite` gets no `accept`. A list with no old
+/// `post-mortem` (0.7.0). A list with no old
 /// name keeps its order, and the new names follow in the order of D2. An empty
 /// list stays empty. A list of many lines that no rename touches stays as it
 /// is, and a warning gives the names to add by hand.
@@ -2509,7 +2507,7 @@ mod tests {
         let r = rename_skills_with(t, &|_| true);
         assert_eq!(
             r.text,
-            "spec-dna = \"0.6.1\"\ntypes = [\"intent\", \"spec\", \"plan\"]\n\n[change]\npolicy = \"three-class\"\n\n[harness]\nlevel = \"lean\"\nskills = [\"brainstorm\", \"specify\", \"clarify\", \"write-plan\", \"execute\", \"tdd\", \"review\", \"verify\", \"accept\", \"finish\", \"debug\", \"post-mortem\"]  # mine\n"
+            "spec-dna = \"0.6.1\"\ntypes = [\"intent\", \"spec\", \"plan\"]\n\n[change]\npolicy = \"three-class\"\n\n[harness]\nlevel = \"lean\"\nskills = [\"brainstorm\", \"specify\", \"clarify\", \"write-plan\", \"execute\", \"tdd\", \"review\", \"verify\", \"finish\", \"debug\", \"post-mortem\"]  # mine\n"
         );
         // The rename and the skills that are new in 0.7.0.
         assert_eq!(r.edits.len(), 2, "{:?}", r.edits);
@@ -2570,7 +2568,7 @@ mod tests {
         let r = rename_skills_with(t, &fake_default(false));
         assert_eq!(
             r.text,
-            "spec-dna = \"0.6.1\"\n\n[change]\npolicy = \"three-class\"\n\n[harness]\nlevel = \"lean\"\nskills = [\"brainstorm\", \"specify\", \"clarify\", \"write-plan\", \"tdd\", \"review\", \"accept\", \"finish\", \"post-mortem\"]\n"
+            "spec-dna = \"0.6.1\"\n\n[change]\npolicy = \"three-class\"\n\n[harness]\nlevel = \"lean\"\nskills = [\"brainstorm\", \"specify\", \"clarify\", \"write-plan\", \"tdd\", \"review\", \"finish\", \"post-mortem\"]\n"
         );
         assert_eq!(r.edits.len(), 2, "{:?}", r.edits);
         assert!(!r.edits[0].contains("off by default"), "{:?}", r.edits);
@@ -2610,7 +2608,7 @@ mod tests {
         let r = rename_skills_with(t, &|_| true);
         assert!(
             r.text.contains(
-                "skills = [\"specify\", \"clarify\", \"execute\", \"tdd\", \"verify\", \"accept\", \"finish\", \"debug\", \"post-mortem\"]"
+                "skills = [\"specify\", \"clarify\", \"execute\", \"tdd\", \"verify\", \"finish\", \"debug\", \"post-mortem\"]"
             ),
             "{}",
             r.text
@@ -2661,12 +2659,12 @@ mod tests {
         let r = rename_skills_with(&t, &fake_default(false));
         assert_eq!(
             skills_line(&r.text),
-            "skills = [\"review\", \"tdd\", \"accept\", \"finish\", \"post-mortem\"]"
+            "skills = [\"review\", \"tdd\", \"finish\", \"post-mortem\"]"
         );
         assert_eq!(r.edits.len(), 1, "{:?}", r.edits);
         assert_eq!(
             r.edits[0],
-            "`skills` of `[harness]`: added `tdd`, `accept`, `finish` and `post-mortem`, new in 0.7.0 and 0.8.0 and on by default for the profile `standard`; remove a name to turn its skill off"
+            "`skills` of `[harness]`: added `tdd`, `finish` and `post-mortem`, new in 0.7.0 and on by default for the profile `standard`; remove a name to turn its skill off"
         );
         // A second call changes nothing.
         let again = rename_skills_with(&r.text, &fake_default(false));
@@ -2693,39 +2691,28 @@ mod tests {
         let r = rename_skills_with(&t, &fake_default(false));
         assert_eq!(
             skills_line(&r.text),
-            "skills = [\"review\", \"execute\", \"tdd\", \"verify\", \"accept\", \"finish\", \"debug\", \"post-mortem\"]"
+            "skills = [\"review\", \"execute\", \"tdd\", \"verify\", \"finish\", \"debug\", \"post-mortem\"]"
         );
     }
 
     #[test]
-    fn a_pin_of_0_7_0_gets_only_accept_and_lite_gets_none() {
-        let t = file_0_6_1("", "lean", "[\"review\", \"finish\"]").replace("0.6.1", "0.7.0");
-        let r = rename_skills_with(&t, &fake_default(false));
-        assert_eq!(
-            skills_line(&r.text),
-            "skills = [\"review\", \"finish\", \"accept\"]"
-        );
-        assert_eq!(
-            r.edits,
-            [
-                "`skills` of `[harness]`: added `accept`, new in 0.8.0 and on by default for the profile `standard`; remove a name to turn its skill off"
-            ]
-        );
-        // The level `full` also adds it.
-        let t = file_0_6_1("", "full", "[\"review\"]").replace("0.6.1", "0.7.0");
-        let r = rename_skills_with(&t, &fake_default(false));
-        assert_eq!(skills_line(&r.text), "skills = [\"review\", \"accept\"]");
-        // The profile `lite` has no acceptance, at any level.
-        for level in ["lean", "full"] {
-            let t =
-                file_0_6_1("profile = \"lite\"\n", level, "[\"review\"]").replace("0.6.1", "0.7.0");
-            let r = rename_skills_with(&t, &fake_default(false));
-            assert_eq!(r.text, t, "{level}");
-            assert!(r.edits.is_empty(), "{level}: {:?}", r.edits);
+    fn a_pin_of_0_7_0_or_later_adds_no_skill() {
+        // No release after 0.7.0 adds a skill: the skill `accept` of 0.8.0 part A
+        // merged into `review` (design 0.8.0, D71).
+        for pin in ["0.7.0", "0.7.1", "0.8.0"] {
+            for (profile, level) in [
+                ("", "lean"),
+                ("", "full"),
+                ("profile = \"lite\"\n", "lean"),
+                ("profile = \"lite\"\n", "full"),
+            ] {
+                let t =
+                    file_0_6_1(profile, level, "[\"review\", \"finish\"]").replace("0.6.1", pin);
+                let r = rename_skills_with(&t, &fake_default(false));
+                assert_eq!(r.text, t, "{pin} {profile} {level}");
+                assert!(r.edits.is_empty(), "{pin} {profile} {level}: {:?}", r.edits);
+            }
         }
-        // A pin of 0.8.0 adds nothing, and a second call changes nothing.
-        let t = file_0_6_1("", "lean", "[\"review\"]").replace("0.6.1", "0.8.0");
-        assert_eq!(rename_skills_with(&t, &fake_default(false)).text, t);
     }
 
     #[test]
@@ -2752,7 +2739,7 @@ mod tests {
         assert!(r.by_hand.is_empty(), "{:?}", r.by_hand);
         assert_eq!(r.warnings.len(), 1, "{:?}", r.warnings);
         assert!(
-            r.warnings[0].contains("`tdd`, `accept`, `finish` and `post-mortem`"),
+            r.warnings[0].contains("`tdd`, `finish` and `post-mortem`"),
             "{:?}",
             r.warnings
         );
@@ -2773,7 +2760,7 @@ mod tests {
         assert_eq!(r.edits.len(), 1, "{:?}", r.edits);
         assert_eq!(r.warnings.len(), 1, "{:?}", r.warnings);
         assert!(
-            r.warnings[0].contains("did not add `tdd`, `accept`, `finish` and `post-mortem`"),
+            r.warnings[0].contains("did not add `tdd`, `finish` and `post-mortem`"),
             "{:?}",
             r.warnings
         );

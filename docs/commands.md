@@ -17,7 +17,7 @@ This page gives each command of spec-dna, its options, its behavior and the exit
 | `next` | Print the checklist to the next gate of a change | [next](#next) |
 | `approve` | Set the status of one artifact of a change and commit that file alone (for a person) | [approve](#approve) |
 | `accept` | Write the acceptance record of a change, or print its brief | [accept](#accept) |
-| `skill list`, `skill show` | Print the 12 skills of the workflow pack, or the text of one skill | [skill](#skill) |
+| `skill list`, `skill show` | Print the 11 skills of the workflow pack, or the text of one skill | [skill](#skill) |
 | `finish` | Apply the delta of a change, check the evidence, delete the folder of the change | [finish](#finish) |
 | `status` | Print each change, its class, its stage and its next gate | [status](#status) |
 | `log` | Print the finished changes | [log](#log) |
@@ -39,9 +39,9 @@ spec-dna new decision pump-choice   # a new document from the template of its ty
 spec-dna new intent sensor-timeout --template prd   # the first document of a change
 spec-dna next sensor-timeout        # the checklist to the next gate of a change
 spec-dna approve sensor-timeout intent   # a person: set the status of the intent and commit that file alone
-spec-dna accept sensor-timeout --brief   # the brief for the acceptor: give it, unchanged, as the prompt of the agent
+spec-dna accept sensor-timeout --brief   # the brief for the acceptor: the acceptor runs this command, so the builder pastes nothing
 spec-dna accept sensor-timeout --session "$ID"   # the acceptor: write the skeleton of acceptance.toml
-spec-dna skill list                 # the 12 skills, their kind, stage, state and default
+spec-dna skill list                 # the 11 skills, their kind, stage, state and default
 spec-dna skill show write-plan      # the text of a skill, also if the skill is off
 spec-dna finish sensor-timeout --dry-run   # the diff of the finish of a change, and nothing written
 spec-dna finish sensor-timeout      # apply the delta, delete the folder, stage the paths
@@ -363,7 +363,7 @@ Both forms also refuse (exit code 1) while a code path that `scope` matches has 
 4. `scope`, `paths` and `tree`, as the record writes them (see below), and the sections `invariants` (only with `[change] invariants`), `deviations` and `roles` when they have an item. An item of `invariants` is `<doc-id>#<key>@<hash>`: the acceptor reads the rule with `spec-dna show <doc-id>#<key>`. An item of `deviations` is `<id> (<kind>): <text>`. An item that is not valid is not listed: SD936 and SD939 report it.
 5. The last line is `brief <hash>`: the first 8 bytes of SHA-256 of the text before it, as 16 hexadecimal digits. The hash covers the bytes, so an edit of the spacing of a file changes it.
 
-The builder gives the whole output, unchanged, as the prompt of the acceptor, and writes no word of its own. The acceptor copies the hash of the last line into `brief` of its entry. The hash makes the input of the acceptor recomputable. It does not show that the acceptor got the text, because anyone can compute the brief.
+The builder does not paste the brief. The item `review` of `next` gives the prompt line `cd '<root>' && spec-dna accept <slug> --brief` ([next](#next)), and the builder adds no word of its own. The acceptor runs that command and reads the brief as its output. The acceptor copies the hash of the last line into `brief` of its entry. The hash makes the input of the acceptor recomputable. It does not show that the acceptor got the text, because anyone can compute the brief.
 
 **The follow-up** (`--follow-up`). A fix of a note after the record needs no full run. It needs a follow-up: a short check of the fix by an agent that did not write the fix. The agent reads the diff of the fix against the requirements of the change, and it runs `Proof`. The follow-up binds the new tree of `paths`.
 
@@ -487,8 +487,28 @@ A change has no stage field. The stage is the first row of this table that match
 | `test` | A requirement that the change adds or changes has no full evidence | Add a `covers:` tag in a test file |
 | `deploy` | Each such requirement has evidence | Run `spec-dna finish <slug>` |
 
-- In the stage `deploy`, `next` names the item `accept` after `review` and before `finish`, with the skill `accept`, only for a change that needs an acceptance record ([accept](#accept)). The rule is the rule of `finish` and `check`: the acceptance is on (not in the profile `lite`), `[change] acceptance-for` asks for a record (in `standard`, only a `higher-risk` change), and the plan is new (a plan that a pin before 0.8.0 added, or a repository with no lifecycle base, has no item). For another change, `next` names the review of 0.7.1.
-- The item `accept` is open (`[ ]`) while the folder of the change has no record. It is done (`[x]`) when the record is valid, fresh and `accepted`. It is open again when the record is stale because the code changed after the acceptance, when the record says `rejected`, and when the record is not valid. With a check of the record off, the done item says only that the checks that are on passed. A change that needs no record has the lines of 0.7.1, byte for byte. After 2 rejected records of the branch since the last approval of the plan, the item `accept` is an item of a person while the record of the head is not valid, fresh and `accepted`: ``wait for the owner: 2 acceptance records of <slug> say `rejected` (<commit>, <commit>); a third run needs the word of the owner``. `next` prints `[person]` for it and `--json` adds `"person": true`. With `approval = "branch"` the line adds ``: set `status: draft` in plan.md, then the approver runs `spec-dna approve <slug> plan` ``. The agent starts no third run ([the stop rule](diagnostics.md#the-stop-rule)). The last line stays the line of `finish`.
+- In the stage `deploy`, `next` has one item `review` before `finish`. For a change that needs an acceptance record ([accept](#accept)), it is the record item, with the skill `review`. For another change, `next` names the review of 0.7.1.
+- A change needs a record when 3 conditions hold, as in `finish` and `check`.
+  - The acceptance is on (not in the profile `lite`).
+  - `[change] acceptance-for` asks for a record (in `standard`, only a `higher-risk` change).
+  - The plan is new. A plan that a pin before 0.8.0 added, or a repository with no lifecycle base, has no item.
+- The record item is open (`[ ]`) while the folder of the change has no record. Its text is the prompt of the acceptor: ``start one agent `acceptor` with the prompt `cd '<root>' && spec-dna accept <slug> --brief`, and add no word; it writes and commits the record``.
+  - `<root>` is the absolute root of the repository where `next` runs. It is one shell word in single quotes (a `'` in the root becomes `'\''`).
+  - The builder writes about 80 bytes and no word of the brief. The acceptor runs the command and reads the brief as its output.
+  - Where the harness writes no agent `acceptor` (the level `none`, or `lite` with a rule that turns on the group `acceptance`), the text says "one agent that did not build the change".
+  - A fix of a path of an open note makes the record stale. If `accept --follow-up` does not refuse, the item says ``the record is stale after a fix of an open note: start one agent `acceptor` with the prompt `cd '<root>' && spec-dna accept <slug> --follow-up --brief`, and add no word; it writes and commits the follow-up``.
+  - With an edit that `HEAD` does not have, the item says to commit the work, then run `next` again. After another code edit, it names a full run.
+- The record item is done (`[x]`) when the record is valid, fresh and `accepted`. It is open again when the code changed after the acceptance, when the record says `rejected`, and when the record is not valid.
+- With a check of the record off, the done item says only that the checks that are on passed. A change that needs no record has the lines of 0.7.1, byte for byte.
+- After 2 rejected records of the branch since the last approval of the plan, the record item is an item of a person until the record of the head is valid, fresh and `accepted`. Its text is ``wait for the owner: 2 acceptance records of <slug> say `rejected` (<commit>, <commit>); a third run needs the word of the owner``.
+  - `next` prints `[person]` for it, and `--json` adds `"person": true`.
+  - With `approval = "branch"`, the line adds ``: set `status: draft` in plan.md, then the approver runs `spec-dna approve <slug> plan` ``.
+  - The agent starts no third run ([the stop rule](diagnostics.md#the-stop-rule)). The last line stays the line of `finish`.
+- A task of `Order` closes with `finish` where the need rule turns the acceptance on: SD927 is on in the head or in the tree of the lifecycle base, so a branch cannot change the gate with its own `spec-dna.toml`. Its text names `spec-dna accept <slug>` with the slug of its change, as a task that names `spec-dna finish <slug>` does.
+  - `next` counts the task "for `finish`", so the stage does not stay at `build`.
+  - Step 0 of `finish` and `finish --dry-run` do not stop on it. Step 5.2 stops until the record passes.
+  - In the profile `lite` the acceptance is off, so such a task stays an open task, as in 0.7.1.
+  - The skill `write-plan` says: "Write no task for the review or the acceptance: `next` names them."
 - An intent with no `class` stays in the stage `plan`, because the class decides the next artifact. If its status is `draft`, the last line asks for the class first and then for the status. If its status is `accepted`, the last line asks for the class, and says that `check` reads the change as `routine` until then. `check` does not change: it reads a change with no class as `routine`.
 - A line that asks to approve a spec or a plan appears only when the file exists. With no file, the last line asks to write it with `spec-dna new`.
 - With `[change] approval = "branch"`, each line that asks for an approval also says that an approver commits the `status` line alone. A commit that changes more than the `status` line is no approval commit.
@@ -506,7 +526,7 @@ In the `build` stage, `next` also names the next open task of the plan, also if 
 
 ### Skills
 
-Each line of `next` has the name of the skill for its step. The list is fixed and has 10 names, in this order: `brainstorm`, `specify`, `clarify`, `write-plan`, `execute`, `tdd`, `review`, `verify`, `accept` and `finish`. With `--json`, each item has the field `skill`. An item of a person (an open task of a person, and the line that waits for it) has the field `"person":true` too, and its text line ends with `[person]` in place of the skill. The skill of such an item stays `execute`, but an agent does not do the item.
+Each line of `next` has the name of the skill for its step. The list is fixed and has 9 names, in this order: `brainstorm`, `specify`, `clarify`, `write-plan`, `execute`, `tdd`, `review`, `verify` and `finish`. With `--json`, each item has the field `skill`. An item of a person (an open task of a person, and the line that waits for it) has the field `"person":true` too, and its text line ends with `[person]` in place of the skill. The skill of such an item stays `execute`, but an agent does not do the item.
 
 | Step | Skill |
 | --- | --- |
@@ -517,8 +537,7 @@ Each line of `next` has the name of the skill for its step. The list is fixed an
 | The stage `build`, an open task or a change of the code | `execute` |
 | The stage `test`, a requirement with no evidence | `tdd` |
 | The stage `deploy`, run the proof of the plan | `verify` |
-| The stage `deploy`, review the diff | `review` |
-| The stage `deploy`, the acceptance record of a change that needs one | `accept` |
+| The stage `deploy`, review the diff, or the acceptance record of a change that needs one | `review` |
 | The stage `closed`, or a change that is ready for `finish` | `finish` |
 
 A line that is done has the skill of its own step. `spec-dna skill show <name>` prints the text of a skill, also for an agent with no skill folder. `next` never names `debug` and `post-mortem`: a failure and an incident are events, not stages of a change.
@@ -546,22 +565,22 @@ spec-dna skill list [--json]
 spec-dna skill show <name> [--json]
 ```
 
-`skill` prints the skills of the workflow pack ([harness.md](harness.md#the-workflow-pack-and-reviewmd)). It reads no document, writes nothing and starts no program. The text of each skill is a constant of the binary, so the pin fixes it.
+`skill` prints the skills of the workflow pack ([harness.md](harness.md#the-workflow-pack-and-reviewmd)). It reads no document, writes nothing and starts no program. The text of each skill is a constant of the binary, so the pin fixes it. It depends on the profile only.
 
-`skill list` prints one line for each of the 12 skills, in the order of the table of the pack. A line has 5 columns: the name, the kind (`stage` or `event`), the stage (`-` for an event skill), the state in the project and the default.
+`skill list` prints one line for each of the 11 skills, in the order of the table of the pack. A line has 5 columns: the name, the kind (`stage` or `event`), the stage (`-` for an event skill), the state in the project and the default.
 
 ```text
-brainstorm  stage plan   on  off
+brainstorm  stage plan   on  on
 clarify     stage design on  on
 execute     stage build  off off
 debug       event -      off off
 ```
 
 - The state comes from `[harness] skills` of `spec-dna.toml`: `on` if the list has the name, else `off`. A project with a `spec-dna.toml` and no `[harness]` table has each skill `off`. With no `spec-dna.toml`, the state is `-`.
-- The default follows the rule of [ADR 0023](adr/0023-default-skills-from-the-release-table.md): it reads the 8 skills of the design (the 7 of D2 and `accept`), the verdict of the skill in the table of the release, and a constant of the release. With the constant `true`, the default is `on` only for a skill with the verdict `on`. With `false`, it is also `on` for a skill of the 8 whose verdict is not `off`. `init`, `upgrade` and SD507 use the same default.
+- The default follows the rule of [ADR 0023](adr/0023-default-skills-from-the-release-table.md): it reads the 7 skills of the design (D2), the verdict of the skill in the table of the release, and a constant of the release. With the constant `true`, the default is `on` only for a skill with the verdict `on`. With `false`, it is also `on` for a skill of the 7 whose verdict is not `off`. `init`, `upgrade` and SD507 use the same default.
 - A configuration error gives exit code 3. A pin of another version gives the warning of `next` on stderr.
 
-`skill show <name>` prints the body of one skill, with no front matter and no marker. It is the text that `init` writes into `.claude/skills/spec-dna-<name>/SKILL.md`. It works for a skill that is off, and with no `spec-dna.toml`, so an agent with no skill folder can read the text of the step that `next` names. The 12 names are the only names. The adapter skill `spec-dna`, a folder name such as `spec-dna-review` and the names `intent`, `spec` and `plan` of 0.6 give exit code 2.
+`skill show <name>` prints the body of one skill, with no front matter and no marker. It is the text that `init` writes into `.claude/skills/spec-dna-<name>/SKILL.md`: in a project of the profile `lite`, it is the text of 0.7.1 ([harness.md](harness.md#the-workflow-pack-and-reviewmd)). It works for a skill that is off, and with no `spec-dna.toml`, so an agent with no skill folder can read the text of the step that `next` names. The 11 names are the only names. The adapter skill `spec-dna`, a folder name such as `spec-dna-review`, the name `accept` of the first build of 0.8.0 (it is part of `review`) and the names `intent`, `spec` and `plan` of 0.6 give exit code 2.
 
 With `--json`, `list` prints one object, and `show` prints one object with the body:
 
@@ -1047,7 +1066,7 @@ A stop by the cap keeps the complete waves. The command accepts `--runs`, `--max
 
 ### eval verdict
 
-`eval verdict` prints one line for each of the 12 skills and for `agents-line`: the name, the verdict (`on`, `off`, `inconclusive` or `unmeasured`) and the source (`project <file>`, `release` or `-`). For each name, it reads the newest result file of `<[evals] dir>/results` that holds a verdict of that name, and then the table of the release that the binary holds. It starts no agent and needs no `[evals]` table. With `--json`, it prints `{"verdicts":[{"name","verdict","source","file"}]}`. Exit code 0, or 3 for a configuration error.
+`eval verdict` prints one line for each of the 11 skills and for `agents-line`: the name, the verdict (`on`, `off`, `inconclusive` or `unmeasured`) and the source (`project <file>`, `release` or `-`). For each name, it reads the newest result file of `<[evals] dir>/results` that holds a verdict of that name, and then the table of the release that the binary holds. It starts no agent and needs no `[evals]` table. With `--json`, it prints `{"verdicts":[{"name","verdict","source","file"}]}`. Exit code 0, or 3 for a configuration error.
 
 `eval verdict --release` prints the table of the release instead: one line for each name that has a row, with the verdict, the rule, the runs and passes of each arm, the costs, the 2 intervals, the batch and the version of Claude Code. With `--json`, it prints `{"release":[...]}`. It reads the binary only, and it needs no project. [evals.md](evals.md#the-records-of-a-release) gives the form.
 
@@ -1119,15 +1138,17 @@ When the limit is above the cap, or if there is no limit, the hook answers `perm
 
 Each step that fails gives no output. `git` runs with `GIT_OPTIONAL_LOCKS=0`. The hook stores nothing. A run with `claude -p` cannot ask the person. The agent of the Claude Code adapter then denies the edit, and the model reads the reason.
 
-`protect-approvals` runs before a `Bash` tool call (the `PreToolUse` event). It denies a call of an agent that approves a document. It reads `tool_name` and `tool_input.command` of the event, `cwd`, and `CLAUDE_PROJECT_DIR` of the environment. `init` writes the command when `[harness] protect-approvals` is `true`, with one `--intent <dir>` for each folder of the `intent` layer from the repository root, for example `docs/intent` ([`[harness] protect-approvals`](config.md#the-table-harness)). The generated command ends with `2>/dev/null || true`. The hook never reads `spec-dna.toml`.
+`protect-approvals` runs before a `Bash` tool call (the `PreToolUse` event). It denies a call of an agent that approves a document. It reads `tool_name`, `tool_input.command`, `cwd` and `agent_type` of the event, and `CLAUDE_PROJECT_DIR` of the environment. `init` writes the command when `[harness] protect-approvals` is `true`, with one `--intent <dir>` for each folder of the `intent` layer from the repository root, for example `docs/intent` ([`[harness] protect-approvals`](config.md#the-table-harness)). The generated command ends with `2>/dev/null || true`. The hook never reads `spec-dna.toml`.
 
 The hook joins a line that ends with a backslash to the next line. It splits the command into segments at `;`, `&`, `|`, brackets, backticks and line feeds, and each segment into words at white space. It removes the quotes, so `sh -c "..."` gives its inner words. This is a text scan, not a shell parser. The rules, in this order:
 
 1. A segment with a word whose last path part is `spec-dna` and a later word `approve`: deny.
-2. A segment with the word `git` and its subcommand `commit` that has a word, before the word `git` in the call, with `accepted` or `approved`: deny, and the reason says to run the edit and the commit as 2 calls. The test ignores the path `.spec-dna/accepted/`. This is for an edit and a commit in one call. With no `--intent`, the hook skips this rule and the next one.
+2. A segment with the word `git` and its subcommand `commit` that has a word, before the word `git` in the call, with `accepted` or `approved`: deny, and the reason says to run the edit and the commit as 2 calls. The test ignores the path `.spec-dna/accepted/`. This is for an edit and a commit in one call. With no `--intent`, the hook skips this rule, rule 3 and rule 5.
 3. A segment with the word `git` and its subcommand `commit` (the options of `git`, such as `-C <dir>`, can come before it): the hook reads the repository. The folder is `cwd`, else `CLAUDE_PROJECT_DIR`. A `cd <dir>` segment before the commit, and `git -C <dir>`, move it. The hook expands `~`, `$PWD` and `$CLAUDE_PROJECT_DIR` (also with braces) at the start of a dir. For another dir with `$` or `~`, the hook inspects the repository of `cwd` and of `CLAUDE_PROJECT_DIR` too. The old tree is `HEAD`, or `HEAD~1` with `--amend`. A tree that is not there is the empty tree. The candidates are the artifact files `<dir>/<slug>/intent.md`, `spec.md` and `plan.md` that the working tree changes against the old tree (`git diff --name-only`), and the untracked ones. For each candidate, the hook compares the old status with the status in the index and in the working tree. It denies the call if a new status is the approval value, and the old status is not.
 
 4. In the same repository check as rule 3, the candidates also include the record `<dir>/<slug>/acceptance.toml`. The hook reads `acknowledged-by` in the old tree, in the index and in the working tree. It denies the call if the index or the working tree has an entry that the old tree does not have. The reason tells the agent to remove the entry. Only a person acknowledges a record. The candidates also include the archive files under `.spec-dna/accepted/`. The hook denies a new archive file whose content is not that of a record that the same commit deletes from a change folder, and it denies a change of an archive file that the old tree has (a delete passes). So the commit of `finish` passes, because it deletes the record and adds the same content.
+
+5. Rule D. The event has `agent_type` `acceptor` (a subagent of that name, or a session that starts with `claude --agent acceptor`), and a segment has `git commit` that commits more than the record `acceptance.toml` of a change: deny. The rule runs before rule 3. It reads the text of the command and the index, and it cannot enforce a limit on a write of a file ([harness.md](harness.md#spec-dna-hook-protect-approvals) gives the cases and the limits).
 
 A deny is `permissionDecision: "deny"` with a reason. The reason of rule 3 names the path and the status, and tells the agent to set the status back and to ask the person to run `spec-dna approve <slug> <artifact>` in a terminal of their own. Bad JSON, no git, a git error and a path that the hook cannot read give no output. [harness.md](harness.md#spec-dna-hook-protect-approvals) gives the limits.
 

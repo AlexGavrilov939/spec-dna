@@ -480,34 +480,28 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
 }
 
 /// What `accept --follow-up` reads from the run of `accept`.
-struct FollowCtx<'a> {
-    repo: &'a Repo,
-    cfg: &'a Config,
-    slug: &'a str,
-    folder: &'a str,
-    base_rev: Option<&'a str>,
-    scope: &'a [String],
-    changed: &'a [String],
-    is_code: &'a dyn Fn(&str) -> bool,
+pub struct FollowCtx<'a> {
+    pub repo: &'a Repo,
+    pub cfg: &'a Config,
+    pub slug: &'a str,
+    pub folder: &'a str,
+    pub base_rev: Option<&'a str>,
+    pub scope: &'a [String],
+    pub changed: &'a [String],
+    pub is_code: &'a dyn Fn(&str) -> bool,
 }
 
-/// `accept <slug> --follow-up [--brief]` (design 0.8.0, D73). The brief form prints
-/// the follow-up brief, and the other form adds a `[[follow-up]]` entry to the
-/// record. Both refuse (exit code 1), with a message that names a full run, when
-/// the fix is not a fix that a follow-up can check.
-fn run_follow_up(c: &FollowCtx, o: &Opts) -> Result<u8, Fatal> {
-    use crate::acceptance::{Chain, Source};
-    let full = |why: String| {
-        Fatal::Refused(format!(
-            "{why}; a follow-up cannot check this: delete the record, commit, and accept again with a full run (`spec-dna accept {} --brief`)",
-            c.slug
-        ))
-    };
-    let Some(base_rev) = c.base_rev else {
-        return Err(Fatal::Refused(
-            "no lifecycle base is known, so the fix cannot be compared with the record; give `--base`".into(),
-        ));
-    };
+/// The refusal of a follow-up that names a full run.
+fn full_run(slug: &str, why: String) -> Fatal {
+    Fatal::Refused(format!(
+        "{why}; a follow-up cannot check this: delete the record, commit, and accept again with a full run (`spec-dna accept {slug} --brief`)"
+    ))
+}
+
+/// Reads the record for a follow-up: its text, the record, and its path. It
+/// refuses a record that does not read, that is not a record of this change, or
+/// that says `rejected`.
+fn follow_up_record(c: &FollowCtx) -> Result<(String, Record, String), Fatal> {
     let record_path = format!("{}/{}", c.folder, record::FILE_NAME);
     let text = match crate::git::read_limited(
         &c.repo.root.join(&record_path),
@@ -515,7 +509,7 @@ fn run_follow_up(c: &FollowCtx, o: &Opts) -> Result<u8, Fatal> {
     ) {
         crate::git::Limited::Bytes(b) => String::from_utf8_lossy(&b).into_owned(),
         crate::git::Limited::Absent => {
-            return Err(full(format!("`{record_path}` does not exist")));
+            return Err(full_run(c.slug, format!("`{record_path}` does not exist")));
         }
         other => {
             return Err(Fatal::Refused(crate::acceptance::unreadable_message(
@@ -524,18 +518,51 @@ fn run_follow_up(c: &FollowCtx, o: &Opts) -> Result<u8, Fatal> {
             )));
         }
     };
-    let rec =
-        Record::parse(&text).map_err(|e| full(format!("`{record_path}` does not read ({e})")))?;
+    let rec = Record::parse(&text)
+        .map_err(|e| full_run(c.slug, format!("`{record_path}` does not read ({e})")))?;
     if rec.change != c.slug || rec.format != record::FORMAT {
-        return Err(full(format!(
-            "`{record_path}` is not a record of format {} for `{}`",
-            record::FORMAT,
-            c.slug
-        )));
+        return Err(full_run(
+            c.slug,
+            format!(
+                "`{record_path}` is not a record of format {} for `{}`",
+                record::FORMAT,
+                c.slug
+            ),
+        ));
     }
     if rec.result == "rejected" {
-        return Err(full(format!("`{record_path}` says `rejected`")));
+        return Err(full_run(c.slug, format!("`{record_path}` says `rejected`")));
     }
+    Ok((text, rec, record_path))
+}
+
+/// What a follow-up needs once the checks pass.
+struct Prepared<'a> {
+    chain: crate::acceptance::Chain<'a>,
+    /// The number of finished follow-ups.
+    m: usize,
+    /// The numbers of the open notes.
+    open: Vec<usize>,
+    last_tree: String,
+    fix: crate::acceptance::Fix,
+}
+
+/// The checks that both forms of `accept --follow-up` make (design 0.8.0, D73
+/// item 2). Each refusal names a full run. `brief` is true for the brief form,
+/// which ignores a follow-up that the agent has not finished.
+fn prepare_follow_up<'a>(
+    c: &FollowCtx<'a>,
+    rec: &'a Record,
+    record_path: &str,
+    brief: bool,
+) -> Result<Prepared<'a>, Fatal> {
+    use crate::acceptance::{Chain, Source};
+    let full = |why: String| full_run(c.slug, why);
+    let Some(base_rev) = c.base_rev else {
+        return Err(Fatal::Refused(
+            "no lifecycle base is known, so the fix cannot be compared with the record; give `--base`".into(),
+        ));
+    };
     // A follow-up that the agent has not finished (its `brief` is `pending`) is not
     // a link. The brief ignores it; a new entry needs it finished.
     let unfinished = rec
@@ -543,7 +570,7 @@ fn run_follow_up(c: &FollowCtx, o: &Opts) -> Result<u8, Fatal> {
         .last()
         .is_some_and(|u| u.brief == record::PENDING);
     let m = rec.follow_ups.len() - usize::from(unfinished);
-    if unfinished && !o.brief {
+    if unfinished && !brief {
         return Err(Fatal::Refused(format!(
             "`{record_path}` has a follow-up with the value `pending`; fill it in and commit it, or delete the entry"
         )));
@@ -560,8 +587,7 @@ fn run_follow_up(c: &FollowCtx, o: &Opts) -> Result<u8, Fatal> {
             )));
         }
     }
-    let chain =
-        Chain::load(c.cfg, &c.repo.git, base_rev, c.folder, &rec).map_err(Fatal::Refused)?;
+    let chain = Chain::load(c.cfg, &c.repo.git, base_rev, c.folder, rec).map_err(Fatal::Refused)?;
     let positions = chain.follow_positions();
     let (last_pos, last_tree) = if m == 0 {
         (chain.record_pos(), rec.tree.clone())
@@ -602,6 +628,65 @@ fn run_follow_up(c: &FollowCtx, o: &Opts) -> Result<u8, Fatal> {
             record::MAX_CHAIN_DIFF
         )));
     }
+    Ok(Prepared {
+        chain,
+        m,
+        open,
+        last_tree,
+        fix,
+    })
+}
+
+/// What [`follow_up_check`] finds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FollowCheck {
+    /// `accept --follow-up` does not refuse.
+    Callable,
+    /// An edit that `HEAD` does not have: the agent commits the work first.
+    Uncommitted,
+    /// The command refuses, and names a full run. The text is its message.
+    Refused(String),
+}
+
+/// True if `accept <slug> --follow-up --brief` would not refuse, with the reason
+/// when it does (design 0.8.0, D73 item 10). `next` names the follow-up only when
+/// the command does not refuse, and else a full run. It makes the checks of the
+/// command: the dirty tree and the chain.
+pub fn follow_up_check(c: &FollowCtx) -> Result<FollowCheck, Fatal> {
+    let dirty = match refuse_uncommitted(c.repo, c.folder) {
+        Ok(d) => d,
+        Err(Fatal::Refused(_)) => return Ok(FollowCheck::Uncommitted),
+        Err(e) => return Err(e),
+    };
+    if refuse_dirty_code(&dirty, c.scope, c.is_code).is_err() {
+        return Ok(FollowCheck::Uncommitted);
+    }
+    let (_, rec, record_path) = match follow_up_record(c) {
+        Ok(r) => r,
+        Err(Fatal::Refused(m)) => return Ok(FollowCheck::Refused(m)),
+        Err(e) => return Err(e),
+    };
+    match prepare_follow_up(c, &rec, &record_path, true) {
+        Ok(_) => Ok(FollowCheck::Callable),
+        Err(Fatal::Refused(m)) => Ok(FollowCheck::Refused(m)),
+        Err(e) => Err(e),
+    }
+}
+
+/// `accept <slug> --follow-up [--brief]` (design 0.8.0, D73). The brief form prints
+/// the follow-up brief, and the other form adds a `[[follow-up]]` entry to the
+/// record. Both refuse (exit code 1), with a message that names a full run, when
+/// the fix is not a fix that a follow-up can check.
+fn run_follow_up(c: &FollowCtx, o: &Opts) -> Result<u8, Fatal> {
+    use crate::acceptance::Source;
+    let (text, rec, record_path) = follow_up_record(c)?;
+    let Prepared {
+        chain,
+        m,
+        open,
+        last_tree,
+        fix,
+    } = prepare_follow_up(c, &rec, &record_path, o.brief)?;
     let brief = chain
         .brief(m, &last_tree, &Source::Head, &fix)
         .map_err(Fatal::Io)?;

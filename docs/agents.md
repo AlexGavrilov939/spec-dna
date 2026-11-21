@@ -42,7 +42,7 @@ An adapter is a part of spec-dna for one agent. Each agent gets the adapter of i
 | --- | --- | --- |
 | The instruction line | `AGENTS.md` | `CLAUDE.md` |
 | The spec-dna skill, with the full procedure | Not written | `.claude/skills/spec-dna/SKILL.md` |
-| Roles with their models, the 12 skills of the workflow pack, hooks and `REVIEW.md` | Not written | The harness at the level `lean` or `full` ([harness.md](harness.md)) |
+| Roles with their models, the 11 skills of the workflow pack, hooks and `REVIEW.md` | Not written | The harness at the level `lean` or `full` ([harness.md](harness.md)) |
 | Evals of the agent setup | Not written | `spec-dna eval run` starts headless Claude Code ([evals.md](evals.md)) |
 | Token and read counts of sessions | Not available | The `claude-code` adapter of `spec-dna transcript` ([transcript.md](transcript.md)) |
 

@@ -145,7 +145,7 @@ codes! {
     TaskTooLarge = "SD924", "task-too-large", Warning, "Split the task. Write each part as its own task with at most `[change] max-task-files` paths in `Files:` and one `Verify:`.";
     CheckboxMissing = "SD925", "checkbox-missing", Warning, "Write the task box at the start of the item: `- [ ]` for an open item, `- [x]` for a resolved item. SD919 and SD922 read the box. To state that the section has no item, write one item that starts with the word `none`, followed by `:`, `.` or the end.";
 ApproverAgent = "SD926", "approver-agent", Warning, "Remove the address from `[change] approvers` in spec-dna.toml, in a pull request of its own (SD503). List the e-mails of the persons that approve.";
-    AcceptanceMissing = "SD927", "acceptance-missing", Warning, "The change needs an acceptance record, and the head has none. Give the brief of `spec-dna accept <slug> --brief`, unchanged, to an agent `acceptor`. The acceptor runs `spec-dna accept <slug>` and writes `acceptance.toml` in the folder of the change. Then run `spec-dna finish <slug>`. In a shallow clone, the commit that added the plan can be absent from the history: fetch the full history (`fetch-depth: 0`).";
+    AcceptanceMissing = "SD927", "acceptance-missing", Warning, "The change needs an acceptance record, and the head has none. Start an agent `acceptor` with the prompt that `spec-dna next` prints: `cd '<root>' && spec-dna accept <slug> --brief`. For a second acceptor in a new session, run `claude --agent acceptor '<prompt>'`. The acceptor runs the prompt, then `spec-dna accept <slug>`, and writes `acceptance.toml` in the folder of the change. Then run `spec-dna finish <slug>`. In a shallow clone, the commit that added the plan can be absent from the history: fetch the full history (`fetch-depth: 0`).";
     AcceptanceInvalid = "SD928", "acceptance-invalid", Warning, "The record breaks a rule of a valid record. The message names the rule. Fix the record: write each answer, and replace each `pending` value. Do not edit the code. If the `brief` of an entry is not the brief of its commit, remove the entry, and accept again from a new brief.";
     AcceptanceStale = "SD929", "acceptance-stale", Warning, "The code that the record lists changed after the acceptance, or the diff has a code path of the scope that the record does not list. Before `finish`: delete the record, run `spec-dna accept <slug>` again from a new brief, and run `spec-dna finish <slug>` again. After `finish`: revert the commit of `finish`, merge the base, and do the same.";
     AcceptanceRejected = "SD930", "acceptance-rejected", Warning, "The record says `rejected`. Fix each finding in the code, delete the record, and accept again.";
@@ -239,6 +239,17 @@ impl Diag {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_fix_of_sd927_names_the_prompt_line_and_the_agent_session() {
+        let f = Code::AcceptanceMissing.fix();
+        assert!(
+            f.contains("`cd '<root>' && spec-dna accept <slug> --brief`"),
+            "{f}"
+        );
+        assert!(f.contains("`claude --agent acceptor '<prompt>'`"), "{f}");
+        assert!(!f.contains("unchanged"), "{f}");
+    }
 
     #[test]
     fn codes_are_unique_and_well_formed() {

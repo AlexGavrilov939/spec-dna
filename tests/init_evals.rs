@@ -554,7 +554,7 @@ fn a_skill_with_no_marker_leaves_the_default_skills() {
     assert_eq!(code, 0, "{out}{err}");
     let cfg = r.read("spec-dna.toml");
     assert!(
-        cfg.contains("skills = [\"brainstorm\", \"clarify\", \"write-plan\", \"execute\", \"tdd\", \"review\", \"verify\", \"accept\", \"finish\", \"debug\", \"post-mortem\"]\n"),
+        cfg.contains("skills = [\"brainstorm\", \"clarify\", \"write-plan\", \"execute\", \"tdd\", \"review\", \"verify\", \"finish\", \"debug\", \"post-mortem\"]\n"),
         "{cfg}"
     );
     assert!(out.contains(&format!("note: {}", SKILLS[1])), "{out}");
@@ -707,8 +707,8 @@ fn the_descriptions_of_the_default_skills_add_their_listing_to_the_prefix_of_eac
                 format!("- {name}: {d}\n").len()
             })
             .sum();
-        // The skill `accept` brings the agent `acceptor`: its description is
-        // in the listing of the agents (ADR 0025).
+        // The skill `review` brings the agent `acceptor`: its description is
+        // in the listing of the agents (design 0.8.0, D71).
         let acceptor = if r.dir.join(".claude/agents/acceptor.md").exists() {
             let d = r
                 .read(".claude/agents/acceptor.md")

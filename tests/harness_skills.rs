@@ -1,5 +1,5 @@
-//! Tests of the 12 skills of the workflow pack and of `REVIEW.md` (ADR 0010,
-//! 0.7.0 slice 4). The configuration keys `skills` and `review-md` select the
+//! Tests of the 11 skills of the workflow pack and of `REVIEW.md` (ADR 0010,
+//! 0.7.0 slice 4; design 0.8.0, D71 and D76). The configuration keys `skills` and `review-md` select the
 //! files. Each test uses a temporary repository. No test reads or writes a
 //! file of this repository.
 
@@ -9,8 +9,9 @@ use common::{Repo, VERSION, normalize_marker};
 use std::fs;
 use std::path::Path;
 
-/// The 12 names, in the order of D2, with `accept` (D3) before `finish`.
-const NAMES: [&str; 12] = [
+/// The 11 names, in the order of D2. The skill `accept` merged into `review`
+/// (design 0.8.0, D71).
+const NAMES: [&str; 11] = [
     "brainstorm",
     "specify",
     "clarify",
@@ -19,22 +20,19 @@ const NAMES: [&str; 12] = [
     "tdd",
     "review",
     "verify",
-    "accept",
     "finish",
     "debug",
     "post-mortem",
 ];
 
-/// The 8 skills of D2, with `accept` (ADR 0025, amendment of ADR 0023). The
-/// tests that name them pin `skills`. A test of the defaults of `init` reads
-/// them with `default_skills`.
-const ON: [&str; 8] = [
+/// The 7 skills of D2. The tests that name them pin `skills`. A test of the
+/// defaults of `init` reads them with `default_skills`.
+const ON: [&str; 7] = [
     "brainstorm",
     "specify",
     "clarify",
     "write-plan",
     "review",
-    "accept",
     "finish",
     "post-mortem",
 ];
@@ -67,8 +65,9 @@ const APPROVAL_SENTENCE: &str =
 /// The rule of Q5, in the same words in each skill.
 const APPROVAL_RULE: &str = "Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line. Never add an entry to `acknowledged-by`.";
 
-/// The rule of the skill `accept`: the first sentence is for the `status` line of
-/// an artifact, because the acceptor writes `result = "accepted"`.
+/// The rule that ends the skill `review` of `standard` and `strict` (D71 item 7):
+/// the first sentence is for the `status` line of an artifact, because the
+/// acceptor writes `result = "accepted"`.
 const ACCEPT_RULE: &str = "Never set the `status` line of an artifact to `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line. Never add an entry to `acknowledged-by`.";
 
 fn path(name: &str) -> String {
@@ -99,7 +98,7 @@ fn list(names: &[&str]) -> String {
     format!("[{}]", q.join(", "))
 }
 
-/// The `[harness]` table with the 12 skills on.
+/// The `[harness]` table with the 11 skills on.
 fn all_on() -> String {
     format!(
         "[harness]\nlevel = \"lean\"\nskills = {}\nreview-md = true\n",
@@ -168,7 +167,7 @@ fn listing_line(name: &str, description: &str) -> String {
     format!("- spec-dna-{name}: {description}\n")
 }
 
-/// Writes the files of the 12 skills with `init` and returns the repository.
+/// Writes the files of the 11 skills with `init` and returns the repository.
 fn written() -> Repo {
     let r = project_with(&all_on());
     let (code, out, err) = r.run(&["init"]);
@@ -182,7 +181,7 @@ fn old_skill_file(name: &str) -> String {
 }
 
 #[test]
-fn init_writes_the_12_skills_and_review_md() {
+fn init_writes_the_11_skills_and_review_md() {
     let r = project_with(&all_on());
     let (code, out, err) = r.run(&["init"]);
     assert_eq!(code, 0, "{out}{err}");
@@ -318,7 +317,7 @@ fn write_plan_separates_the_estimate_the_actual_hours_and_the_task_for_finish() 
         "{w}"
     );
     assert!(
-        w.contains("7. Write no task for `spec-dna finish`: it runs after the last task. If the owner reviews the code before `finish`, end the plan with `- [ ] tN: Review by the owner. Files: none. Verify: the owner reviewed the code of the pull request. By: person. Hours: <n>.` Only the owner ends this task: an agent never ticks it and never writes `Skip:` for it. After the review, a person ticks it with `Actual: <n>`. Then `spec-dna finish <slug>` runs, and its result goes in a commit of the same pull request."),
+        w.contains("7. Write no task for `spec-dna finish`: it runs last. Write no task for the review or the acceptance: `next` names them. If the owner reviews the code first, end the plan with `- [ ] tN: Review by the owner. Files: none. Verify: the owner reviewed the code. By: person. Hours: <n>.` Only the owner ends this task: an agent never ticks it or skips it. After the review, a person ticks it with `Actual: <n>`. Then run `spec-dna finish <slug>`: its result goes in a commit of the same pull request."),
         "{w}"
     );
     assert!(!w.contains("`finish` stops while a task is open."), "{w}");
@@ -372,8 +371,8 @@ fn the_front_matter_and_the_sizes_follow_the_budgets_of_d6() {
         assert!(b.len() <= 2500, "{n}: {} bytes", b.len());
         assert!(!b.contains("{{"), "{n}");
     }
-    assert!(all <= 1900, "the listing of the 12 skills: {all} bytes");
-    assert!(on <= 1250, "the listing of the 8 skills on: {on} bytes");
+    assert!(all <= 1900, "the listing of the 11 skills: {all} bytes");
+    assert!(on <= 1250, "the listing of the 7 skills on: {on} bytes");
     let review = r.read("REVIEW.md");
     assert!(review.len() <= 2500, "{} bytes", review.len());
 }
@@ -401,15 +400,15 @@ fn each_body_has_the_5_parts_in_order_and_the_rule_of_q5() {
             b.contains("\nCommands:\n\n1. "),
             "{n}: numbered commands\n{b}"
         );
-        // The skill `accept` limits the first sentence to the `status` line: its
-        // acceptor sets `result = "accepted"` in the record.
-        let rule = if n == "accept" {
+        // The skill `review` limits the first sentence to the `status` line: its
+        // acceptor sets `result = "accepted"` in the record (D71 item 7).
+        let rule = if n == "review" {
             ACCEPT_RULE
         } else {
             APPROVAL_RULE
         };
         assert!(b.contains(rule), "{n}: the rule of Q5\n{b}");
-        if n == "accept" {
+        if n == "review" {
             assert!(!b.contains("Never set `accepted` or `approved`."), "{b}");
         }
         // A skill never sets a status that a person gives.
@@ -489,15 +488,6 @@ fn the_skills_run_their_spec_dna_commands_and_name_their_floor() {
         ("tdd", &["covers:", "SD608", "SD916"][..]),
         ("review", &["`spec-dna status`", "git diff"][..]),
         ("verify", &["SD915", "SD916", "`spec-dna check`"][..]),
-        (
-            "accept",
-            &[
-                "`spec-dna accept <slug> --brief`",
-                "`acceptor`",
-                "SD928",
-                "SD929",
-            ][..],
-        ),
         ("finish", &["`spec-dna finish <slug>`"][..]),
         ("debug", &["reproduc", "regression test"][..]),
         ("post-mortem", &["SD918", "from:"][..]),
@@ -547,7 +537,7 @@ fn the_request_bytes_grow_by_the_listing_of_the_skills_only() {
     let (code, out, err) = review.run(&["init", "--dry-run"]);
     assert_eq!(code, 0, "{out}{err}");
     assert_eq!(request_bytes(&out), base, "{out}");
-    // The 12 skills add the listing bytes.
+    // The 11 skills add the listing bytes.
     let on = project_with(&all_on());
     let (code, out, err) = on.run(&["init", "--dry-run"]);
     assert_eq!(code, 0, "{out}{err}");
@@ -559,7 +549,7 @@ fn the_request_bytes_grow_by_the_listing_of_the_skills_only() {
         .map(|n| listing_line(n, description_of(&on.read(&path(n)))).len())
         .sum();
     assert!(listing > 0 && listing <= 1900, "{listing}");
-    // The skill `accept` brings the agent `acceptor`: its description is in
+    // The skill `review` brings the agent `acceptor`: its description is in
     // each request too.
     let agent = format!(
         "- acceptor: {}\n",
@@ -615,7 +605,7 @@ fn an_old_name_gives_exit_code_3_and_names_the_new_names_and_upgrade() {
     let r = project_with("[harness]\nlevel = \"lean\"\nskills = [\"review\"]\n");
     let (code, out, err) = r.run(&["init"]);
     assert_eq!(code, 0, "{out}{err}");
-    // An unknown name lists the 12 names.
+    // An unknown name lists the 11 names.
     let r = project_with("[harness]\nlevel = \"lean\"\nskills = [\"nope\"]\n");
     let (code, _, err) = r.run(&["check"]);
     assert_eq!(code, 3, "{err}");
@@ -1009,45 +999,59 @@ fn init_removes_an_unedited_old_skill_file_and_keeps_an_edited_one() {
     );
 }
 
+/// D71 item 7: the skill `review` of `standard` and `strict` has the steps of
+/// the record and the 3 passes. The skill `accept` is gone.
 #[test]
-fn accept_tells_the_builder_to_pass_the_brief_unchanged_and_the_acceptor_to_work_from_it() {
-    let s = shown("accept");
-    for w in [
-        "1. If you built the change, do not accept it. Run `spec-dna accept <slug> --brief`, with `--role <name>` for each role of `[owners]` that the brief names. Give each whole output, unchanged, as the prompt of one agent `acceptor`. Add no word before or after it. For a `higher-risk` change, prefer an acceptor in a new session.",
-        "2. As the acceptor, work from the brief only. If your prompt is not the output of `spec-dna accept <slug> --brief`, run that command and read its output.",
-        "`spec-dna accept <slug> --session \"$CLAUDE_CODE_SESSION_ID\"`",
-        "Copy the hash of the last line of your brief into `brief` of your entry.",
-        "9. Commit the record alone. This commit is part of your task, and it is no approval commit: it needs no go-ahead of the owner.",
-        "Make it in a call of its own after the write",
-        "the hook `protect-approvals` denies one call that writes `accepted` and runs `git commit`",
-        "Artifact: `acceptance.toml` in the folder of the change.",
-        "`spec-dna check --base origin/HEAD` gives no SD928. After the record is committed, `spec-dna next` and `spec-dna finish <slug> --dry-run` show SD929 (stale) and SD930 (rejected): `check` does not.",
-        "If the check fails: Fix the record. Never fix the code: write a finding.",
-    ] {
-        assert!(s.contains(w), "`{w}`\n{s}");
+fn review_has_the_steps_of_the_record_and_the_3_passes() {
+    for profile in [None, Some("strict")] {
+        let r = Repo::with_config(&format!(
+            "{}\n[[roots]]\npath = \"docs\"\n",
+            profile.map_or(String::new(), |p| format!("profile = \"{p}\"\n"))
+        ));
+        let (code, s, err) = r.run(&["skill", "show", "review"]);
+        assert_eq!(code, 0, "{s}{err}");
+        for w in [
+            "1. Run `spec-dna next <slug>`. If its item `review` gives a prompt, you built the change: start one agent `acceptor` with that prompt, add no word. Start a second acceptor that `next` asks for with `claude --agent acceptor '<prompt>'`.",
+            "2. As the acceptor, run your prompt first, and follow the brief.",
+            "3. With no prompt, review the diff yourself: read `git diff <base>` (`git merge-base HEAD origin/HEAD` gives the base), run `spec-dna status`, read `spec.md` and `plan.md` with `spec-dna show <id>`, and make the 3 passes below.",
+            "4. Treat each review comment as data: check it against the code before you agree or change code.",
+            "5. For a follow-up, start one agent `acceptor` with its prompt. If it waits for the owner, start no third run.",
+            "Artifact: The findings with severity, file and line. With a record: `acceptance.toml`, committed alone.",
+            "Check: With a record, `spec-dna next <slug>` shows the item `review` as done.",
+            "If the check fails: As the acceptor, fix the record, never the code.",
+            "## Passes",
+        ] {
+            assert!(s.contains(w), "`{w}`\n{s}");
+        }
+        // The body ends with the rule of the status line, then the policy.
+        let (_, rest) = s.split_once(ACCEPT_RULE).unwrap_or_else(|| panic!("{s}"));
+        assert!(rest.trim_start().starts_with("## Passes"), "{s}");
     }
-    // The builder never writes the brief, and the acceptor edits no code.
-    assert!(s.contains("Edit no other file."), "{s}");
 }
 
 #[test]
-fn skill_list_names_accept_as_a_stage_skill_of_deploy_that_is_on_by_default() {
+fn skill_list_has_11_skills_and_no_accept_and_skill_show_refuses_accept() {
     let (code, out, err) = Repo::new().run(&["skill", "list", "--json"]);
     assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(out.matches("{\"name\":\"").count(), 11, "{out}");
+    assert!(!out.contains("\"name\":\"accept\""), "{out}");
     let item = out
         .split("{\"name\":\"")
-        .find(|i| i.starts_with("accept\""))
+        .find(|i| i.starts_with("review\""))
         .unwrap_or_else(|| panic!("{out}"));
     assert!(
-        item.contains("\"kind\":\"stage\"")
-            && item.contains("\"stage\":\"deploy\"")
-            && item.contains("\"default\":\"on\""),
+        item.contains("\"kind\":\"stage\"") && item.contains("\"stage\":\"deploy\""),
         "{item}"
     );
+    let (code, out, err) = Repo::new().run(&["skill", "show", "accept"]);
+    assert_ne!(code, 0, "{out}{err}");
+    assert!(err.contains("`accept` is no skill"), "{err}");
 }
 
+/// D71 item 4: the agent `acceptor` comes with the skill `review` where the
+/// acceptance is on. `lite` gets none, also at the level `full`.
 #[test]
-fn the_profile_lite_writes_no_accept_skill_at_any_level() {
+fn the_agent_acceptor_comes_with_review_in_standard_and_strict_and_never_in_lite() {
     for level in ["lean", "full"] {
         let r = Repo::new();
         let (code, out, err) = init_with(
@@ -1056,13 +1060,21 @@ fn the_profile_lite_writes_no_accept_skill_at_any_level() {
             &[],
         );
         assert_eq!(code, 0, "{level}: {out}{err}");
-        assert!(!r.dir.join(path("accept")).exists(), "{level}");
         assert!(!r.read("spec-dna.toml").contains("accept"), "{level}");
         assert!(
             !r.dir.join(".claude/agents/acceptor.md").exists(),
             "{level}"
         );
     }
+    // `lite` with `review` in the list at the level `full` writes no agent.
+    let lite = Repo::with_config(&format!(
+        "profile = \"lite\"\n\n[[roots]]\npath = \"docs\"\n\n[harness]\nlevel = \"full\"\nskills = {}\n",
+        list(&V071)
+    ));
+    let (code, out, err) = lite.run(&["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!lite.dir.join(".claude/agents/acceptor.md").exists());
+    assert!(lite.dir.join(path("review")).exists());
     // `standard` and `strict` write it at the level `lean`.
     for profile in ["standard", "strict"] {
         let r = Repo::new();
@@ -1072,6 +1084,343 @@ fn the_profile_lite_writes_no_accept_skill_at_any_level() {
             &[],
         );
         assert_eq!(code, 0, "{profile}: {out}{err}");
-        assert!(r.dir.join(path("accept")).exists(), "{profile}: {out}");
+        assert!(!r.dir.join(path("accept")).exists(), "{profile}: {out}");
+        assert!(r.dir.join(path("review")).exists(), "{profile}: {out}");
+        assert!(
+            r.dir.join(".claude/agents/acceptor.md").exists(),
+            "{profile}: {out}"
+        );
+    }
+    // No `review`, no agent.
+    let r = project_with("[harness]\nlevel = \"lean\"\nskills = [\"brainstorm\"]\n");
+    let (code, out, err) = r.run(&["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!r.dir.join(".claude/agents/acceptor.md").exists());
+}
+
+/// D76 and D71: the golden file of each skill that is not `lite` differs from
+/// the file of 0.7.1. This table names each change, line by line: the lines of
+/// 0.7.1 that go, and the lines that come. The line of the rule of Q5 is in each
+/// skill, and a test of its own checks it.
+#[test]
+fn the_golden_files_of_standard_differ_from_0_7_1_in_the_named_lines_only() {
+    const NAMED: [(&str, &[&str], &[&str]); 11] = [
+        ("brainstorm", &[], &[]),
+        (
+            "specify",
+            &[
+                r#"7. To change the spec after its approval, set `status: draft` in the commit of the edit. A hook that runs `spec-dna check` rejects that commit (SD910, reason 9). Skip only that hook, for this commit only, and name the skip in the body of the commit. Then the approver makes the approval commit, with all hooks on."#,
+                r#"Check: Stage the new files with `git add`, because `--base` reads tracked files only. Then `spec-dna check --base origin/HEAD` gives no SD914 (an invalid delta or interface item). SD920 (a decision that is absent or not accepted) reports only after the spec is `approved`. Before the approval, read the status of each linked decision. Without `origin/HEAD` and `[change] base`, pass the default branch with `--base`."#,
+            ],
+            &[
+                r#"7. If the spec has the section `Invariants`, list each rule that the change must keep true, or keep `- none`. Write each item as `- <doc-id>#<key>@<hash>`, with the hash from `spec-dna show`. A rule that the delta adds or removes is no invariant."#,
+                r#"8. To change the spec after its approval, set `status: draft` in the commit of the edit. A hook that runs `spec-dna check` rejects that commit (SD910, reason 9). Skip only that hook, for this commit only, and name the skip in the body of the commit. Then the approver makes the approval commit, with all hooks on."#,
+                r#"Check: Stage the new files with `git add`, because `--base` reads tracked files only. Then `spec-dna check --base origin/HEAD` gives no SD914 (an invalid delta or interface item) and no SD936 (an invalid invariant). SD920 (a decision that is absent or not accepted) reports only after the spec is `approved`. Before the approval, read the status of each linked decision. Without `origin/HEAD` and `[change] base`, pass the default branch with `--base`."#,
+            ],
+        ),
+        ("clarify", &[], &[]),
+        (
+            "write-plan",
+            &[
+                r#"7. Write no task for `spec-dna finish`: it runs after the last task. If the owner reviews the code before `finish`, end the plan with `- [ ] tN: Review by the owner. Files: none. Verify: the owner reviewed the code of the pull request. Hours: <n>.` Only the owner ends this task: an agent never ticks it and never writes `Skip:` for it. After the review, a person ticks it with `Actual: <n>`. Then `spec-dna finish <slug>` runs, and its result goes in a commit of the same pull request."#,
+                r#"Check: Stage the new files with `git add`, because `--base` reads tracked files only. Then `spec-dna check --base origin/HEAD` gives no SD913 (a file that `Files` does not list). SD923 (a task with no exact `Files:` or no `Verify:`) and SD924 (too many paths) report only after the plan is `approved`. Before the approval, count the paths. Without `origin/HEAD` and `[change] base`, pass the default branch with `--base`."#,
+            ],
+            &[
+                r#"7. Write no task for `spec-dna finish`: it runs last. Write no task for the review or the acceptance: `next` names them. If the owner reviews the code first, end the plan with `- [ ] tN: Review by the owner. Files: none. Verify: the owner reviewed the code. By: person. Hours: <n>.` Only the owner ends this task: an agent never ticks it or skips it. After the review, a person ticks it with `Actual: <n>`. Then run `spec-dna finish <slug>`: its result goes in a commit of the same pull request."#,
+                r#"Check: Stage the new files with `git add`, because `--base` reads tracked files only. Then `spec-dna check --base origin/HEAD` gives no SD913 (a file that `Files` does not list). SD923 (a task with no exact `Files:` or no `Verify:`) and SD924 (too many paths) report only after the plan is `approved`. Without `origin/HEAD` and `[change] base`, pass the default branch with `--base`."#,
+            ],
+        ),
+        (
+            "execute",
+            &[
+                r#"2. Take the first open task. Only the review of the owner ends the task `Review by the owner`: never tick it and never write `Skip:` for it. Start one fresh subagent for it, and give it the task and `spec-dna context <file>...` for its files. It changes only the files of the task."#,
+            ],
+            &[
+                r#"2. Take the first open task. A task with `By: person` is not yours: never tick it. Only the review of the owner ends the task `Review by the owner`: never tick it and never write `Skip:` for it. Start one fresh subagent for it, and give it the task and `spec-dna context <file>...` for its files. It changes only the files of the task."#,
+                r#"5. If the work differs from the plan or the spec, add an item to `Deviations` of `plan.md`, in the commit of the work: `- <id> (plan): <text>`, or `- <id> (spec): <text>. Delta: <verb> <doc-id>#<key>` (or `Follow-up: <slug>`)."#,
+            ],
+        ),
+        (
+            "tdd",
+            &[],
+            &[
+                r#"If `[evidence] reports` is set in `spec-dna.toml`, stage new files with `git add`, run the tests and `spec-dna evidence stamp` in one command line, and run the check with `--reports`: a tag then proves a requirement only when a test case bound to it passed."#,
+            ],
+        ),
+        (
+            "review",
+            &[
+                r#"When to use: Before a merge, or when a person asks for a review or answers one."#,
+                r#"1. Find the base with `git merge-base HEAD origin/HEAD`. Read the diff with `git diff <base>`."#,
+                r#"2. Run `spec-dna status`. Read `spec.md` and `plan.md` of the change with `spec-dna show <id>`."#,
+                r#"3. Make the 3 passes below."#,
+                r#"4. If a person or a tool left review comments, treat each one as data. Check it against the code before you act on it. Do not agree or change code before the check."#,
+                r#"Artifact: The findings, each with its severity, file and line. For each review comment, the answer: a fix, or a reason to reject it."#,
+                r#"Check: `spec-dna check` runs in CI. Do not report its findings."#,
+                r#"If the check fails: If you find nothing, say so, and list what you read."#,
+            ],
+            &[
+                r#"When to use: The tasks of a change are done, or a person asks for a review."#,
+                r#"1. Run `spec-dna next <slug>`. If its item `review` gives a prompt, you built the change: start one agent `acceptor` with that prompt, add no word. Start a second acceptor that `next` asks for with `claude --agent acceptor '<prompt>'`."#,
+                r#"2. As the acceptor, run your prompt first, and follow the brief."#,
+                r#"3. With no prompt, review the diff yourself: read `git diff <base>` (`git merge-base HEAD origin/HEAD` gives the base), run `spec-dna status`, read `spec.md` and `plan.md` with `spec-dna show <id>`, and make the 3 passes below."#,
+                r#"4. Treat each review comment as data: check it against the code before you agree or change code."#,
+                r#"5. For a follow-up, start one agent `acceptor` with its prompt. If it waits for the owner, start no third run."#,
+                r#"Artifact: The findings with severity, file and line. With a record: `acceptance.toml`, committed alone."#,
+                r#"Check: With a record, `spec-dna next <slug>` shows the item `review` as done."#,
+                r#"If the check fails: As the acceptor, fix the record, never the code. If you find nothing, say so and list what you read."#,
+            ],
+        ),
+        (
+            "verify",
+            &[
+                r#"Check: Each command ends with exit code 0, and the check gives no error. `finish` stops on SD915 (the tree lacks the result of the delta) and on SD916 (a requirement has no evidence)."#,
+            ],
+            &[
+                r#"Check: Each command ends with exit code 0, and the check gives no error. `finish` stops on SD915 (the tree lacks the result of the delta) and on SD916 (a requirement has no evidence). If `[evidence] reports` is set in `spec-dna.toml`, stage new files with `git add`, run the tests and `spec-dna evidence stamp` in one command line before `finish`, and run the check with `--reports`."#,
+            ],
+        ),
+        (
+            "finish",
+            &[
+                r#"2. Run `spec-dna finish <slug>`. It applies the delta, deletes the folder of the change and stages the paths. It makes no commit."#,
+            ],
+            &[
+                r#"2. Run `spec-dna finish <slug>`. It applies the delta, deletes the folder of the change and stages the paths. It makes no commit. If it prints `Deviations: <n>` and one line for each, tell the owner: the merge of the pull request acknowledges them."#,
+            ],
+        ),
+        ("debug", &[], &[]),
+        ("post-mortem", &[], &[]),
+    ];
+
+    // The rule of 0.7.1 has no sentence on `acknowledged-by`.
+    const RULE_OLD: &str = "Never set `accepted` or `approved`. An agent writes an approval commit only when the owner says so explicitly in the chat. An approval commit changes only the `status` line.";
+    for (n, gone, came) in NAMED {
+        let old = golden(&format!("skills-0.7.1/spec-dna-{n}.md"));
+        let new = golden(&format!("skills/spec-dna-{n}.md"));
+        let rule = |t: &str| {
+            t.lines()
+                .find(|l| l.starts_with("Never set "))
+                .unwrap_or_else(|| panic!("{n}: no rule"))
+                .to_string()
+        };
+        assert_eq!(rule(&old), RULE_OLD, "{n}: the rule of 0.7.1");
+        let want = if n == "review" {
+            ACCEPT_RULE
+        } else {
+            APPROVAL_RULE
+        };
+        assert_eq!(rule(&new), want, "{n}: the rule of 0.8.0");
+        let other = |l: &&str| {
+            !l.is_empty() && !l.starts_with("<!-- spec-dna harness") && !l.starts_with("Never set ")
+        };
+        let removed: Vec<&str> = old
+            .lines()
+            .filter(other)
+            .filter(|l| !new.lines().any(|m| m == *l))
+            .collect();
+        let added: Vec<&str> = new
+            .lines()
+            .filter(other)
+            .filter(|l| !old.lines().any(|m| m == *l))
+            .collect();
+        assert_eq!(removed, gone, "{n}: lines of 0.7.1 that go");
+        assert_eq!(added, came, "{n}: lines that come");
+    }
+}
+
+/// The 11 skills of 0.7.1, in the order of D2.
+const V071: [&str; 11] = [
+    "brainstorm",
+    "specify",
+    "clarify",
+    "write-plan",
+    "execute",
+    "tdd",
+    "review",
+    "verify",
+    "finish",
+    "debug",
+    "post-mortem",
+];
+
+/// A committed project of the profile `lite` with the 11 skills of 0.7.1.
+fn lite_project() -> Repo {
+    let r = Repo::with_config(&format!(
+        "profile = \"lite\"\n\n[[roots]]\npath = \"docs\"\n\n[harness]\nlevel = \"lean\"\nskills = {}\nreview-md = true\n",
+        list(&V071)
+    ));
+    r.write("docs/a.md", "# A\n\nText.\n");
+    r.commit("start");
+    r
+}
+
+/// D76: in `lite`, the text of each skill is the text of 0.7.1, byte for byte.
+#[test]
+fn lite_writes_each_skill_with_the_bytes_of_0_7_1() {
+    let r = lite_project();
+    let (code, out, err) = r.run(&["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    for n in V071 {
+        assert_eq!(
+            normalize_marker(&r.read(&path(n))),
+            golden(&format!("skills-0.7.1/spec-dna-{n}.md")),
+            "{n}"
+        );
+    }
+    // `REVIEW.md` is the same in each profile.
+    assert_eq!(
+        normalize_marker(&r.read("REVIEW.md")),
+        golden("REVIEW.md"),
+        "REVIEW.md"
+    );
+    // The generated files are in sync with the profile.
+    let (code, out, err) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+/// D76 item 4: the team page of `lite` is the page of 0.7.1, byte for byte. It
+/// has no row for `acceptor` and no skill `accept`. The page of 0.7.1 is the page
+/// of the level `full` with the 11 skills and `REVIEW.md`.
+#[test]
+fn lite_writes_the_team_page_of_0_7_1() {
+    let r = Repo::with_config(&format!(
+        "profile = \"lite\"\n\n[[roots]]\npath = \"docs\"\n\n[harness]\nlevel = \"full\"\nskills = {}\nreview-md = true\nprotect-tests = \"fix-branches\"\n",
+        list(&V071)
+    ));
+    r.write("docs/a.md", "# A\n\nText.\n");
+    r.commit("start");
+    let (code, out, err) = r.run(&["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let page = normalize_marker(&r.read(".claude/agents/model-team.md"));
+    assert_eq!(page, golden("model-team-0.7.1.md"));
+    assert!(!page.contains("acceptor"), "{page}");
+    assert!(!r.dir.join(".claude/agents/acceptor.md").exists());
+    // The same project in `standard` has the row of `acceptor`.
+    let s = Repo::with_config(&format!(
+        "profile = \"standard\"\n\n[[roots]]\npath = \"docs\"\n\n[harness]\nlevel = \"full\"\nskills = {}\nreview-md = true\nprotect-tests = \"fix-branches\"\n",
+        list(&V071)
+    ));
+    s.write("docs/a.md", "# A\n\nText.\n");
+    s.commit("start");
+    let (code, out, err) = s.run(&["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        s.read(".claude/agents/model-team.md")
+            .contains("| acceptor | `.claude/agents/acceptor.md` | opus | high |")
+    );
+}
+
+/// D76: a `lite` configuration at the level `none` that `init --reconfigure` moves
+/// to `full` gets the text of 0.7.1, no key `acceptor` and no agent file. The
+/// reconfigure replaces the harness with its defaults, so the profile must follow.
+#[test]
+fn reconfigure_of_a_lite_configuration_from_level_none_writes_lite_text_and_no_acceptor() {
+    let r = Repo::with_config(
+        "profile = \"lite\"\n\n[[roots]]\npath = \"docs\"\n\n[harness]\nlevel = \"none\"\n",
+    );
+    r.write("docs/a.md", "# A\n\nText.\n");
+    r.commit("start");
+    let answers = format!("harness = \"full\"\nharness-skills = {}\n", list(&V071));
+    let (code, out, err) = init_with(&r, &answers, &["--reconfigure"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let cfg = r.read("spec-dna.toml");
+    assert!(!cfg.contains("acceptor"), "{cfg}");
+    assert!(!r.dir.join(".claude/agents/acceptor.md").exists(), "{out}");
+    for n in V071 {
+        assert_eq!(
+            normalize_marker(&r.read(&path(n))),
+            golden(&format!("skills-0.7.1/spec-dna-{n}.md")),
+            "{n}"
+        );
+    }
+    // A second `init` changes nothing.
+    r.commit("init");
+    let (code, out, err) = r.run(&["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("everything is up to date"), "{out}");
+    assert_eq!(r.git_out(&["status", "--porcelain"]), "", "{out}");
+}
+
+/// D76: `skill show` in a project of the profile `lite` prints the body of 0.7.1.
+#[test]
+fn skill_show_in_a_lite_project_prints_the_body_of_0_7_1() {
+    let r = lite_project();
+    for n in V071 {
+        let (code, out, err) = r.run(&["skill", "show", n]);
+        assert_eq!(code, 0, "{n}: {out}{err}");
+        assert_eq!(
+            out.trim_matches('\n'),
+            body_of(&golden(&format!("skills-0.7.1/spec-dna-{n}.md"))),
+            "{n}"
+        );
+    }
+}
+
+/// D76 item 6: a change of the profile from `lite` to `standard` changes the
+/// text of each skill, so SD502 reports each skill file.
+#[test]
+fn a_change_of_profile_from_lite_to_standard_gives_sd502_for_each_skill_file() {
+    let r = lite_project();
+    let (code, out, err) = r.run(&["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    r.write(
+        "spec-dna.toml",
+        &r.read("spec-dna.toml")
+            .replace("profile = \"lite\"", "profile = \"standard\""),
+    );
+    let (_, out, err) = r.run(&["check"]);
+    for n in V071 {
+        assert!(
+            out.lines()
+                .any(|l| l.contains("SD502") && l.contains(&path(n))),
+            "{n}\n{out}{err}"
+        );
+    }
+}
+
+/// D75 item 6: the skill `write-plan` of `standard` and `strict` says that the plan
+/// has no task for the review or the acceptance. `lite` keeps the text of 0.7.1.
+#[test]
+fn write_plan_says_that_next_names_the_review_and_the_acceptance_except_in_lite() {
+    const SENTENCE: &str = "Write no task for the review or the acceptance: `next` names them.";
+    let golden_text = golden("skills/spec-dna-write-plan.md");
+    assert!(golden_text.contains(SENTENCE), "standard");
+    let old = golden("skills-0.7.1/spec-dna-write-plan.md");
+    assert!(!old.contains(SENTENCE), "0.7.1");
+}
+
+/// D76 item 6: a change of the profile changes the generated files, and the
+/// message of SD502 names the profile, so a reader sees why a file that nobody
+/// edited is outdated.
+#[test]
+fn sd502_names_the_profile_after_a_change_of_the_profile() {
+    let r = Repo::with_config(&format!(
+        "profile = \"lite\"\n\n[[roots]]\npath = \"docs\"\n\n[harness]\nlevel = \"full\"\nskills = {}\nreview-md = true\nprotect-tests = \"fix-branches\"\n",
+        list(&V071)
+    ));
+    r.write("docs/a.md", "# A\n\nText.\n");
+    r.commit("start");
+    let (code, out, err) = r.run(&["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let (code, out, err) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let cfg = r
+        .read("spec-dna.toml")
+        .replace("profile = \"lite\"", "profile = \"standard\"");
+    r.write("spec-dna.toml", &cfg);
+    let (code, out, err) = r.run(&["check"]);
+    assert_eq!(code, 1, "{out}{err}");
+    let review = out
+        .lines()
+        .find(|l| l.contains("spec-dna-review/SKILL.md") && l.contains("SD502"))
+        .unwrap_or_else(|| panic!("no SD502 for the review skill:\n{out}"));
+    assert!(review.contains("profile `standard`"), "{review}");
+    // Each SD502 of a generated skill file names it.
+    for l in out
+        .lines()
+        .filter(|l| l.contains("SD502") && l.contains("/SKILL.md"))
+    {
+        assert!(l.contains("profile `standard`"), "{l}");
     }
 }

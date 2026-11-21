@@ -390,6 +390,17 @@ pub fn need_config(head: &Config, git: &Git, base_rev: &str) -> Result<NeedConfi
     Ok(nc)
 }
 
+/// True if the acceptance is on by the need rule: SD927 is on in the head or in
+/// the tree of `base_rev` ([`NeedConfig::on`]). With no base, the head alone. A
+/// task that names `spec-dna accept <slug>` closes with `finish` only then (D75
+/// item 6), so a branch cannot change this gate with its own `spec-dna.toml`.
+pub fn need_on(head: &Config, git: &Git, base_rev: Option<&str>) -> Result<bool, String> {
+    Ok(match base_rev {
+        Some(r) => need_config(head, git, r)?.on,
+        None => need_config_of_head(head).on,
+    })
+}
+
 /// The configuration of the need when git names no base: the head alone.
 pub fn need_config_of_head(head: &Config) -> NeedConfig {
     NeedConfig {
@@ -711,7 +722,7 @@ pub fn added_before(
 /// should have it.
 pub fn missing_message(slug: &str, where_: &str, shallow: bool, branch_cut: bool) -> String {
     let mut m = format!(
-        "the change `{slug}` needs an acceptance record, and {where_}; give the output of `spec-dna accept {slug} --brief`, unchanged, to an agent `acceptor`, and commit the record that it writes"
+        "the change `{slug}` needs an acceptance record, and {where_}; start an agent `acceptor` with the prompt that `spec-dna next` prints, `cd '<root>' && spec-dna accept {slug} --brief`, and commit the record that it writes"
     );
     if shallow {
         m.push_str(
@@ -3077,6 +3088,23 @@ mod tests {
         assert!(rejected(&r).is_none());
         r.result = "rejected".to_string();
         assert!(rejected(&r).is_some());
+    }
+
+    #[test]
+    fn the_message_of_a_missing_record_names_the_prompt_line_not_a_paste_of_the_brief() {
+        let m = missing_message("demo", "`x` is absent", false, false);
+        assert!(
+            m.contains("`cd '<root>' && spec-dna accept demo --brief`"),
+            "{m}"
+        );
+        assert!(
+            m.contains("`spec-dna next`") && m.contains("agent `acceptor`"),
+            "{m}"
+        );
+        assert!(
+            !m.contains("unchanged") && !m.contains("give the output"),
+            "{m}"
+        );
     }
 
     #[test]

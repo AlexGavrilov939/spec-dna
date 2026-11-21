@@ -755,3 +755,614 @@ fn denies_one_call_that_writes_accepted_and_commits_the_record() {
     );
     assert_denies(&out, &["run the edit and the commit as 2 calls"]);
 }
+
+// Rule D (design 0.8.0, D75 item 5): a `Bash` call of the agent `acceptor` commits
+// the record of a change alone. The hook reads the text of the command and the index.
+
+/// A `PreToolUse` event of a subagent: the input has `agent_type`.
+fn event_as(command: &str, cwd: &str, agent_type: Option<&str>) -> String {
+    let agent = agent_type.map_or(String::new(), |a| format!("\"agent_type\":\"{a}\","));
+    format!(
+        "{{\"session_id\":\"s\",{agent}\"cwd\":\"{}\",\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Bash\",\"tool_input\":{{\"command\":\"{}\"}},\"tool_use_id\":\"t\"}}",
+        esc(cwd),
+        esc(command)
+    )
+}
+
+fn answer_as(r: &Repo, command: &str, agent_type: Option<&str>) -> String {
+    let ev = event_as(command, &r.dir.to_string_lossy(), agent_type);
+    let (code, out, err) = hook_in(&r.dir, None, None, ev.as_bytes());
+    assert_eq!(code, 0, "{out}{err}");
+    out
+}
+
+/// A repository with a record that the acceptor wrote and has not committed.
+fn project_with_record() -> Repo {
+    let r = project();
+    r.write(RECORD, "format = 2\n");
+    r
+}
+
+#[test]
+fn rule_d_denies_a_commit_of_the_acceptor_that_is_not_the_record_alone() {
+    let r = project_with_record();
+    r.write("src/a.py", "x = 2\n");
+    for cmd in [
+        // A path argument other than the record.
+        "git commit -m record src/a.py docs/intent/valve-timeout/acceptance.toml",
+        "git commit -m record -- src/a.py",
+        // An option that commits more than the record.
+        "git commit -am record",
+        "git commit -a -m record",
+        "git commit --all -m record",
+        "git commit -p -m record",
+        "git commit --patch",
+        "git commit -i -m record docs/intent/valve-timeout/acceptance.toml",
+        "git commit --include -m record docs/intent/valve-timeout/acceptance.toml",
+        "git commit --interactive",
+        // An earlier `git add`, `git rm` or `git mv` of another path in the call.
+        "git add src/a.py && git commit -m record",
+        "git add docs/intent/valve-timeout/acceptance.toml src/a.py; git commit -m record",
+        "git add . && git commit -m record",
+        "git add -A && git commit -m record",
+        "git rm src/a.py && git commit -m record",
+        "git mv src/a.py src/b.py && git commit -m record",
+    ] {
+        let out = answer_as(&r, cmd, Some("acceptor"));
+        assert_denies(&out, &["`acceptor`", "the record"]);
+    }
+}
+
+#[test]
+fn rule_d_denies_a_commit_with_no_path_while_the_index_holds_another_path() {
+    let r = project_with_record();
+    r.write("src/a.py", "x = 2\n");
+    r.git(&["add", "src/a.py"]);
+    let out = answer_as(&r, "git commit -m record", Some("acceptor"));
+    assert_denies(&out, &["`acceptor`", "src/a.py"]);
+    // With the record only in the index, a commit with no path passes.
+    let r = project_with_record();
+    r.git(&["add", RECORD]);
+    assert_eq!(answer_as(&r, "git commit -m record", Some("acceptor")), "");
+}
+
+#[test]
+fn rule_d_allows_the_record_alone_and_a_call_with_no_agent_type() {
+    let r = project_with_record();
+    r.write("src/a.py", "x = 2\n");
+    for cmd in [
+        "git commit -m record docs/intent/valve-timeout/acceptance.toml",
+        "git commit -m record -- docs/intent/valve-timeout/acceptance.toml",
+        "git add docs/intent/valve-timeout/acceptance.toml && git commit -m record",
+        "git status",
+        "spec-dna check",
+    ] {
+        assert_eq!(answer_as(&r, cmd, Some("acceptor")), "", "{cmd}");
+    }
+    // No `agent_type` (the main session), or another agent: rule D does not run.
+    for agent in [None, Some("general-purpose")] {
+        for cmd in [
+            "git commit -am record",
+            "git add src/a.py && git commit -m record",
+        ] {
+            assert_eq!(answer_as(&r, cmd, agent), "", "{agent:?} {cmd}");
+        }
+    }
+}
+
+/// The prompt line of the acceptor has a `cd`, and a subagent starts in the folder of
+/// the main session: rule D reads the index of the folder that the call moves to.
+#[test]
+fn rule_d_reads_the_folder_that_cd_or_git_c_gives_not_the_cwd_of_the_event() {
+    let r = project_with_record();
+    let elsewhere = Repo::new();
+    let root = r.dir.to_string_lossy().into_owned();
+    let ask = |cmd: &str| {
+        // The project is `r`: the event starts in another folder.
+        let ev = event_as(cmd, &elsewhere.dir.to_string_lossy(), Some("acceptor"));
+        let (code, out, err) = hook_in(&elsewhere.dir, Some(&r.dir), None, ev.as_bytes());
+        assert_eq!(code, 0, "{out}{err}");
+        out
+    };
+    // A clean index in `r` (only the record is staged by the call): allow.
+    for cmd in [
+        format!("cd '{root}' && git add {RECORD} && git commit -m x"),
+        format!("cd '{root}' && git commit -m x {RECORD}"),
+        format!("git -C '{root}' commit -m x {RECORD}"),
+        format!("cd '{root}/docs' && git commit -m x intent/valve-timeout/acceptance.toml"),
+        format!("cd '{root}' && git commit -m x ./{RECORD}"),
+        format!("cd '{root}' && git commit -m x '{root}/{RECORD}'"),
+    ] {
+        assert_eq!(ask(&cmd), "", "{cmd}");
+    }
+    // A dirty index in `r`: deny, also when the cwd of the event is another folder.
+    r.write("src/a.py", "x = 2\n");
+    r.git(&["add", "src/a.py"]);
+    let out = ask(&format!("cd '{root}' && git commit -m x"));
+    assert_denies(&out, &["`acceptor`", "src/a.py"]);
+    let out = ask(&format!("git -C '{root}' commit -m x"));
+    assert_denies(&out, &["src/a.py"]);
+    // A path of the same name in a folder that is not the record: deny.
+    let out = ask(&format!(
+        "cd '{root}/src' && git commit -m x intent/valve-timeout/acceptance.toml"
+    ));
+    assert_denies(&out, &["is not the record"]);
+}
+
+#[test]
+fn rule_d_denies_a_target_that_it_cannot_read_and_two_records() {
+    let r = project_with_record();
+    let other = "docs/intent/other-change/acceptance.toml";
+    r.write(other, "format = 2\n");
+    for cmd in [
+        format!("git add {RECORD} {other} && git commit -m x"),
+        format!("git commit -m x {RECORD} {other}"),
+        format!("git add {RECORD} && git commit -m x {other}"),
+        "cd $SOME_DIR && git commit -m x docs/intent/valve-timeout/acceptance.toml".to_string(),
+    ] {
+        let out = answer_as(&r, &cmd, Some("acceptor"));
+        assert!(out.starts_with(DENY_START), "{cmd}: {out}");
+    }
+    r.git(&["add", RECORD, other]);
+    let out = answer_as(&r, "git commit -m x", Some("acceptor"));
+    assert_denies(&out, &["the index holds the records"]);
+}
+
+/// A first record is not tracked: the command that the agent file gives works.
+#[test]
+fn the_commit_command_of_the_acceptor_file_works_for_a_first_record_and_passes_rule_d() {
+    let r = project_with_record();
+    let cmd = format!("git add {RECORD} && git commit -m record {RECORD}");
+    assert_eq!(answer_as(&r, &cmd, Some("acceptor")), "");
+    r.git(&["add", RECORD]);
+    r.git(&["commit", "-m", "record", RECORD]);
+    // Without the `git add`, git refuses the path of a new file.
+    let r = project_with_record();
+    let out = Command::new("git")
+        .args(["commit", "-m", "record", RECORD])
+        .current_dir(&r.dir)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+}
+
+const NEW_RECORD: &str = "docs/intent/valve-timeout/acceptance.toml";
+
+#[test]
+fn rule_d_reads_a_quoted_message_as_one_word_and_never_as_a_path_or_an_option() {
+    let r = project_with_record();
+    r.write("src/a.py", "x = 2\n");
+    for cmd in [
+        format!("git commit -m \"accept the change\" {NEW_RECORD}"),
+        format!("git commit -m 'record of demo' {NEW_RECORD}"),
+        format!("git commit --message=\"two words\" {NEW_RECORD}"),
+        format!("git commit --message 'two words' {NEW_RECORD}"),
+        format!("git commit -m \"fix (typo)\" {NEW_RECORD}"),
+        format!("git commit -m \"a; b && c | d\" {NEW_RECORD}"),
+        format!("git commit -m \"it's -a and --amend\" {NEW_RECORD}"),
+        format!("git commit -m 'say \"hi\" src/a.py' {NEW_RECORD}"),
+        format!("git commit -m x '{NEW_RECORD}'"),
+        format!("git commit -m x \"{NEW_RECORD}\""),
+        format!("git commit -sm \"two words\" {NEW_RECORD}"),
+        format!("git commit --no-verify -m \"two words\" -- {NEW_RECORD}"),
+        format!("git add {NEW_RECORD} && git commit -m \"two words\""),
+        format!("git add {NEW_RECORD} && git commit -m 'it'\"'\"'s two words'"),
+        format!("git commit -m \"line one\nline two\" {NEW_RECORD}"),
+    ] {
+        assert_eq!(answer_as(&r, &cmd, Some("acceptor")), "", "{cmd}");
+    }
+    // A message that holds a command substitution runs code that the hook cannot read.
+    for cmd in [
+        format!("git commit -m \"$(git add -A)\" {NEW_RECORD}"),
+        format!("git commit -m \"`git add -A`\" {NEW_RECORD}"),
+    ] {
+        let out = answer_as(&r, &cmd, Some("acceptor"));
+        assert!(out.starts_with(DENY_START), "{cmd}: {out}");
+    }
+    // The text of a message does not hide a path that follows it.
+    let out = answer_as(
+        &r,
+        "git commit -m \"accept the change\" src/a.py",
+        Some("acceptor"),
+    );
+    assert_denies(&out, &["`src/a.py`", "is not the record"]);
+}
+
+#[test]
+fn rule_d_reads_a_root_with_a_space_as_one_target_and_fails_closed_on_a_target_it_cannot_read() {
+    let spaced = std::env::temp_dir().join(format!("spec-dna sp ace {}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&spaced);
+    std::fs::create_dir_all(spaced.join("docs/intent/valve-timeout")).unwrap();
+    std::fs::create_dir_all(spaced.join("src")).unwrap();
+    common::git(&spaced, &["init", "-q", "-b", "main"]);
+    std::fs::write(spaced.join(NEW_RECORD), "format = 2\n").unwrap();
+    std::fs::write(spaced.join("src/a.py"), "x = 1\n").unwrap();
+    let elsewhere = Repo::new();
+    let root = spaced.to_string_lossy().into_owned();
+    let ask = |cmd: &str| {
+        let ev = event_as(cmd, &elsewhere.dir.to_string_lossy(), Some("acceptor"));
+        let (code, out, err) = hook_in(&elsewhere.dir, Some(&spaced), None, ev.as_bytes());
+        assert_eq!(code, 0, "{out}{err}");
+        out
+    };
+    for cmd in [
+        format!("cd '{root}' && git commit -am r"),
+        format!("cd '{root}' && git add -A && git commit -m r"),
+        format!("cd \"{root}\" && git commit -a -m r"),
+        format!("git -C '{root}' commit -am r"),
+        // A target that the hook cannot read: it fails closed for a call with a commit.
+        "cd $SCRATCH/r && git commit -am r".to_string(),
+        "cd ~other/r && git commit -am r".to_string(),
+    ] {
+        let out = ask(&cmd);
+        assert!(out.starts_with(DENY_START), "{cmd}: {out}");
+    }
+    for cmd in [
+        format!("cd '{root}' && git commit -m \"two words\" {NEW_RECORD}"),
+        format!("cd '{root}' && git add {NEW_RECORD} && git commit -m x"),
+    ] {
+        assert_eq!(ask(&cmd), "", "{cmd}");
+    }
+    let _ = std::fs::remove_dir_all(&spaced);
+}
+
+#[test]
+fn rule_d_allows_only_the_exact_options_and_one_literal_path_after_git_commit() {
+    let r = project_with_record();
+    r.write("src/a.py", "x = 2\n");
+    r.write("docs/intent/other-change/acceptance.toml", "format = 2\n");
+    for cmd in [
+        // Abbreviated options: git accepts a unique prefix.
+        format!("git commit --inc -m x {NEW_RECORD}"),
+        format!("git commit --interac -m x {NEW_RECORD}"),
+        format!("git commit --patc -m x {NEW_RECORD}"),
+        format!("git commit --al -m x {NEW_RECORD}"),
+        // Other options that commit more than the record, or change the commit.
+        format!("git commit --pathspec-from-file=list.txt -m x {NEW_RECORD}"),
+        "git commit --pathspec-from-file list.txt -m x".to_string(),
+        format!("git commit --amend -m x {NEW_RECORD}"),
+        format!("git commit --only -m x {NEW_RECORD}"),
+        format!("git commit -o -m x {NEW_RECORD}"),
+        format!("git commit -m x --unknown-option {NEW_RECORD}"),
+        // A glob, a pathspec magic and a folder commit more than one record.
+        "git commit -m x 'docs/intent/*/acceptance.toml'".to_string(),
+        "git commit -m x 'docs/intent/valve-timeout/accept*.toml'".to_string(),
+        "git commit -m x ':(glob)docs/**/acceptance.toml'".to_string(),
+        "git commit -m x docs/intent/valve-timeout".to_string(),
+        // More than one path.
+        format!("git commit -m x {NEW_RECORD} docs/intent/other-change/acceptance.toml"),
+        format!("git commit -m x {NEW_RECORD} {NEW_RECORD}"),
+        // An option of an earlier `git add` that names the record.
+        format!("git add -f {NEW_RECORD} && git commit -m x"),
+        format!("git add --intent-to-add {NEW_RECORD} && git commit -m x"),
+        // The message text hides nothing.
+        "git commit -m \"fix (typo)\" src/a.py".to_string(),
+        "git commit -m \"a; b\" src/a.py".to_string(),
+    ] {
+        let out = answer_as(&r, &cmd, Some("acceptor"));
+        assert!(out.starts_with(DENY_START), "{cmd}: {out}");
+    }
+}
+
+#[test]
+fn rule_d_runs_only_for_a_call_with_git_commit_in_the_repository_of_the_project() {
+    let r = project_with_record();
+    r.write("src/a.py", "x = 2\n");
+    // No `git commit` in the call: nothing to read.
+    for cmd in [
+        "git add src/a.py",
+        "git status && git add -A",
+        "git rm -r src",
+        "git mv src/a.py src/b.py",
+    ] {
+        assert_eq!(answer_as(&r, cmd, Some("acceptor")), "", "{cmd}");
+    }
+    // A scratch repository of the agent is another repository: the acceptor builds
+    // its test repositories there, with commits of any form.
+    let scratch = Repo::new();
+    scratch.write("f", "1\n");
+    let s = scratch.dir.to_string_lossy().into_owned();
+    let root = r.dir.to_string_lossy().into_owned();
+    for cmd in [
+        format!("cd '{s}' && git add f && git commit -m x f"),
+        format!("cd '{s}' && git add -A && git commit -am \"two words\""),
+        format!("git -C '{s}' commit -a -m x"),
+    ] {
+        assert_eq!(answer_as(&r, &cmd, Some("acceptor")), "", "{cmd}");
+    }
+    // The same forms in the repository of the project are denied.
+    let out = answer_as(&r, "git add -A && git commit -m x", Some("acceptor"));
+    assert!(out.starts_with(DENY_START), "{out}");
+    // A commit in the scratch repository and one in the project in one call: the
+    // second is read.
+    let out = answer_as(
+        &r,
+        &format!("cd '{s}' && git commit -am x && cd '{root}' && git commit -am y"),
+        Some("acceptor"),
+    );
+    assert!(out.starts_with(DENY_START), "{out}");
+}
+
+/// The checker's bypasses of rule D: the hook reads a fixed grammar and denies
+/// what it cannot read, so no form below passes. Each was allowed before.
+#[test]
+fn rule_d_denies_each_form_that_a_real_shell_reads_other_than_the_hook_does() {
+    let r = project_with_record();
+    r.write("src/a.py", "x = 2\n");
+    let scratch = Repo::new();
+    scratch.write("f", "1\n");
+    let s = scratch.dir.to_string_lossy().into_owned();
+    let root = r.dir.to_string_lossy().into_owned();
+    let elsewhere = Repo::empty();
+    let cases: Vec<String> = vec![
+        // (1) other joins, a failed `cd`, a subshell, `cd` options, `pushd`.
+        "cd /nonexistent/x; git add -A; git commit -m test".to_string(),
+        "cd /nonexistent/x && git add -A && git commit -m test".to_string(),
+        format!("(cd '{s}') && git commit -am x"),
+        format!("false && cd '{s}'; git commit -am x"),
+        format!("cd -P '{root}' && git commit -am x"),
+        format!("cd -- '{root}' && git commit -am x"),
+        format!("cd '{s}' && pushd '{root}' && git commit -am x"),
+        format!("cd '{root}' || git commit -am x"),
+        format!("cd '{root}' & git commit -am x"),
+        format!("cd '{root}' | git commit -am x"),
+        format!("cd '{root}'\ngit commit -am x"),
+        // (2) a script that a shell runs.
+        format!("cd '{root}' && bash -c 'git add -A && git commit -m x'"),
+        "sh -c \"git commit -am x\"".to_string(),
+        "eval \"git commit -am x\"".to_string(),
+        "xargs git commit -am x".to_string(),
+        "env GIT_DIR=.git git commit -am x".to_string(),
+        "g''it commit -am x".to_string(),
+        "git c\\ommit -am x".to_string(),
+        "git-commit -am x".to_string(),
+        // (3) a comment or `$'..'` with an apostrophe.
+        "true # don't stage all\ngit add src/a.py\ngit commit -m \"done\"\n# that's it".to_string(),
+        "echo $'\\'' ; git commit -am x ; echo $'\\''".to_string(),
+        "git commit -am x # a comment".to_string(),
+        // (4) a redirect character in a quoted word is text, and the option stays.
+        "git commit -m '>' -a".to_string(),
+        "git commit -m '>x' -a".to_string(),
+        "git commit -m '>' src/a.py".to_string(),
+        "git commit -m x > out.txt".to_string(),
+        "git commit -m x 2>&1".to_string(),
+        // (5) another git folder by an option.
+        format!("git --git-dir='{root}/.git' --work-tree='{root}' commit -m x"),
+        "git -c core.hooksPath=/x commit -m x".to_string(),
+        format!("git -C '{root}' -C src commit -am x"),
+        // (6) another verb, or an alias of a verb.
+        "git stage -A && git commit -m x".to_string(),
+        "git status && git commit -m x".to_string(),
+        "git add -A && git commit -m x".to_string(),
+        // (7) two commits, or two records.
+        format!(
+            "git commit -m x {RECORD} && git commit -m y docs/intent/other-change/acceptance.toml"
+        ),
+        format!("git commit -m x {RECORD} && git commit -m y {RECORD}"),
+        // A part after the commit, and two `git add`.
+        format!("git commit -m x {RECORD} && git status"),
+        format!("git add {RECORD} && git add {RECORD} && git commit -m x"),
+        // A second `cd`, a `cd` that is not first, a relative `cd`.
+        format!("git add {RECORD} && cd '{root}' && git commit -m x"),
+        format!("cd '{root}' && cd '{root}' && git commit -m x"),
+        "cd docs && git commit -m x".to_string(),
+        // Expansions outside and inside quotes.
+        "git commit -m \"$HOME\"".to_string(),
+        "git commit -m \"a\\\"b\"".to_string(),
+        "git commit -m x ~/acceptance.toml".to_string(),
+        "git commit -m x {a,b}".to_string(),
+        // A quote that does not end, and an empty part.
+        "git commit -m 'x".to_string(),
+        "&& git commit -m x".to_string(),
+        "git commit -m x &&".to_string(),
+        // A `cd` or a `-C` folder that is no repository.
+        format!("cd '{}' && git commit -m x", elsewhere.dir.display()),
+        "git -C '/nonexistent/x' commit -m x".to_string(),
+    ];
+    for cmd in &cases {
+        let out = answer_as(&r, cmd, Some("acceptor"));
+        assert!(out.starts_with(DENY_START), "{cmd:?}: {out}");
+        // The reason names the one allowed shape.
+        assert!(
+            out.contains("git add <path> && git commit -m '<text>' <path>"),
+            "{cmd:?}: {out}"
+        );
+    }
+}
+
+/// The one allowed shape, in each variant.
+#[test]
+fn rule_d_allows_the_one_shape_and_nothing_near_it() {
+    let r = project_with_record();
+    r.write("src/a.py", "x = 2\n");
+    let root = r.dir.to_string_lossy().into_owned();
+    for cmd in [
+        format!("git commit -m x {RECORD}"),
+        format!("git add {RECORD} && git commit -m 'two words' {RECORD}"),
+        format!("git add {RECORD} && git commit -m 'it'\"'\"'s' {RECORD}"),
+        format!(
+            "cd '{root}' && git add {RECORD} && git commit -m 'a; b (c) $ # ~ > < \\ | &' {RECORD}"
+        ),
+        format!("cd '{root}' && git add {RECORD} && git commit -m x"),
+        format!("cd '{root}' && git -C '{root}' add {RECORD} && git -C '{root}' commit -m x"),
+        format!("git -C '{root}' commit --message='two words' --no-verify -s {RECORD}"),
+        format!("cd '{root}/docs' && git commit -m x intent/valve-timeout/acceptance.toml"),
+    ] {
+        assert_eq!(answer_as(&r, &cmd, Some("acceptor")), "", "{cmd}");
+    }
+}
+
+/// Each character that a shell reads as an operator is denied also where a word
+/// would hide it: in the text of a message that is not quoted. So the lexer itself
+/// is proven, not only the checks of the paths after it.
+#[test]
+fn rule_d_denies_each_operator_character_inside_an_unquoted_word() {
+    let r = project_with_record();
+    for op in [
+        ";", "|", "&", "(", ")", "{", "}", "<", ">", "$", "`", "#", "\\", "~",
+    ] {
+        for cmd in [
+            format!("git commit -m x{op}y {RECORD}"),
+            format!("git commit -m {op}y {RECORD}"),
+        ] {
+            let out = answer_as(&r, &cmd, Some("acceptor"));
+            assert!(out.starts_with(DENY_START), "{cmd:?}: {out}");
+        }
+    }
+    // A line feed ends a command in a shell.
+    let out = answer_as(&r, &format!("git commit -m x\n{RECORD}"), Some("acceptor"));
+    assert!(out.starts_with(DENY_START), "{out}");
+    let out = answer_as(&r, "git commit -m x\r", Some("acceptor"));
+    assert!(out.starts_with(DENY_START), "{out}");
+}
+
+/// In another repository the grammar still holds, and nothing may follow the commit.
+#[test]
+fn rule_d_keeps_the_grammar_for_a_scratch_repository() {
+    let r = project_with_record();
+    let scratch = Repo::new();
+    scratch.write("f", "1\n");
+    let s = scratch.dir.to_string_lossy().into_owned();
+    for cmd in [
+        format!("cd '{s}' && git commit -m x && git log"),
+        format!("cd '{s}' && git add f && git commit -m x f; ls"),
+        format!("cd '{s}' && git --git-dir=.git commit -m x"),
+        format!("cd '{s}' && bash -c 'git commit -am x'"),
+    ] {
+        let out = answer_as(&r, &cmd, Some("acceptor"));
+        assert!(out.starts_with(DENY_START), "{cmd:?}: {out}");
+    }
+}
+
+/// Third pass: the trigger reads a call that hides the words, and a glob is no word
+/// of the grammar.
+#[test]
+fn rule_d_reads_a_call_that_hides_the_word_commit_or_git() {
+    let r = project_with_record();
+    r.write("src/a.py", "x = 2\n");
+    for cmd in [
+        "GIT commit -am x",
+        "git COMMIT -am x",
+        "git comm\\\nit -am x",
+        "git comm\\\r\nit -am x",
+        "/usr/bin/g?t commit -am x",
+        "git $'\\x63ommit' -am x",
+        "x=omm; git c${x}it -am x",
+        "GIT c$X -am x",
+        "git co\"\"mmit -am x",
+        "git c*t -am x",
+        "git c[o]mmit -am x",
+        "git {commit,status}",
+        "git c? -am x",
+        "git c{o,x}mmit -am x",
+        "git c`echo o`mmit -am x",
+        "git `echo commit` -am x",
+    ] {
+        let out = answer_as(&r, cmd, Some("acceptor"));
+        assert!(out.starts_with(DENY_START), "{cmd:?}: {out}");
+    }
+    // A call with no `commit` and no dynamic word beside `git` is not read.
+    for cmd in [
+        "git log --oneline -5 | head",
+        "git diff -- src/a.rs",
+        "git status",
+        "git status --short; ls",
+        "git diff 'src/*.py'",
+        "git log --format='%H $x'",
+        "spec-dna check > /dev/null 2>&1",
+        "echo $HOME",
+        "ls src/*.py",
+    ] {
+        assert_eq!(answer_as(&r, cmd, Some("acceptor")), "", "{cmd}");
+    }
+}
+
+#[test]
+fn rule_d_denies_a_glob_in_each_word_and_in_the_folders() {
+    let r = project_with_record();
+    r.write("src/a.py", "x = 2\n");
+    let root = r.dir.to_string_lossy().into_owned();
+    for cmd in [
+        "git commit -m *".to_string(),
+        format!("git commit -m s* {RECORD}"),
+        format!("git commit -m x? {RECORD}"),
+        format!("git commit -m [x] {RECORD}"),
+        format!("git commit -m x]y {RECORD}"),
+        format!("git commit -m x[y {RECORD}"),
+        format!("cd {root}/sr[c] && git commit -am x"),
+        format!("cd '{root}/sr[c]' && git commit -am x"),
+        format!("cd '{root}/s*' && git commit -m x {RECORD}"),
+        "git -C sr[c] commit -am x".to_string(),
+        "git -C 'sr[c]' commit -am x".to_string(),
+        "git -C 's*' commit -m x".to_string(),
+    ] {
+        let out = answer_as(&r, &cmd, Some("acceptor"));
+        assert!(out.starts_with(DENY_START), "{cmd:?}: {out}");
+    }
+    // A folder that exists under a literal name with a glob character is still a
+    // pattern for the hook, and the index holds the record only.
+    std::fs::create_dir_all(r.dir.join("sr[c]")).unwrap();
+    std::fs::create_dir_all(r.dir.join("s*")).unwrap();
+    r.git(&["add", RECORD]);
+    for cmd in [
+        format!("cd '{root}/sr[c]' && git commit -m x"),
+        format!("cd '{root}/s*' && git commit -m x"),
+        "git -C 'sr[c]' commit -m x".to_string(),
+        "git -C 's*' commit -m x".to_string(),
+    ] {
+        let out = answer_as(&r, &cmd, Some("acceptor"));
+        assert!(out.starts_with(DENY_START), "{cmd:?}: {out}");
+    }
+    assert_eq!(answer_as(&r, "git commit -m x", Some("acceptor")), "");
+    // A glob character in a quoted message is text.
+    assert_eq!(
+        answer_as(
+            &r,
+            &format!("git commit -m 's* [x] ?' {RECORD}"),
+            Some("acceptor")
+        ),
+        ""
+    );
+}
+
+/// The prescribed step 7 form with a root that has a space and a quote: `next`
+/// writes `'` as `'\''`, the way a shell puts a quote in a single-quoted word.
+#[test]
+fn rule_d_allows_the_quote_sequence_of_a_root_with_a_quote_and_nothing_else_with_a_backslash() {
+    let dir = std::env::temp_dir().join(format!("spec-dna r o'q {}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("docs/intent/valve-timeout")).unwrap();
+    common::git(&dir, &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.join(NEW_RECORD), "format = 2\n").unwrap();
+    let elsewhere = Repo::new();
+    let quoted = format!("'{}'", dir.to_string_lossy().replace('\'', "'\\''"));
+    let ask = |cmd: &str| {
+        let ev = event_as(cmd, &elsewhere.dir.to_string_lossy(), Some("acceptor"));
+        let (code, out, err) = hook_in(&elsewhere.dir, Some(&dir), None, ev.as_bytes());
+        assert_eq!(code, 0, "{out}{err}");
+        out
+    };
+    assert!(quoted.contains("'\\''"), "{quoted}");
+    for cmd in [
+        format!("cd {quoted} && git add {NEW_RECORD} && git commit -m 'two words' {NEW_RECORD}"),
+        format!("cd {quoted} && git commit -m x {NEW_RECORD}"),
+        format!("git -C {quoted} commit -m x {NEW_RECORD}"),
+    ] {
+        assert_eq!(ask(&cmd), "", "{cmd}");
+    }
+    // The same root, with a dirty option: denied, so the folder was read right.
+    let out = ask(&format!("cd {quoted} && git commit -am x"));
+    assert!(out.starts_with(DENY_START), "{out}");
+    // Another use of a backslash is denied, also in the sequence of a message.
+    for cmd in [
+        format!("cd {quoted} && git commit -m x\\ y {NEW_RECORD}"),
+        format!("cd {quoted} && git commit -m 'a'\\\" {NEW_RECORD}"),
+        format!("cd {quoted} && git commit -m 'a'\\'b {NEW_RECORD}"),
+        format!("cd {quoted} && git commit -m 'a'\\\\'b' {NEW_RECORD}"),
+        format!("cd {quoted} && git commit -m \"a\"\\'b'' {NEW_RECORD}"),
+    ] {
+        let out = ask(&cmd);
+        assert!(out.starts_with(DENY_START), "{cmd:?}: {out}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

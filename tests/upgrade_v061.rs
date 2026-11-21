@@ -85,17 +85,9 @@ fn default_skills() -> Vec<String> {
         .collect()
 }
 
-/// The skills that 0.7.0 and 0.8.0 add, in the order of D2. `accept` is new in
-/// 0.8.0, and `lite` never gets it.
-const ADDED_NAMES: [&str; 7] = [
-    "execute",
-    "tdd",
-    "verify",
-    "accept",
-    "finish",
-    "debug",
-    "post-mortem",
-];
+/// The skills that 0.7.0 adds, in the order of D2. The skill `accept` merged
+/// into `review` (design 0.8.0, D71), so no release adds it.
+const ADDED_NAMES: [&str; 6] = ["execute", "tdd", "verify", "finish", "debug", "post-mortem"];
 
 /// The names of `skills` that an upgrade of 0.6 gives in this build: each new
 /// name of the rename that is on by default, `review` (the list of 0.6.1 has
@@ -121,7 +113,6 @@ fn renamed_skills(profile: &str) -> Vec<String> {
         "tdd",
         "review",
         "verify",
-        "accept",
         "finish",
         "debug",
         "post-mortem",
@@ -307,8 +298,9 @@ fn upgrade_writes_the_new_skills_and_changes_no_other_key() {
             .filter(|n| *n != "review")
             .map(|n| skill_file(n))
             .collect();
-        // The skill `accept` brings the agent `acceptor` (ADR 0025).
-        if new.contains(&skill_file("accept")) {
+        // The skill `review` brings the agent `acceptor`, and `lite` gets none
+        // (design 0.8.0, D71).
+        if case.profile != "lite" {
             new.insert(".claude/agents/acceptor.md".to_string());
         }
         let removed: BTreeSet<String> = OLD_SKILL_FILES.iter().map(|p| p.to_string()).collect();

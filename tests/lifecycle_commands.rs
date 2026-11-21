@@ -18,9 +18,9 @@ const SPEC: &str = "docs/intent/dose/spec.md";
 const PLAN: &str = "docs/intent/dose/plan.md";
 const CLOSING: &str = "docs/requirements/valves/closing.md";
 
-/// The exact list of the skill names (the owner text, 0.7.0, and `accept` of
-/// 0.8.0).
-const SKILLS: [&str; 10] = [
+/// The exact list of the skill names of `next` (the owner text, 0.7.0). The
+/// item `accept` of 0.8.0 part A merged into `review` (design 0.8.0, D71).
+const SKILLS: [&str; 9] = [
     "brainstorm",
     "specify",
     "clarify",
@@ -29,7 +29,6 @@ const SKILLS: [&str; 10] = [
     "tdd",
     "review",
     "verify",
-    "accept",
     "finish",
 ];
 
@@ -685,14 +684,13 @@ fn the_stage_deploy_names_the_skills_of_its_steps_in_order() {
     assert_eq!(field(&json, "stage"), "deploy");
     let s = skills(&json);
     // The plan is new, so the change needs an acceptance record (design 0.8.0,
-    // D3): the item `accept` is after `review` and before `finish`.
-    assert_eq!(s[s.len() - 4..], ["verify", "review", "accept", "finish"]);
+    // D3): the one item `review` (D71) holds the record, before `finish`.
+    assert_eq!(s[s.len() - 3..], ["verify", "review", "finish"]);
     let text = next_text(&r);
     assert_in_order(
         &text,
         &[
             "run the proof of docs/intent/dose/plan.md",
-            "review the diff",
             "spec-dna accept dose --brief",
             "spec-dna finish dose --dry-run",
         ],
