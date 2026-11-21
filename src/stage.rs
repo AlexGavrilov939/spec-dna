@@ -334,7 +334,15 @@ fn accept_items(
         {
             out.insert(
                 ch.slug.clone(),
-                accept_item(repo, cfg, &nc, (&ch, d.class), (head, base), base_rev, diff)?,
+                accept_item(
+                    repo,
+                    cfg,
+                    &nc,
+                    (&ch, d.class, &d.roles),
+                    (head, base),
+                    base_rev,
+                    diff,
+                )?,
             );
         }
     }
@@ -352,12 +360,12 @@ fn accept_item(
     repo: &Repo,
     head_cfg: &Config,
     nc: &acceptance::NeedConfig,
-    (ch, class): (&Change, Class),
+    (ch, class, roles): (&Change, Class, &[String]),
     (head, base): (&Corpus, &Corpus),
     base_rev: &str,
     diff: Option<&Diff>,
 ) -> Result<AcceptItem, Fatal> {
-    let item = accept_item_of_record(repo, head_cfg, nc, (ch, class), head, base_rev, diff)?;
+    let item = accept_item_of_record(repo, head_cfg, nc, (ch, class, roles), head, base_rev, diff)?;
     if item.done {
         return Ok(item);
     }
@@ -423,7 +431,7 @@ fn accept_item_of_record(
     repo: &Repo,
     head_cfg: &Config,
     nc: &acceptance::NeedConfig,
-    (ch, class): (&Change, Class),
+    (ch, class, roles): (&Change, Class, &[String]),
     head: &Corpus,
     base_rev: &str,
     diff: Option<&Diff>,
@@ -503,14 +511,26 @@ fn accept_item_of_record(
     let first = problems.first().cloned().unwrap_or_default();
     let sections =
         acceptance::sections_of(cfg, &repo.git, Some(base_rev), ch, head).map_err(Fatal::Io)?;
+    let ack = match &rec {
+        Some(r) if on(Code::RecordCommitInvalid) || on(Code::AckMissing) => acceptance::ack_facts(
+            head_cfg,
+            nc,
+            &repo.git,
+            base_rev,
+            (&ch.dir, &ch.slug),
+            (&r.acknowledged_by, r.deviations.len()),
+        )
+        .map_err(Fatal::Io)?,
+        _ => acceptance::AckFacts::default(),
+    };
     let Some((code, messages)) = acceptance::first_stop(
         cfg,
-        (class, nc.higher_risk_acceptors),
+        (class, nc.higher_risk_acceptors, roles),
         rec.as_ref(),
         problems,
         stale,
         &sections,
-        None,
+        (None, &ack),
     ) else {
         // With each check on, the record is valid, fresh and accepted. With a check
         // off, the text says only that the checks that are on passed.
@@ -519,7 +539,9 @@ fn accept_item_of_record(
             Code::AcceptanceStale,
             Code::AcceptanceRejected,
             Code::SelfAccepted,
+            Code::RecordCommitInvalid,
             Code::AcceptorMissing,
+            Code::AckMissing,
             Code::RecordIncomplete,
             Code::DeviationInvalid,
             Code::DeviationUnresolved,
@@ -536,7 +558,7 @@ fn accept_item_of_record(
             },
         });
     };
-    Ok(open(match code {
+    let item = open(match code {
         Code::AcceptanceInvalid if rec.is_none() => {
             format!("the record `{path}` does not read ({first}); the acceptor fixes it")
         }
@@ -590,7 +612,13 @@ fn accept_item_of_record(
             messages.first().map_or("", String::as_str)
         ),
         _ => messages.into_iter().next().unwrap_or_default(),
-    }))
+    });
+    // The acknowledgement is the act of an approver (design 0.8.0, D3 item 10): the
+    // agent does not run `approve`, so the item is an item of a person.
+    Ok(AcceptItem {
+        person: matches!(code, Code::AckMissing | Code::RecordCommitInvalid),
+        ..item
+    })
 }
 
 /// The evidence of the requirements that the change adds or changes.

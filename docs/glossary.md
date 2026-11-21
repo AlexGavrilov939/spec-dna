@@ -6,6 +6,7 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | --- | --- | --- | --- |
 | acceptance record | The file `acceptance.toml` in the folder of a change, then `.spec-dna/accepted/<slug>.toml`. An acceptor writes it: what it tried, what it found and its result. It binds to the code paths of the change by a hash. A change needs one when `[change] acceptance-for` asks for it | | [commands](commands.md#accept) |
 | acceptor | An agent that did not write the code of a change. It runs the prompt line that `next` gives, reads the brief as the output, reviews the change, tries to break it, and writes and commits the acceptance record. It edits no code | | [commands](commands.md#accept) |
+| acknowledgement | The act of an approver on the deviations of an acceptance record. With `approval = "branch"`, `spec-dna approve <slug> acceptance` adds the e-mail of the approver to `acknowledged-by`, and SD932 and SD934 check it. With `approval = "base"`, the merge of the pull request does it | | [diagnostics](diagnostics.md#the-acknowledgement-with-branch) |
 | adapter | A part of spec-dna for one agent or one file format: the line in `AGENTS.md` (`agents-md`) or `CLAUDE.md` (`claude-md`), the skill (`skill`), or the `claude-code` adapter of the harness, the evals and the transcripts | | [agents](agents.md) |
 | advisor | A second, stronger model that the main model consults before a decision | | [harness](harness.md) |
 | alias | An earlier id of a document or a requirement. A reference to an alias resolves to the current id | | [concepts](concepts.md#ids-and-requirements) |
@@ -65,6 +66,7 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | `moves-to` | An edge of the layer graph: the text of the source layer matures into the target layer | | [concepts](concepts.md#layers-and-the-graph) |
 | follow-up | An entry `[[follow-up]]` of an acceptance record: a short check of the fix of a note by an agent that did not write the fix. It binds the new tree of `paths`. It needs no full run | | [commands](commands.md#accept) |
 | note | A finding of an acceptance record that is no blocker: the fix can wait. A note never gives the result `rejected` | | [commands](commands.md#accept) |
+| owner role | A role name that a glob of `[owners]` gives to a path, such as `security-reviewer`. An acceptor entry of the record names it in `roles`, and SD933 needs it. It is no harness role | | [config](config.md#the-table-owners) |
 | partial tag | A tag `covers: partial <doc-id>#<key>` in a test. It records that the test proves a part of a requirement. It is not evidence | | [config](config.md#a-partial-tag) |
 | pass rate | The share of evals that pass | | [evals](evals.md) |
 | pending | The layer of the top files `roadmap.md` and `questions.md` | | [concepts](concepts.md#layers-and-the-graph) |
@@ -79,7 +81,7 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | `requirements` | The type of a document that holds the requirements of one capability | type `spec` | [types](types.md) |
 | research | Material that agents read only on request, in `research/` | types `note`, `reference` | [types](types.md) |
 | `REVIEW.md` | The review policy of the repository, which a code review service reads | | [harness](harness.md) |
-| role | A job in the harness, such as `verifier`, with its model and its agent file | | [harness](harness.md#roles) |
+| role | A job in the harness, such as `verifier`, with its model and its agent file. An entry of `[owners]` also gives a role name: see owner role | | [harness](harness.md#roles) |
 | root | A folder that `spec-dna.toml` maps to document types. Document ids are relative to it | | [config](config.md) |
 | `routine` | A change class with an intent and a plan. The agent approves the plan, when the owner says so | | [change guide](guides/change.md#choose-the-class) |
 | rule | A project-wide requirement with a stable id, in `rules/` | type `invariant` | [types](types.md) |

@@ -1301,7 +1301,7 @@ pub fn add_follow_up(text: &str, session: &str, tree: &str, closes: &[usize]) ->
     out.push_str(eol);
     out.push_str(eol);
     out.push_str(&block.replace('\n', eol));
-    out
+    clear_acknowledged(out)
 }
 
 // The writer.
@@ -1483,6 +1483,98 @@ fn table_header(line: &str) -> Option<(bool, &str)> {
     Some((false, inner.trim()))
 }
 
+// The line `acknowledged-by` (design 0.8.0, D3 item 10).
+
+/// The byte range of the top-level line `acknowledged-by = [...]` of a record
+/// text, with its line end. The key is at the top level when it comes before the
+/// first table header. `None` if the key is absent or its list is not on one line.
+pub fn ack_line(text: &str) -> Option<(usize, usize)> {
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        let t = line.trim_start();
+        if t.starts_with('[') {
+            return None;
+        }
+        if let Some(rest) = t.strip_prefix("acknowledged-by")
+            && rest.trim_start().starts_with('=')
+        {
+            let value = rest.trim_start()[1..].trim();
+            let value = value.split('#').next().unwrap_or("").trim();
+            return (value.starts_with('[') && value.ends_with(']'))
+                .then_some((offset, offset + line.len()));
+        }
+        offset += line.len();
+    }
+    None
+}
+
+/// The text of a record without its line `acknowledged-by`. Two texts that give the
+/// same result differ in that line alone.
+pub fn without_ack(text: &str) -> String {
+    match ack_line(text) {
+        Some((a, b)) => format!("{}{}", &text[..a], &text[b..]),
+        None => text.to_string(),
+    }
+}
+
+/// The entries of `acknowledged-by`, as the file has them. The read is lenient: a
+/// text that is no TOML, or a list with a value that is no string, gives only the
+/// strings that it can read, so a record that SD928 refuses can not hide an entry.
+pub fn ack_entries(text: &str) -> Vec<String> {
+    if let Ok(t) = text.parse::<toml::Table>() {
+        return t
+            .get("acknowledged-by")
+            .and_then(toml::Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+    }
+    let Some((a, b)) = ack_line(text) else {
+        return Vec::new();
+    };
+    let line = text[a..b].trim();
+    let list = line.split_once('=').map_or("", |x| x.1).trim();
+    let inner = list.trim_start_matches('[').split(']').next().unwrap_or("");
+    inner
+        .split(',')
+        .map(|v| v.trim().trim_matches(['"', '\'']).to_string())
+        .filter(|v| !v.is_empty())
+        .collect()
+}
+
+/// The text with the list `acknowledged-by` set to `entries`. Each other byte
+/// stays, and the line keeps its line end. `None` if the line is absent or not on
+/// one line.
+pub fn set_acknowledged_by(text: &str, entries: &[String]) -> Option<String> {
+    let (a, b) = ack_line(text)?;
+    let eol = if text[a..b].ends_with("\r\n") {
+        "\r\n"
+    } else if text[a..b].ends_with('\n') {
+        "\n"
+    } else {
+        ""
+    };
+    Some(format!(
+        "{}acknowledged-by = {}{eol}{}",
+        &text[..a],
+        toml_list(entries),
+        &text[b..]
+    ))
+}
+
+/// The text with each entry of `acknowledged-by` removed. A text that has no
+/// entry stays as it is. A new acceptor or a follow-up changes the text, so no
+/// entry may outlive it: the approver acknowledges the new text.
+fn clear_acknowledged(text: String) -> String {
+    if ack_entries(&text).is_empty() {
+        return text;
+    }
+    set_acknowledged_by(&text, &[]).unwrap_or(text)
+}
+
 /// Adds one entry `[[acceptor]]` to the text of a record, after its last
 /// `[[acceptor]]` table. Each other byte stays, so the comments and the tables
 /// of the first acceptor stay. It returns the new text.
@@ -1531,7 +1623,7 @@ pub fn add_acceptor(text: &str, roles: &[String], session: &str) -> String {
         out.push_str(eol);
         out.push_str(tail);
     }
-    out
+    clear_acknowledged(out)
 }
 
 #[cfg(test)]
@@ -2654,6 +2746,47 @@ mod tests {
             Record::parse(&valid_text()).unwrap().last_tree(),
             "3f2a9c1b7e0d4a11"
         );
+    }
+
+    #[test]
+    fn the_line_acknowledged_by_is_read_set_and_left_out_of_a_compare() {
+        let text = valid_text();
+        assert!(ack_entries(&text).is_empty());
+        let two = vec!["a@example.test".to_string(), "b@example.test".to_string()];
+        let set = set_acknowledged_by(&text, &two).unwrap();
+        assert_eq!(ack_entries(&set), two);
+        assert!(Record::parse(&set).is_ok());
+        // Only that line differs.
+        assert_eq!(without_ack(&set), without_ack(&text));
+        assert_ne!(set, text);
+        // The line end stays.
+        let crlf = text.replace('\n', "\r\n");
+        let set = set_acknowledged_by(&crlf, &two).unwrap();
+        assert_eq!(set.matches('\n').count(), set.matches("\r\n").count());
+        // A key in a table is no key of the top level.
+        let none = "format = 2\n\n[[acceptor]]\nacknowledged-by = [\"x\"]\n";
+        assert!(ack_line(none).is_none());
+        // A list on more than one line is not edited.
+        assert!(ack_line("acknowledged-by = [\n  \"x\",\n]\n").is_none());
+        // A text that is no TOML still gives its entries.
+        assert_eq!(
+            ack_entries("acknowledged-by = [\"x@y.test\"]\nbad = \n"),
+            ["x@y.test"]
+        );
+    }
+
+    #[test]
+    fn a_new_acceptor_or_a_follow_up_clears_the_entries_of_acknowledged_by() {
+        let acked = set_acknowledged_by(&valid_text(), &["a@example.test".to_string()]).unwrap();
+        let more = add_acceptor(&acked, &["second".to_string()], "s2");
+        assert!(ack_entries(&more).is_empty(), "{more}");
+        assert_eq!(Record::parse(&more).unwrap().acceptors.len(), 2);
+        let follow = add_follow_up(&acked, "s2", "5d0e7c2a91b3f4e8", &[1]);
+        assert!(ack_entries(&follow).is_empty(), "{follow}");
+        // A text with no entry keeps each byte before the new table.
+        let plain = valid_text();
+        let top = &plain[..plain.find("[[acceptor]]").unwrap()];
+        assert!(add_acceptor(&plain, &["second".to_string()], "s2").starts_with(top));
     }
 
     #[test]

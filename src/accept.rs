@@ -80,11 +80,11 @@ pub fn declared(cfg: &Config, ch: &Change, corpus: &Corpus) -> Declared {
 }
 
 /// The roles of the entry: the roles that `--role` names, sorted with no
-/// duplicate, else each role of `[owners]` that matches a role path (D72 item
-/// 4), else `acceptor`. `paths` is the list that the matched roles read.
-fn entry_roles(cfg: &Config, given: &[String], paths: &[String]) -> Vec<String> {
+/// duplicate, else each role of `[owners]` that matches a role path of the change
+/// (`matched`, D72 item 4 and D70 item 7), else `acceptor`.
+fn entry_roles(given: &[String], matched: Vec<String>) -> Vec<String> {
     let mut roles: Vec<String> = if given.is_empty() {
-        crate::acceptance::matched_roles(cfg, paths)
+        matched
     } else {
         given.to_vec()
     };
@@ -275,7 +275,36 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
     let tree_hash = record::tree_hash(&entries, &paths);
     let decl = crate::acceptance::declared_for(&cfg, &repo.git, base_rev.as_deref(), ch, &head)
         .map_err(Fatal::Io)?;
-    let roles = entry_roles(&cfg, o.roles, &paths);
+    // The roles of `[owners]` read the role paths of the change, in the union of the
+    // head table and the base table (D70 items 6 and 7).
+    let matched = if o.roles.is_empty() {
+        let nc = match base_rev.as_deref() {
+            Some(r) => crate::acceptance::need_config(&cfg, &repo.git, r).map_err(Fatal::Io)?,
+            None => crate::acceptance::need_config_of_head(&cfg),
+        };
+        let none = Diff::default();
+        let diff_ref = diff.as_ref().unwrap_or(&none);
+        let other_scopes: Vec<Vec<String>> = changes
+            .iter()
+            .filter(|c| c.dir != folder && diff_ref.under(&c.dir).next().is_some())
+            .map(|c| scope_of(&cfg, c, &head))
+            .collect();
+        crate::acceptance::change_roles(
+            &nc,
+            &crate::acceptance::RoleInput {
+                cfg: &cfg,
+                git: &repo.git,
+                diff: diff_ref,
+                scope: &scope,
+                other_scopes: &other_scopes,
+                plan_path: &plan_path,
+            },
+        )
+        .map_err(Fatal::Io)?
+    } else {
+        Vec::new()
+    };
+    let roles = entry_roles(o.roles, matched);
 
     if o.brief {
         let read = |p: &str| -> Result<String, Fatal> {

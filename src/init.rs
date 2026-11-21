@@ -1141,6 +1141,8 @@ fn current(cfg: &Config, text: &str, facts: &Facts) -> Plan {
         "groups",
         "templates",
         "spec-dna-sha256",
+        // The table `[owners]` is a gate that no question asks for (design 0.8.0, D77).
+        "owners",
     ] {
         if let Some(toml::Value::Table(t)) = table.get(key) {
             p.kept.push(format!("\n[{key}]"));

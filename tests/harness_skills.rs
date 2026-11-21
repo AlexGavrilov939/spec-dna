@@ -1186,7 +1186,7 @@ fn the_golden_files_of_standard_differ_from_0_7_1_in_the_named_lines_only() {
                 r#"2. Run `spec-dna finish <slug>`. It applies the delta, deletes the folder of the change and stages the paths. It makes no commit."#,
             ],
             &[
-                r#"2. Run `spec-dna finish <slug>`. It applies the delta, deletes the folder of the change and stages the paths. It makes no commit. If it prints `Deviations: <n>` and one line for each, tell the owner: the merge of the pull request acknowledges them."#,
+                r#"2. Run `spec-dna finish <slug>`. It applies the delta, deletes the folder of the change and stages the paths. It makes no commit. If it prints `Deviations: <n>` and one line for each, tell the owner: the merge acknowledges them, or, with `approval = branch`, an approver does it with `spec-dna approve <slug> acceptance`."#,
             ],
         ),
         ("debug", &[], &[]),

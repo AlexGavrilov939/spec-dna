@@ -1,8 +1,10 @@
-//! `spec-dna approve <slug> intent|spec|plan` (owner review of 0.7.0, item 2).
-//! It is a command for a person. It sets the `status` line of one artifact of
-//! a change and commits that file alone, so the commit is an approval commit
-//! of the branch rule (ADR 0012, D11): the file is the same as in HEAD except
-//! the `status` line.
+//! `spec-dna approve <slug> intent|spec|plan|acceptance` (owner review of 0.7.0,
+//! item 2, and design 0.8.0, D3 item 10). It is a command for a person. It sets
+//! the `status` line of one artifact of a change and commits that file alone, so
+//! the commit is an approval commit of the branch rule (ADR 0012, D11): the file
+//! is the same as in HEAD except the `status` line. With `acceptance`, it adds the
+//! e-mail of its author to `acknowledged-by` of the acceptance record and commits
+//! that file alone (`approve_acceptance`).
 //!
 //! The command makes no check of the person: an agent can run it too. The
 //! hook `protect-approvals` of the harness denies a call of an agent, and the
@@ -31,9 +33,12 @@ fn approval_value(artifact: &str) -> Option<&'static str> {
 /// Runs `approve`. Exit codes: 0 committed or already approved, 1 a refusal,
 /// 2 usage, 3 configuration, 4 git or file error, 5 no folder or no file.
 pub fn run(repo: &Repo, slug: &str, artifact: &str, json: bool) -> Result<u8, Fatal> {
+    if artifact == "acceptance" {
+        return approve_acceptance(repo, slug, json);
+    }
     let Some(approved) = approval_value(artifact) else {
         return Err(Fatal::Usage(format!(
-            "`{artifact}` is not an artifact; use intent, spec or plan"
+            "`{artifact}` is not an artifact; use intent, spec, plan or acceptance"
         )));
     };
     if !crate::finish::valid_slug(slug) {
@@ -137,6 +142,181 @@ pub fn run(repo: &Repo, slug: &str, artifact: &str, json: bool) -> Result<u8, Fa
     } else {
         println!(
             "approved {path} in {} (author {author})",
+            commit.get(..12).unwrap_or(&commit)
+        );
+    }
+    Ok(0)
+}
+
+/// `approve <slug> acceptance` (design 0.8.0, D3 item 10): with
+/// `[change] approval = "branch"`, adds the e-mail of the author to
+/// `acknowledged-by` of the record and commits the record alone. An approver
+/// acknowledges the text of the record at that commit. An entry counts only when
+/// its approval commit changes nothing else and no later commit changes the record
+/// (SD932, SD934). The walk of the commits finds the entries that no longer count: the
+/// command removes them in a commit of its own first, so the approver acknowledges
+/// the new text. With the author already counted, no commit is made.
+fn approve_acceptance(repo: &Repo, slug: &str, json: bool) -> Result<u8, Fatal> {
+    if !crate::finish::valid_slug(slug) {
+        return Err(Fatal::Usage(format!(
+            "`{slug}` is not the name of a change; give the folder name of the change, with no `/`"
+        )));
+    }
+    let cfg = repo.load_config()?;
+    if cfg.pin != VERSION {
+        return Err(crate::pin_mismatch(&cfg));
+    }
+    if lifecycle::intent_dirs(&cfg).is_empty() {
+        return Err(Fatal::Config(
+            "spec-dna.toml has no layer of the type `intent`, so there is no change to approve; see `spec-dna layer add`".into(),
+        ));
+    }
+    // The mode is the stricter value of the head and the base tree (D70 item 6), the
+    // value that SD934 reads: a branch cannot lower `approval` to skip the entry.
+    let base_rev = lifecycle::merge_base_of(&repo.git, None, cfg.change_base.as_deref())
+        .map_err(Fatal::Config)?;
+    let nc = match base_rev.as_deref() {
+        Some(r) => crate::acceptance::need_config(&cfg, &repo.git, r).map_err(Fatal::Io)?,
+        None => crate::acceptance::need_config_of_head(&cfg),
+    };
+    if !nc.approval_branch(&cfg) {
+        return Err(Fatal::Refused(
+            "`approve <slug> acceptance` is a command of `[change] approval = \"branch\"`: with `base`, the merge of the pull request acknowledges the record".into(),
+        ));
+    }
+    let change = find_change(repo, &cfg, slug)?;
+    let path = format!("{}/{}", change.dir, crate::record::FILE_NAME);
+    let full = repo.root.join(&path);
+    if !full.is_file() {
+        return Err(Fatal::NotFound(format!(
+            "the change `{slug}` has no `{}` in `{}`",
+            crate::record::FILE_NAME,
+            change.dir
+        )));
+    }
+    if !repo.git.is_clean_in_head(&path).map_err(Fatal::Io)? {
+        return Err(Fatal::Refused(format!(
+            "commit the text of `{path}` first; an approval commit changes the `acknowledged-by` line alone"
+        )));
+    }
+    let author = repo.git.author_email().map_err(Fatal::Io)?;
+    if !nc
+        .approvers(&cfg)
+        .iter()
+        .any(|a| a.eq_ignore_ascii_case(&author))
+    {
+        return Err(Fatal::Refused(format!(
+            "`{author}` is not in `[change] approvers`, so the commit gives no approval; set `user.email` or `GIT_AUTHOR_EMAIL` to an approver"
+        )));
+    }
+    let old = std::fs::read_to_string(&full).map_err(|e| Fatal::Io(format!("{path}: {e}")))?;
+    if let Err(e) = crate::record::Record::parse(&old) {
+        return Err(Fatal::Refused(format!(
+            "`{path}` is not a record that `approve` can read: {e}"
+        )));
+    }
+    let listed = crate::record::ack_entries(&old);
+    // The entries that count, from the walk of the commits. With no base, the
+    // walk cannot run, and each entry stays as it is.
+    let counted: Option<Vec<String>> = match base_rev {
+        Some(b) => {
+            let walk = crate::approval::ack_walk(&repo.git, &b, &path).map_err(Fatal::Io)?;
+            // A walk that cannot run knows no entry that counts. The command makes no
+            // commit then: the entry would not count, and SD932 would report it.
+            if let Some(f) = &walk.stop {
+                return Err(Fatal::Refused(format!(
+                    "the walk of the commits cannot run, so the command cannot tell which entries of `{path}` count ({}); fetch the full history (`fetch-depth: 0`), then run it again",
+                    f.sentence()
+                )));
+            }
+            Some(walk.counted)
+        }
+        None => None,
+    };
+    let is_author = |e: &String| e.eq_ignore_ascii_case(&author);
+    let stale: Vec<String> = match &counted {
+        Some(c) => listed
+            .iter()
+            .filter(|e| !c.contains(&e.to_lowercase()))
+            .cloned()
+            .collect(),
+        None => Vec::new(),
+    };
+    let author_counts = listed.iter().any(is_author) && !stale.iter().any(is_author);
+    if author_counts && stale.is_empty() {
+        let line = format!("`{path}` is already acknowledged by `{author}`");
+        if json {
+            println!(
+                "{}",
+                result_json(slug, "acceptance", &path, "acknowledged", None, &author)
+            );
+        } else {
+            println!("{line}");
+        }
+        return Ok(0);
+    }
+    let mut text = old.clone();
+    let mut commit: Option<String> = None;
+    // A failure puts back the text of the last commit, so a failure of the second
+    // commit keeps the first.
+    let commit_file = |text: &str, before: &str, message: &str| -> Result<String, Fatal> {
+        std::fs::write(&full, text).map_err(|e| Fatal::Io(format!("{path}: {e}")))?;
+        repo.git.commit_only(message, &path).map_err(|e| {
+            let _ = std::fs::write(&full, before);
+            Fatal::Io(format!("git commit failed: {e}"))
+        })
+    };
+    // Step 1: remove each entry that no longer counts, in a commit of its own.
+    if !stale.is_empty() {
+        let kept: Vec<String> = listed
+            .iter()
+            .filter(|e| !stale.contains(e))
+            .cloned()
+            .collect();
+        let before = std::mem::take(&mut text);
+        text = crate::record::set_acknowledged_by(&before, &kept).ok_or_else(|| {
+            Fatal::Refused(format!(
+                "`{path}` has no `acknowledged-by` list on one line that the command can edit"
+            ))
+        })?;
+        commit = Some(commit_file(
+            &text,
+            &before,
+            &format!("docs: clear the stale acknowledgements of the record of {slug}"),
+        )?);
+    }
+    // Step 2: add the author, in the approval commit.
+    if !author_counts {
+        let mut list: Vec<String> = crate::record::ack_entries(&text);
+        list.push(author.clone());
+        let before = std::mem::take(&mut text);
+        text = crate::record::set_acknowledged_by(&before, &list).ok_or_else(|| {
+            Fatal::Refused(format!(
+                "`{path}` has no `acknowledged-by` list on one line that the command can edit"
+            ))
+        })?;
+        commit = Some(commit_file(
+            &text,
+            &before,
+            &format!("docs: acknowledge the acceptance record of {slug}"),
+        )?);
+    }
+    let commit = commit.expect("a commit was made");
+    if json {
+        println!(
+            "{}",
+            result_json(
+                slug,
+                "acceptance",
+                &path,
+                "acknowledged",
+                Some(&commit),
+                &author
+            )
+        );
+    } else {
+        println!(
+            "acknowledged {path} in {} (author {author})",
             commit.get(..12).unwrap_or(&commit)
         );
     }

@@ -1844,3 +1844,757 @@ fn the_walk_runs_the_same_number_of_git_processes_for_each_branch() {
         "the number of git processes depends on the commits"
     );
 }
+
+// The acknowledgement of the acceptance record with `branch` (design 0.8.0, D3
+// item 10, D73 item 7, slice S6): `approve <slug> acceptance`, SD932 and SD934.
+
+const RECORD: &str = "docs/intent/valve-timeout/acceptance.toml";
+const SECOND: &str = "second@example.com";
+
+/// A higher-risk change in one branch, up to the code. The approvers are
+/// `approvers`.
+fn ack_repo(approvers: &[&str]) -> Repo {
+    let r = start(&format!(
+        "{}acceptance-for = \"all\"\n",
+        branch_keys(approvers)
+    ));
+    ok_flow(&r);
+    r
+}
+
+fn accept(r: &Repo, args: &[&str]) -> (i32, String, String) {
+    let mut a = vec!["accept", "valve-timeout"];
+    a.extend_from_slice(args);
+    r.run(&a)
+}
+
+/// The record that the acceptor writes: the skeleton with the hash of its brief,
+/// the accepted results, one attempt and one deviation. The deviation makes the
+/// record need an acknowledgement. Nothing is committed.
+fn write_record(r: &Repo, session: &str) -> String {
+    let (code, out, err) = accept(r, &["--session", session]);
+    assert_eq!(code, 0, "{out}{err}");
+    let (code, out, err) = accept(r, &["--brief"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let hash = out
+        .lines()
+        .last()
+        .unwrap()
+        .strip_prefix("brief ")
+        .unwrap()
+        .to_string();
+    let mut t = r
+        .read(RECORD)
+        .replacen("brief = \"pending\"", &format!("brief = \"{hash}\""), 1)
+        .replace("result = \"pending\"", "result = \"accepted\"")
+        .replace("verdict = \"pending\"", "verdict = \"accepted\"");
+    t.push_str("\n[[attempt]]\nacceptor = 1\ntext = \"Sent a NaN value.\"\noutcome = \"held\"\n");
+    t.push_str("\n[[deviation]]\nid = \"d1\"\nkind = \"plan\"\ntext = \"The check moved.\"\nverdict = \"accepted\"\n");
+    r.write(RECORD, &t);
+    t
+}
+
+/// The record commit of the acceptor: the record alone.
+fn record_commit(r: &Repo) {
+    write_record(r, "s1");
+    r.commit_as("record", AGENT);
+}
+
+fn as_person(r: &Repo, who: &str, args: &[&str]) -> (i32, String, String) {
+    r.run_env(
+        args,
+        &[("GIT_AUTHOR_EMAIL", who), ("GIT_COMMITTER_EMAIL", who)],
+        &[],
+    )
+}
+
+fn approve_acceptance(r: &Repo, who: &str) -> (i32, String, String) {
+    as_person(r, who, &["approve", "valve-timeout", "acceptance"])
+}
+
+fn check_base(r: &Repo) -> (i32, String) {
+    let (code, out, err) = r.run(&["check", "--base", "origin/HEAD"]);
+    assert!(code == 0 || code == 1, "{out}{err}");
+    (code, out)
+}
+
+fn has(out: &str, code: &str) -> bool {
+    out.lines().any(|l| l.contains(&format!(" {code} ")))
+}
+
+fn finish_run(r: &Repo) -> (i32, String) {
+    let (code, out, err) = r.run(&["finish", "valve-timeout"]);
+    (code, format!("{out}{err}"))
+}
+
+#[test]
+fn a_record_commit_alone_gives_no_sd932_and_the_honest_flow_passes() {
+    let r = ack_repo(&[APPROVER]);
+    record_commit(&r);
+    let (code, out) = check_base(&r);
+    assert_eq!(code, 0, "{out}");
+    assert!(!has(&out, "SD932"), "{out}");
+}
+
+#[test]
+fn a_commit_that_changes_the_record_and_another_path_gives_sd932() {
+    let r = ack_repo(&[APPROVER]);
+    write_record(&r, "s1");
+    r.write("README.md", "# Valves, edited\n");
+    r.commit_as("record and readme", AGENT);
+    let (code, out) = check_base(&r);
+    assert_eq!(code, 1, "{out}");
+    assert!(has(&out, "SD932"), "{out}");
+    assert!(out.contains("README.md"), "the other path is named: {out}");
+}
+
+#[test]
+fn a_later_record_commit_that_changes_another_path_too_gives_sd932_also_in_finish() {
+    let r = ack_repo(&[APPROVER]);
+    record_commit(&r);
+    // A follow-up commit of the record that also edits a file (D73 item 7).
+    let t = r.read(RECORD);
+    r.write(
+        RECORD,
+        &format!("{t}\n[[attempt]]\nacceptor = 1\ntext = \"Another try.\"\noutcome = \"held\"\n"),
+    );
+    r.write("README.md", "# Valves, edited\n");
+    r.commit_as("record and another file", AGENT);
+    let (code, out) = finish_run(&r);
+    assert_eq!(code, 1, "{out}");
+    assert!(has(&out, "SD932"), "{out}");
+}
+
+#[test]
+fn an_approval_commit_of_an_approver_makes_the_entry_count() {
+    let r = ack_repo(&[APPROVER]);
+    record_commit(&r);
+    // With no acknowledgement, `finish` stops with SD934 and names the approvers.
+    let (code, out) = finish_run(&r);
+    assert_eq!(code, 1, "{out}");
+    assert!(has(&out, "SD934"), "{out}");
+    assert!(out.contains(APPROVER), "the approvers are named: {out}");
+    let (code, out, err) = approve_acceptance(&r, APPROVER);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        r.read(RECORD)
+            .contains(&format!("acknowledged-by = [\"{APPROVER}\"]"))
+    );
+    let (code, out) = check_base(&r);
+    assert_eq!(code, 0, "{out}");
+    let (code, out) = finish_run(&r);
+    assert_eq!(code, 0, "{out}");
+    assert!(!has(&out, "SD934") && !has(&out, "SD932"), "{out}");
+}
+
+#[test]
+fn an_entry_that_is_not_the_author_of_its_commit_gives_sd932() {
+    let r = ack_repo(&[APPROVER]);
+    record_commit(&r);
+    // An agent writes the e-mail of the approver into the record.
+    let t = r.read(RECORD).replace(
+        "acknowledged-by = []",
+        &format!("acknowledged-by = [\"{APPROVER}\"]"),
+    );
+    r.write(RECORD, &t);
+    r.commit_as("forged acknowledgement", AGENT);
+    let (code, out) = check_base(&r);
+    assert_eq!(code, 1, "{out}");
+    assert!(has(&out, "SD932"), "{out}");
+    assert!(out.contains(APPROVER), "{out}");
+    let (code, out) = finish_run(&r);
+    assert_eq!(code, 1, "{out}");
+    assert!(has(&out, "SD932"), "{out}");
+}
+
+#[test]
+fn a_record_commit_that_adds_an_entry_with_the_record_gives_sd932() {
+    let r = ack_repo(&[APPROVER]);
+    let t = write_record(&r, "s1").replace(
+        "acknowledged-by = []",
+        &format!("acknowledged-by = [\"{APPROVER}\"]"),
+    );
+    r.write(RECORD, &t);
+    r.commit_as("record with an entry", APPROVER);
+    let (code, out) = check_base(&r);
+    assert_eq!(code, 1, "{out}");
+    assert!(has(&out, "SD932"), "{out}");
+}
+
+#[test]
+fn a_commit_that_keeps_an_entry_gives_sd932_and_approve_again_clears_it() {
+    let r = ack_repo(&[APPROVER]);
+    record_commit(&r);
+    let (code, out, err) = approve_acceptance(&r, APPROVER);
+    assert_eq!(code, 0, "{out}{err}");
+    // The record changes after the approval, and the entry stays.
+    let t = r.read(RECORD);
+    r.write(
+        RECORD,
+        &format!("{t}\n[[attempt]]\nacceptor = 1\ntext = \"Another try.\"\noutcome = \"held\"\n"),
+    );
+    r.commit_as("another attempt", AGENT);
+    let (code, out) = check_base(&r);
+    assert_eq!(code, 1, "{out}");
+    assert!(has(&out, "SD932"), "{out}");
+    let (code, out) = finish_run(&r);
+    assert_eq!(code, 1, "{out}");
+    assert!(has(&out, "SD932"), "{out}");
+    // The approver acknowledges the new text. No finding stays.
+    let (code, out, err) = approve_acceptance(&r, APPROVER);
+    assert_eq!(code, 0, "{out}{err}");
+    let (code, out) = check_base(&r);
+    assert_eq!(code, 0, "{out}");
+    assert!(!has(&out, "SD932") && !has(&out, "SD934"), "{out}");
+    let (code, out) = finish_run(&r);
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn approve_when_the_entry_already_counts_makes_no_commit() {
+    let r = ack_repo(&[APPROVER]);
+    record_commit(&r);
+    let (code, _, err) = approve_acceptance(&r, APPROVER);
+    assert_eq!(code, 0, "{err}");
+    let head = r.git_out(&["rev-parse", "HEAD"]);
+    let (code, out, err) = approve_acceptance(&r, APPROVER);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("already"), "{out}");
+    assert_eq!(r.git_out(&["rev-parse", "HEAD"]), head, "no new commit");
+}
+
+#[test]
+fn a_second_acceptor_after_the_approval_clears_the_entry() {
+    let r = ack_repo(&[APPROVER]);
+    record_commit(&r);
+    let (code, out, err) = approve_acceptance(&r, APPROVER);
+    assert_eq!(code, 0, "{out}{err}");
+    // `accept` adds an entry to a record that has an acknowledgement. The text
+    // changes, so the entry would outlive it: `accept` writes the empty list, and
+    // the approver acknowledges the new text.
+    let (code, out, err) = accept(&r, &["--session", "s2", "--role", "second"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let t = r.read(RECORD);
+    assert!(t.contains("acknowledged-by = []"), "{t}");
+    assert!(!t.contains(APPROVER), "{t}");
+}
+
+#[test]
+fn an_approval_commit_of_a_second_approver_keeps_the_first_entry() {
+    let r = ack_repo(&[APPROVER, SECOND]);
+    record_commit(&r);
+    let (code, out, err) = approve_acceptance(&r, APPROVER);
+    assert_eq!(code, 0, "{out}{err}");
+    let (code, out, err) = approve_acceptance(&r, SECOND);
+    assert_eq!(code, 0, "{out}{err}");
+    let t = r.read(RECORD);
+    assert!(t.contains(APPROVER) && t.contains(SECOND), "{t}");
+    let (code, out) = check_base(&r);
+    assert_eq!(code, 0, "{out}");
+    assert!(!has(&out, "SD932") && !has(&out, "SD934"), "{out}");
+}
+
+#[test]
+fn the_commit_of_finish_moves_the_entry_and_the_check_after_it_finds_nothing() {
+    let r = ack_repo(&[APPROVER]);
+    record_commit(&r);
+    let (code, out, err) = approve_acceptance(&r, APPROVER);
+    assert_eq!(code, 0, "{out}{err}");
+    let (code, out) = finish_run(&r);
+    assert_eq!(code, 0, "{out}");
+    r.commit_as("finish", AGENT);
+    // The change was added and finished in this branch, so SD910 reports reason 7.
+    // The codes of the record find nothing.
+    let (_, out) = check_base(&r);
+    assert!(
+        !has(&out, "SD932") && !has(&out, "SD934") && !has(&out, "SD927"),
+        "{out}"
+    );
+}
+
+#[test]
+fn the_archive_of_a_record_with_an_entry_nobody_added_gives_sd934_after_finish() {
+    // The commit of `finish` keeps the entries that count. A record with no
+    // acknowledgement keeps none, so the check after `finish` names SD934.
+    let r = ack_repo(&[APPROVER]);
+    record_commit(&r);
+    let t = r.read(RECORD);
+    r.git(&["rm", "-q", "-r", DIR]);
+    r.write(".spec-dna/accepted/valve-timeout.toml", &t);
+    r.commit_as("finish by hand", AGENT);
+    let (code, out) = check_base(&r);
+    assert_eq!(code, 1, "{out}");
+    assert!(has(&out, "SD934"), "{out}");
+    assert!(!has(&out, "SD932"), "{out}");
+}
+
+/// Like `ack_repo`, but the commit that adds the plan pins 0.8.0 in `spec-dna.toml`,
+/// and the next commit sets the pin of the binary again. The plan is then new for a
+/// later pull request (D70 item 5).
+fn old_pin_repo() -> Repo {
+    let r = start_branch_all();
+    first_four(&r);
+    let now = r.read("spec-dna.toml");
+    r.write("spec-dna.toml", &now.replacen(VERSION, "0.8.0", 1));
+    step_plan_draft(&r);
+    r.write("spec-dna.toml", &now);
+    r.commit_as("move the pin", AGENT);
+    step_plan_approved(&r, APPROVER);
+    step_code(&r);
+    r
+}
+
+fn start_branch_all() -> Repo {
+    start(&format!(
+        "{}acceptance-for = \"all\"\n",
+        branch_keys(&[APPROVER])
+    ))
+}
+
+#[test]
+fn a_later_pull_request_with_only_finish_reads_the_entry_of_the_base() {
+    let r = old_pin_repo();
+    record_commit(&r);
+    let (code, out, err) = approve_acceptance(&r, APPROVER);
+    assert_eq!(code, 0, "{out}{err}");
+    // The work merges into the base with the record and its entry.
+    r.git(&["checkout", "-q", "main"]);
+    r.git(&["merge", "-q", "--ff-only", "feature"]);
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "finish-pr"]);
+    let (code, out) = finish_run(&r);
+    assert_eq!(code, 0, "{out}");
+    r.commit_as("finish", AGENT);
+    let (_, out) = check_base(&r);
+    assert!(
+        !has(&out, "SD932") && !has(&out, "SD934") && !has(&out, "SD927"),
+        "{out}"
+    );
+}
+
+#[test]
+fn the_test_merge_of_a_code_host_gives_the_same_result_as_the_branch() {
+    let src = ack_repo(&[APPROVER]);
+    record_commit(&src);
+    let (code, out, err) = approve_acceptance(&src, APPROVER);
+    assert_eq!(code, 0, "{out}{err}");
+    src.git(&["checkout", "-q", "main"]);
+    src.write("README.md", "# Valves, main moved\n");
+    src.commit("main moves on");
+    origin_head(&src.dir, "main");
+    src.git(&["checkout", "-q", "-b", "queue", "main"]);
+    src.git(&["merge", "-q", "--no-ff", "-m", "test merge", "feature"]);
+    let (code, out) = check_base(&src);
+    assert_eq!(code, 0, "{out}");
+    assert!(!has(&out, "SD932") && !has(&out, "SD934"), "{out}");
+}
+
+#[test]
+fn a_shallow_clone_cuts_the_walk_and_sd932_names_the_fix() {
+    let src = ack_repo(&[APPROVER]);
+    record_commit(&src);
+    let (code, out, err) = approve_acceptance(&src, APPROVER);
+    assert_eq!(code, 0, "{out}{err}");
+    src.git(&["checkout", "-q", "main"]);
+    src.write("README.md", "# Valves, main moved\n");
+    src.commit("main moves on");
+    src.git(&["checkout", "-q", "-b", "queue", "main"]);
+    src.git(&["merge", "-q", "--no-ff", "-m", "test merge", "feature"]);
+    let dst = Repo::empty();
+    shallow_clone(&src.dir, &dst.dir, 2);
+    let tip = src.git_out(&["rev-parse", "main"]);
+    origin_head(&dst.dir, &tip);
+    let (_, out, err) = dst.run(&["check"]);
+    let line = out
+        .lines()
+        .find(|l| l.contains(" SD932 "))
+        .unwrap_or_else(|| panic!("{out}{err}"));
+    assert!(line.contains("fetch-depth: 0"), "{line}");
+}
+
+#[test]
+fn the_staged_approval_commit_passes_the_hook_check_and_a_mixed_staged_commit_does_not() {
+    let r = ack_repo(&[APPROVER]);
+    record_commit(&r);
+    // The index has the entry, and the commit has not been made yet: the hook of
+    // `init` runs `check --staged` before the approval commit.
+    let t = r.read(RECORD).replace(
+        "acknowledged-by = []",
+        &format!("acknowledged-by = [\"{APPROVER}\"]"),
+    );
+    r.write(RECORD, &t);
+    r.git(&["add", RECORD]);
+    let (code, out, err) = as_person(&r, APPROVER, &["check", "--staged"]);
+    assert!(!has(&out, "SD932"), "{code} {out}{err}");
+    // A staged record and another staged path are no record commit.
+    r.write("README.md", "# Valves, staged\n");
+    r.git(&["add", "README.md"]);
+    let (_, out, err) = as_person(&r, APPROVER, &["check", "--staged"]);
+    assert!(has(&out, "SD932"), "{out}{err}");
+}
+
+#[test]
+fn with_approval_base_no_record_commit_is_checked_and_approve_acceptance_refuses() {
+    let r = start("acceptance-for = \"all\"\n");
+    step_intent_approved(&r, AGENT);
+    step(&r, AGENT, "spec", &[(SPEC, &spec("approved"))]);
+    step(&r, AGENT, "plan", &[(PLAN, &plan("approved", &FILES))]);
+    step_code(&r);
+    write_record(&r, "s1");
+    r.write("README.md", "# Valves, with the record\n");
+    r.commit_as("record and readme", AGENT);
+    let (_, out) = check_base(&r);
+    assert!(!has(&out, "SD932") && !has(&out, "SD934"), "{out}");
+    let (code, out) = finish_run(&r);
+    assert!(!has(&out, "SD932") && !has(&out, "SD934"), "{code} {out}");
+    // `approve acceptance` is a command of the mode `branch`.
+    let (code, out, err) = approve_acceptance(&r, APPROVER);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(err.contains("branch"), "{err}");
+}
+
+#[test]
+fn approve_acceptance_refuses_an_author_outside_the_approvers_and_a_missing_record() {
+    let r = ack_repo(&[APPROVER]);
+    // No record yet: exit code 5.
+    let (code, out, err) = approve_acceptance(&r, APPROVER);
+    assert_eq!(code, 5, "{out}{err}");
+    record_commit(&r);
+    let (code, out, err) = approve_acceptance(&r, STRANGER);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(err.contains(STRANGER) && err.contains("approvers"), "{err}");
+    // A record that has an edit that HEAD does not have.
+    let t = r.read(RECORD);
+    r.write(RECORD, &format!("{t}\n# edit\n"));
+    let (code, out, err) = approve_acceptance(&r, APPROVER);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(err.contains("commit"), "{err}");
+}
+
+#[test]
+fn the_json_of_approve_acceptance_has_the_fields_of_approve() {
+    let r = ack_repo(&[APPROVER]);
+    record_commit(&r);
+    let (code, out, err) = as_person(
+        &r,
+        APPROVER,
+        &["approve", "valve-timeout", "acceptance", "--json"],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    for key in ["slug", "artifact", "path", "status", "commit", "author"] {
+        assert!(out.contains(&format!("\"{key}\":")), "{key}: {out}");
+    }
+    assert!(out.contains("\"artifact\":\"acceptance\""), "{out}");
+}
+
+#[test]
+fn the_staged_result_of_finish_in_a_later_pull_request_passes_the_hook_check() {
+    // The work and its record merged earlier. In the pull request of `finish`, the
+    // command stages the archive file and the deletion of the folder together. The
+    // commit of `finish` keeps the entries that count, so `check --staged` finds no
+    // SD932 and no SD934. A change that the branch added and finished is not read by
+    // `check --staged`: its diff holds no deleted folder (the cause is outside the
+    // acknowledgement), so only this case reaches the arm.
+    let r = old_pin_repo();
+    record_commit(&r);
+    let (code, out, err) = approve_acceptance(&r, APPROVER);
+    assert_eq!(code, 0, "{out}{err}");
+    r.git(&["checkout", "-q", "main"]);
+    r.git(&["merge", "-q", "--ff-only", "feature"]);
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "finish-pr"]);
+    let (code, out) = finish_run(&r);
+    assert_eq!(code, 0, "{out}");
+    let (_, out, err) = r.run(&["check", "--staged"]);
+    assert!(
+        !has(&out, "SD932") && !has(&out, "SD934") && !has(&out, "SD927"),
+        "{out}{err}"
+    );
+    // The same staged result, but the archive file was committed alone before: the
+    // staged deletion of the folder ends the record, as the committed check reads it.
+    r.git(&["reset", "-q", "--hard", "HEAD"]);
+    r.git(&["clean", "-qfd"]);
+    let t = r.read(RECORD);
+    r.write(".spec-dna/accepted/valve-timeout.toml", &t);
+    r.git(&["add", ".spec-dna"]);
+    r.commit_as("archive alone", AGENT);
+    r.git(&["rm", "-q", "-r", DIR]);
+    let (_, out, err) = r.run(&["check", "--staged"]);
+    assert!(has(&out, "SD934"), "{out}{err}");
+}
+
+const NOTE: &str = "\n[[finding]]\nacceptor = 1\nseverity = \"note\"\npath = \"src/valves.py\"\nline = 3\ntext = \"The name has no unit.\"\n";
+
+/// A record with one note on `src/valves.py`, committed, then acknowledged. The
+/// fix of the note is committed too. The follow-up is not written yet.
+fn noted_and_fixed() -> Repo {
+    let r = ack_repo(&[APPROVER]);
+    let t = write_record(&r, "s1");
+    r.write(RECORD, &format!("{t}{NOTE}"));
+    r.commit_as("record", AGENT);
+    let (code, out, err) = approve_acceptance(&r, APPROVER);
+    assert_eq!(code, 0, "{out}{err}");
+    let code_text = r.read(CODE);
+    r.write(
+        CODE,
+        &format!("{code_text}\n\ndef timeout_ms():\n    return 60000\n"),
+    );
+    r.commit_as("fix", AGENT);
+    r
+}
+
+/// The follow-up as an agent writes it: the brief, then `accept --follow-up`, then
+/// the fields. The record is written, not committed.
+fn write_follow_up(r: &Repo) {
+    let (code, out, err) = accept(r, &["--follow-up", "--brief"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let hash = out
+        .lines()
+        .last()
+        .unwrap()
+        .strip_prefix("brief ")
+        .unwrap()
+        .to_string();
+    let (code, out, err) = accept(r, &["--follow-up", "--session", "s2"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let t = r
+        .read(RECORD)
+        .replacen("brief = \"pending\"", &format!("brief = \"{hash}\""), 1)
+        .replacen("result = \"pending\"", "result = \"accepted\"", 1)
+        .replacen(
+            "text = \"pending\"",
+            "text = \"The name has a unit now. Proof: the test passed.\"",
+            1,
+        );
+    r.write(RECORD, &t);
+}
+
+#[test]
+fn a_follow_up_after_the_approval_clears_the_entry_and_the_approver_acknowledges_again() {
+    let r = noted_and_fixed();
+    write_follow_up(&r);
+    // The follow-up changes the text of the record, so the entry is gone.
+    assert!(
+        r.read(RECORD).contains("acknowledged-by = []"),
+        "{}",
+        r.read(RECORD)
+    );
+    r.commit_as("follow-up", AGENT);
+    let (code, out) = check_base(&r);
+    assert!(!has(&out, "SD932"), "{code} {out}");
+    // No acknowledgement of the new text: `finish` stops with SD934.
+    let (code, out) = finish_run(&r);
+    assert_eq!(code, 1, "{out}");
+    assert!(has(&out, "SD934"), "{out}");
+    let (code, out, err) = approve_acceptance(&r, APPROVER);
+    assert_eq!(code, 0, "{out}{err}");
+    let (code, out) = check_base(&r);
+    assert!(!has(&out, "SD932") && !has(&out, "SD934"), "{code} {out}");
+    let (code, out) = finish_run(&r);
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn a_follow_up_commit_that_also_changes_code_gives_sd932() {
+    let r = noted_and_fixed();
+    write_follow_up(&r);
+    let code_text = r.read(CODE);
+    r.write(CODE, &format!("{code_text}\n# a second edit\n"));
+    r.commit_as("follow-up and code", AGENT);
+    let (code, out) = check_base(&r);
+    assert_eq!(code, 1, "{out}");
+    assert!(has(&out, "SD932"), "{out}");
+    assert!(out.contains(CODE), "the other path is named: {out}");
+}
+
+#[test]
+fn a_follow_up_commit_that_keeps_an_entry_gives_sd932() {
+    // The agent puts the entry of the approver back by hand in the follow-up commit.
+    let r = noted_and_fixed();
+    write_follow_up(&r);
+    let t = r.read(RECORD).replace(
+        "acknowledged-by = []",
+        &format!("acknowledged-by = [\"{APPROVER}\"]"),
+    );
+    r.write(RECORD, &t);
+    r.commit_as("follow-up with the old entry", AGENT);
+    let (code, out) = check_base(&r);
+    assert_eq!(code, 1, "{out}");
+    assert!(has(&out, "SD932"), "{out}");
+}
+
+#[test]
+fn the_per_role_rule_of_sd933_reads_the_roles_of_the_entries() {
+    // The roles of `[owners]` need `roles` in the record, and the rule is the
+    // same with `branch`: an entry with the role passes SD933.
+    let r = ack_repo(&[APPROVER]);
+    let cfg = r.read("spec-dna.toml");
+    r.write(
+        "spec-dna.toml",
+        &format!("{cfg}\n[owners]\n\"src/**\" = [\"security-reviewer\"]\n"),
+    );
+    r.commit_as("owners", AGENT);
+    let (code, out, err) = accept(&r, &["--session", "s1", "--role", "acceptor"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let (_, out, _) = accept(&r, &["--brief", "--role", "acceptor"]);
+    let hash = out.lines().last().unwrap().strip_prefix("brief ").unwrap();
+    let t = r
+        .read(RECORD)
+        .replacen("brief = \"pending\"", &format!("brief = \"{hash}\""), 1)
+        .replace("result = \"pending\"", "result = \"accepted\"")
+        .replace("verdict = \"pending\"", "verdict = \"accepted\"");
+    r.write(
+        RECORD,
+        &format!("{t}\n[[attempt]]\nacceptor = 1\ntext = \"Tried.\"\noutcome = \"held\"\n"),
+    );
+    r.commit_as("record", AGENT);
+    let (code, out) = finish_run(&r);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        has(&out, "SD933") && out.contains("security-reviewer"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_merge_commit_that_carries_the_record_and_another_path_gives_sd932() {
+    for extra in ["README.md", CODE] {
+        let r = ack_repo(&[APPROVER]);
+        r.git(&["checkout", "-q", "main"]);
+        r.write("src/other.py", "y = 2\n");
+        r.commit("main moves on");
+        origin_head(&r.dir, "main");
+        r.git(&["checkout", "-q", "feature"]);
+        r.git(&["merge", "-q", "--no-commit", "--no-ff", "main"]);
+        write_record(&r, "s1");
+        let text = r.read(extra);
+        r.write(extra, &format!("{text}\n# merge edit\n"));
+        r.commit_as("merge with the record", AGENT);
+        let (code, out) = check_base(&r);
+        assert_eq!(code, 1, "{extra}: {out}");
+        assert!(has(&out, "SD932"), "{extra}: {out}");
+    }
+}
+
+#[test]
+fn a_merge_of_the_base_that_carries_no_record_change_is_neutral() {
+    let r = ack_repo(&[APPROVER]);
+    record_commit(&r);
+    let (code, out, err) = approve_acceptance(&r, APPROVER);
+    assert_eq!(code, 0, "{out}{err}");
+    r.git(&["checkout", "-q", "main"]);
+    r.write("src/other.py", "y = 2\n");
+    r.commit("main moves on");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "feature"]);
+    r.git(&["merge", "-q", "--no-ff", "-m", "merge the base", "main"]);
+    let (code, out) = check_base(&r);
+    assert_eq!(code, 0, "{out}");
+    assert!(!has(&out, "SD932") && !has(&out, "SD934"), "{out}");
+}
+
+#[test]
+fn next_names_the_acknowledgement_as_an_item_of_a_person() {
+    let r = ack_repo(&[APPROVER]);
+    record_commit(&r);
+    let (code, out, err) = r.run(&["next", "valve-timeout"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let line = out
+        .lines()
+        .find(|l| {
+            l.contains("spec-dna approve valve-timeout acceptance")
+                || l.contains("SD934")
+                || l.contains("acknowledg")
+        })
+        .unwrap_or_else(|| panic!("{out}"));
+    assert!(line.ends_with("[person]"), "{line}");
+    let (_, json, _) = r.run(&["next", "valve-timeout", "--json"]);
+    assert!(json.contains("\"person\":true"), "{json}");
+    // After the approval the item is done.
+    let (code, out, err) = approve_acceptance(&r, APPROVER);
+    assert_eq!(code, 0, "{out}{err}");
+    let (_, out, _) = r.run(&["next", "valve-timeout"]);
+    assert!(!out.contains("acknowledg"), "{out}");
+}
+
+#[test]
+fn finish_says_who_acknowledged_the_deviations_in_each_mode() {
+    // With `branch`, the entry of an approver acknowledged them, not the merge.
+    let r = ack_repo(&[APPROVER]);
+    record_commit(&r);
+    let (code, out, err) = approve_acceptance(&r, APPROVER);
+    assert_eq!(code, 0, "{out}{err}");
+    let (code, out) = finish_run(&r);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("Deviations: 1"), "{out}");
+    assert!(
+        out.contains("an approver acknowledged the deviations in `acknowledged-by`"),
+        "{out}"
+    );
+    assert!(
+        !out.contains("the merge of the pull request acknowledges"),
+        "{out}"
+    );
+    // With `base`, the merge acknowledges them.
+    let r = start("acceptance-for = \"all\"\n");
+    step_intent_approved(&r, AGENT);
+    step(&r, AGENT, "spec", &[(SPEC, &spec("approved"))]);
+    step(&r, AGENT, "plan", &[(PLAN, &plan("approved", &FILES))]);
+    step_code(&r);
+    write_record(&r, "s1");
+    r.commit_as("record", AGENT);
+    let (code, out) = finish_run(&r);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("the merge of the pull request acknowledges the deviations"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_branch_cannot_lower_approval_to_base_to_skip_the_acknowledgement() {
+    let r = ack_repo(&[APPROVER]);
+    let cfg = r.read("spec-dna.toml");
+    assert!(cfg.contains("approval = \"branch\""));
+    r.write(
+        "spec-dna.toml",
+        &cfg.replace("approval = \"branch\"", "approval = \"base\""),
+    );
+    r.commit_as("lower the mode", AGENT);
+    record_commit(&r);
+    // `finish` reads the stricter value, and the message names the cause.
+    let (code, out) = finish_run(&r);
+    assert_eq!(code, 1, "{out}");
+    assert!(has(&out, "SD934"), "{out}");
+    assert!(
+        out.contains("the base has `approval = \"branch\"`") && out.contains("cannot lower"),
+        "{out}"
+    );
+    // `approve` reads the same value, so the approver can fix it.
+    let (code, out, err) = approve_acceptance(&r, APPROVER);
+    assert_eq!(code, 0, "{out}{err}");
+    let (code, out) = finish_run(&r);
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn approve_in_a_shallow_clone_says_that_the_walk_stopped() {
+    let src = ack_repo(&[APPROVER]);
+    record_commit(&src);
+    let (code, out, err) = approve_acceptance(&src, APPROVER);
+    assert_eq!(code, 0, "{out}{err}");
+    src.git(&["checkout", "-q", "main"]);
+    src.write("README.md", "# Valves, main moved\n");
+    src.commit("main moves on");
+    src.git(&["checkout", "-q", "-b", "queue", "main"]);
+    src.git(&["merge", "-q", "--no-ff", "-m", "test merge", "feature"]);
+    let dst = Repo::empty();
+    shallow_clone(&src.dir, &dst.dir, 2);
+    let tip = src.git_out(&["rev-parse", "main"]);
+    origin_head(&dst.dir, &tip);
+    // The author is listed already, and the walk cannot run: no "already acknowledged".
+    let (code, out, err) = approve_acceptance(&dst, APPROVER);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(!out.contains("already"), "{out}");
+    assert!(err.contains("fetch-depth: 0"), "{err}");
+}
