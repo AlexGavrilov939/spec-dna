@@ -1533,6 +1533,103 @@ fn the_item_none_is_valid_alone_and_not_with_a_pin() {
 }
 
 #[test]
+fn none_and_a_pin_in_backticks_read_as_the_item_without_backticks() {
+    let r = inv_repo("standard", "invariants = true\n");
+    inv_spec(&r, "approved", INV_DELTA, "- `none`");
+    let (code, out) = check(&r);
+    assert_eq!(codes_of(&out, "SD936"), 0, "{out}");
+    assert_eq!(code, 0, "{out}");
+    let p = pin(&r, "valve-closed");
+    inv_spec(&r, "approved", INV_DELTA, &format!("- `{p}`"));
+    let (code, out) = check(&r);
+    assert_eq!(codes_of(&out, "SD936"), 0, "{out}");
+    assert_eq!(code, 0, "{out}");
+    // The item `none` with a pin still stands alone, also in backticks.
+    inv_spec(&r, "approved", INV_DELTA, &format!("- `none`\n- {p}"));
+    let (_, out) = check(&r);
+    assert_eq!(codes_of(&out, "SD936"), 1, "{out}");
+    assert!(messages(&out, "SD936")[0].contains("stands alone"), "{out}");
+}
+
+#[test]
+fn a_section_with_text_and_no_list_item_or_with_no_text_gives_sd936_with_the_key() {
+    let r = inv_repo("standard", "invariants = true\n");
+    let p = pin(&r, "valve-closed");
+    for (body, what) in [
+        (format!("{p}\n"), "a pin in a paragraph"),
+        ("None.\n".to_string(), "a paragraph"),
+        (String::new(), "no text"),
+    ] {
+        inv_spec(&r, "draft", INV_DELTA, &body);
+        let (code, out) = check(&r);
+        assert_eq!(codes_of(&out, "SD936"), 1, "{what}: {out}");
+        assert!(
+            messages(&out, "SD936")[0].contains("write each item as a list item, or `- none`"),
+            "{what}: {out}"
+        );
+        assert_eq!(code, 1, "{what}: {out}");
+    }
+    // A spec with no section `Invariants` declares nothing, and gives no finding.
+    r.write(
+        "docs/intent/dose/spec.md",
+        &format!("---\nstatus: draft\n---\n# Spec\n\n## Delta\n\n{INV_DELTA}\n"),
+    );
+    let (_, out) = check(&r);
+    assert_eq!(codes_of(&out, "SD936"), 0, "{out}");
+    // Without the key the section is plain text.
+    let r = inv_repo("standard", "");
+    inv_spec(&r, "draft", INV_DELTA, &format!("{p}\n"));
+    let (_, out) = check(&r);
+    assert_eq!(codes_of(&out, "SD936"), 0, "{out}");
+}
+
+#[test]
+fn a_spec_titled_order_keeps_its_invariants_and_an_item_under_a_sub_heading_is_no_item() {
+    let r = inv_repo("standard", "invariants = true\n");
+    let p = pin(&r, "valve-closed");
+    r.write(
+        "docs/intent/dose/intent.md",
+        "---\nstatus: accepted\nclass: routine\n---\n# Change\n\n## Intent\n\nText.\n",
+    );
+    // `# Order` holds each heading of level 2 below it, so the parser reads no
+    // section `Invariants` here. That is no reason for SD936.
+    r.write(
+        "docs/intent/dose/spec.md",
+        &format!(
+            "---\nstatus: draft\n---\n# Order\n\n## Delta\n\n{INV_DELTA}\n\n## Invariants\n\n- {p}\n"
+        ),
+    );
+    let (_, out) = check(&r);
+    assert_eq!(codes_of(&out, "SD936"), 0, "{out}");
+    // A section ends at the next heading of any level: an item below `### Sub`
+    // is no item of `Invariants`, and the message says so.
+    r.write(
+        "docs/intent/dose/spec.md",
+        &format!(
+            "---\nstatus: draft\n---\n# Spec\n\n## Delta\n\n{INV_DELTA}\n\n## Invariants\n\n### Sub\n\n- {p}\n"
+        ),
+    );
+    let (_, out) = check(&r);
+    assert_eq!(codes_of(&out, "SD936"), 1, "{out}");
+    assert!(
+        messages(&out, "SD936")[0].contains("no list item before the next heading"),
+        "{out}"
+    );
+}
+
+#[test]
+fn an_item_in_double_brackets_gives_sd936_that_names_the_brackets() {
+    let r = inv_repo("standard", "invariants = true\n");
+    let p = pin(&r, "valve-closed");
+    inv_spec(&r, "draft", INV_DELTA, &format!("- [[{p}]]"));
+    let (_, out) = check(&r);
+    assert_eq!(codes_of(&out, "SD936"), 1, "{out}");
+    let m = messages(&out, "SD936")[0];
+    assert!(m.contains("[[") && m.contains("brackets"), "{m}");
+    assert!(!m.contains("hexadecimal"), "{m}");
+}
+
+#[test]
 fn a_good_pin_gives_no_sd936_and_no_sd937_also_with_crlf_line_ends() {
     let r = inv_repo("standard", "invariants = true\n");
     let p = pin(&r, "valve-closed");
@@ -1813,6 +1910,61 @@ fn a_bad_deviation_item_gives_sd939() {
         "{out}"
     );
     assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn a_code_span_reads_as_its_text_and_each_sd940_message_names_the_form_that_it_found() {
+    let r = inv_repo("standard", "");
+    inv_spec(&r, "approved", INV_DELTA, "- none");
+    r.write(
+        "docs/intent/later/intent.md",
+        "---\nstatus: draft\nclass: routine\n---\n# Later\n\n## Intent\n\nText.\n",
+    );
+    // A code span reads as its text: no SD940.
+    for ok in [
+        "Delta: `ADD requirements/valves#timeout`",
+        "`Delta:` ADD requirements/valves#timeout",
+        "`Delta: ADD requirements/valves#timeout`.",
+        "Follow-up: `later`",
+        "`Follow-up:` later",
+    ] {
+        dev_plan(&r, &format!("- d1 (spec): The valve closes. {ok}"));
+        let (_, out) = check(&r);
+        assert_eq!(codes_of(&out, "SD940"), 0, "{ok}: {out}");
+    }
+    // A form that is not a label: the message names it.
+    for (bad, found) in [
+        ("(Delta: ADD requirements/valves#timeout)", "(Delta:"),
+        ("[Follow-up: later]", "[Follow-up:"),
+        ("delta: ADD requirements/valves#timeout", "delta:"),
+    ] {
+        dev_plan(&r, &format!("- d1 (spec): The valve closes. {bad}"));
+        let (_, out) = check(&r);
+        assert_eq!(codes_of(&out, "SD940"), 1, "{bad}: {out}");
+        let m = messages(&out, "SD940")[0];
+        assert!(
+            m.contains(&format!("`{found}")) && !m.contains("it has no `Delta:`"),
+            "{bad}: {m}"
+        );
+    }
+    // A label with no value: the message names the label.
+    dev_plan(&r, "- d1 (spec): The valve closes. Follow-up:");
+    let (_, out) = check(&r);
+    assert_eq!(codes_of(&out, "SD940"), 1, "{out}");
+    assert!(
+        messages(&out, "SD940")[0].contains("`Follow-up:` has no slug"),
+        "{out}"
+    );
+    // A label with a bad verb: the message names what follows it.
+    dev_plan(
+        &r,
+        "- d1 (spec): x. `Delta:` UPDATE requirements/valves#timeout",
+    );
+    let (_, out) = check(&r);
+    assert!(
+        messages(&out, "SD940")[0].contains("`Delta: UPDATE requirements/valves#timeout`"),
+        "{out}"
+    );
 }
 
 #[test]

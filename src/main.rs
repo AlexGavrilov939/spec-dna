@@ -293,7 +293,7 @@ It prints the line `Hours: <total>` (a number, or a range `<low>-<high>`),
 with `, actual <n>` if a task has `Actual:`: put the line in the commit
 message, and keep it in the squash message. For a change that needs an
 acceptance record, it prints the line `Deviations: <n>` and one line for each
-deviation of the plan, with the verdict of the record (--json: the list
+`[[deviation]]` entry of the record, with its verdict (--json: the list
 `deviations`); the merge of the pull request acknowledges them. It is the only command that
 deletes documents. Exit codes: 1 a stop, 3 pin, base or configuration, 4
 write error, 5 no folder.",
@@ -4056,12 +4056,16 @@ fn report_finish(slug: &str, folder: &str, a: &Args, plan: &finish::Plan, pin: &
             o = o.raw(
                 "deviations",
                 &json::array(plan.deviations.iter().map(|d| {
-                    Obj::new()
+                    let mut o = Obj::new()
                         .str("id", &d.id)
                         .str("kind", &d.kind)
                         .str("text", &d.text)
-                        .str("verdict", &d.verdict)
-                        .end()
+                        .str("verdict", &d.verdict);
+                    // Only when the record did not read: no verdict is an answer.
+                    if d.unread {
+                        o = o.str("record", "unread");
+                    }
+                    o.end()
                 })),
             );
         }
@@ -4143,12 +4147,21 @@ fn report_finish(slug: &str, folder: &str, a: &Args, plan: &finish::Plan, pin: &
             "add this line to the commit message of the change; keep it in the squash message"
         );
     }
-    // Step 5.3: the deviations of the plan, with the verdict of the record. In
-    // 0.8.0 the merge of the pull request acknowledges them.
+    // Step 5.3: the `[[deviation]]` entries of the record, with their verdicts.
+    // In 0.8.0 the merge of the pull request acknowledges them.
     if !plan.deviations.is_empty() {
         println!("Deviations: {}", plan.deviations.len());
+        if plan.deviations.iter().any(|d| d.unread) {
+            println!("the record did not read, so the items of the plan have no verdict");
+        }
         for d in &plan.deviations {
-            println!("- {} ({}), {}: {}", d.id, d.kind, d.verdict, d.text);
+            // A text of the record can have more than one line.
+            let text = d.text.split_whitespace().collect::<Vec<_>>().join(" ");
+            if d.unread {
+                println!("- {} ({}): {}", d.id, d.kind, text);
+            } else {
+                println!("- {} ({}), {}: {}", d.id, d.kind, d.verdict, text);
+            }
         }
         println!("the merge of the pull request acknowledges the deviations");
     }

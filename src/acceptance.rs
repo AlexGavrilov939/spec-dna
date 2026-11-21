@@ -413,8 +413,10 @@ pub fn acceptors_missing(cfg: &Config, class: Class, rec: &Record) -> Option<Str
 /// with the same pin: the same `<doc-id>#<key>@<hash>`. An answer for another
 /// hash of the rule is no answer. A deviation needs a `[[deviation]]` entry with
 /// the same id, kind and text, with each run of white space read as one space.
-/// An entry that no plan item names gives no finding. `check`, `finish` and
-/// `next` all call this one function. The messages name the entry to add.
+/// An entry that no plan item names gives no finding. SD928 reports an id that 2
+/// entries share ([`record::validate`]), so the first entry of an id is the
+/// entry. `check`, `finish` and `next` all call this one function. The messages
+/// name the entry to add.
 pub fn answers_missing(rec: &Record, decl: &accept::Declared) -> Vec<String> {
     let mut out = Vec::new();
     let answered: Vec<String> = rec
