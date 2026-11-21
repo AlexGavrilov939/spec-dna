@@ -4,8 +4,8 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 
 | Term | Meaning | Name in 0.5 | Page |
 | --- | --- | --- | --- |
-| acceptance record | The file `acceptance.toml` in the folder of a change, then `.spec-dna/accepted/<slug>.toml`. An acceptor writes it: what it tried, what it found and its result. It binds to the code paths of the change by a hash | | [commands](commands.md#accept) |
-| acceptor | An agent that did not write the code of a change. It starts from the brief, tries to break the change, and writes the acceptance record. It edits no code | | [commands](commands.md#accept) |
+| acceptance record | The file `acceptance.toml` in the folder of a change, then `.spec-dna/accepted/<slug>.toml`. An acceptor writes it: what it tried, what it found and its result. It binds to the code paths of the change by a hash. A change needs one when `[change] acceptance-for` asks for it | | [commands](commands.md#accept) |
+| acceptor | An agent that did not write the code of a change. It starts from the brief, reviews the change, tries to break it, and writes the acceptance record. It edits no code | | [commands](commands.md#accept) |
 | adapter | A part of spec-dna for one agent or one file format: the line in `AGENTS.md` (`agents-md`) or `CLAUDE.md` (`claude-md`), the skill (`skill`), or the `claude-code` adapter of the harness, the evals and the transcripts | | [agents](agents.md) |
 | advisor | A second, stronger model that the main model consults before a decision | | [harness](harness.md) |
 | alias | An earlier id of a document or a requirement. A reference to an alias resolves to the current id | | [concepts](concepts.md#ids-and-requirements) |
@@ -18,11 +18,13 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | base | The commit that `check` compares with the head. Without `--base`, it is `HEAD`. With `--base <rev>`, it is the merge base of `<rev>` and `HEAD`. The change checks use the merge base of `--base`, of `origin/HEAD` or of the branch of `[change] base`, with `HEAD` | | [concepts](concepts.md#the-gate) |
 | base tree, head tree | The files at the base commit and at the head of a change. A gate reads an approval from the base tree. With `[change] approval = "branch"`, it also reads the approval commits of the branch | | [concepts](concepts.md#the-change-lifecycle) |
 | batch | The records of one result file of `eval run --ab`, in one file `bench/results/evals/<stamp>-<target>.jsonl`. For each name, the newest batch that has records of the name gives the row of the table of the release | | [evals](evals.md#the-records-of-a-release) |
+| blocker | A finding of an acceptance record that breaks a requirement, a delta line, an invariant, a rule of the project or a command of `Proof`, loses data, or opens a security hole. It gives the result `rejected`. The other findings are notes | | [commands](commands.md#accept) |
 | brief | The text that `spec-dna accept <slug> --brief` prints. It has the task of the acceptor, the change files, the scope, the paths and the tree. The last line has the hash of this text. The builder gives it to the acceptor unchanged | | [commands](commands.md#accept) |
 | budget | The soft and the hard limit of the body characters of one document | | [config](config.md#budgets) |
 | change | The work that one intent folder describes, from the intent to `finish` | | [change guide](guides/change.md) |
 | change class | The weight of a change: `small-fix`, `routine` or `higher-risk` | | [change guide](guides/change.md#choose-the-class) |
 | change policy | The change classes that a project uses: `three-class`, `two-class` or `none` (`[change] policy`) | | [config](config.md) |
+| class for the acceptance | The class of a change that decides whether it needs an acceptance record. It is `higher-risk` when the intent of the working tree, of the base tree or of a commit of the branch says so, when `class` is not set, when a shallow clone cuts the branch, or when the minimum class of SD917 says so. Else it is `routine`. A branch cannot lower it | | [config](config.md#the-acceptance-record) |
 | code citation | A file path or a symbol in a code span of a document. `check` reports a citation that does not resolve | | [diagnostics](diagnostics.md#code-citations) |
 | concern | An item of the task list in the `Concerns` section of a spec. An approved spec has no open concern (SD919) | | [change guide](guides/change.md) |
 | cost per correct outcome | The cost of the runs of one arm, divided by its passes. The verdict of a skill uses the ratio of this value with the skill and without it | | [evals](evals.md#the-verdict) |
@@ -56,10 +58,13 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | invariant | A rule of a `rule` document that a change must keep true. A spec lists it as `<doc-id>#<key>@<hash>` in `Invariants` with `[change] invariants`. The acceptance record answers it | | [types](types.md#invariants) |
 | layer | A named set of document types with a place in the graph of stability | | [concepts](concepts.md#layers-and-the-graph) |
 | level | The longest `moves-to` path from a layer to a layer with no outgoing edge. Level 0 is the most stable | | [concepts](concepts.md#layers-and-the-graph) |
+| life of a record | An unbroken run of commits of the branch that hold `acceptance.toml` in the folder of a change. A commit with no such file ends the life. A life counts as one rejected record when the record says `rejected` at one or more of its commits. After 2 rejected records, a third run needs the word of the owner (SD941 with `approval = "branch"`, the item of a person in `next` with each mode) | | [diagnostics](diagnostics.md#the-stop-rule) |
 | live section | A section of an accepted decision that can change without an amendment. The default is `Status` | | [config](config.md) |
 | locked | The state of the text of an accepted decision outside its amendment, history and live sections. SD405 checks it | frozen | [diagnostics](diagnostics.md) |
 | mixed root | A root with documents of more than one type. The place or the front matter gives the type of each document | | [types](types.md#place-gives-the-type) |
 | `moves-to` | An edge of the layer graph: the text of the source layer matures into the target layer | | [concepts](concepts.md#layers-and-the-graph) |
+| follow-up | An entry `[[follow-up]]` of an acceptance record: a short check of the fix of a note by an agent that did not write the fix. It binds the new tree of `paths`. It needs no full run | | [commands](commands.md#accept) |
+| note | A finding of an acceptance record that is no blocker: the fix can wait. A note never gives the result `rejected` | | [commands](commands.md#accept) |
 | partial tag | A tag `covers: partial <doc-id>#<key>` in a test. It records that the test proves a part of a requirement. It is not evidence | | [config](config.md#a-partial-tag) |
 | pass rate | The share of evals that pass | | [evals](evals.md) |
 | pending | The layer of the top files `roadmap.md` and `questions.md` | | [concepts](concepts.md#layers-and-the-graph) |

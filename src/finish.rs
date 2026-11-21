@@ -92,6 +92,10 @@ pub struct Plan {
     /// The archive file that step 5.5 adds to `writes`, if the change needed a
     /// record.
     pub archive: Option<String>,
+    /// The records of the branch and the rejected ones, when the branch has 2 or
+    /// more (design 0.8.0, D74 item 7). `finish` prints `Acceptance runs: <n>, <r>
+    /// rejected`.
+    pub runs: Option<(usize, usize)>,
     /// Step 5.3 (design 0.8.0, D7 and D78): the `[[deviation]]` entries of the
     /// record, for a change that needs a record, each with its verdict. If no
     /// record reads, they are the declared items of the plan, with the verdict
@@ -600,7 +604,10 @@ pub fn plan(cx: &Ctx) -> Result<Plan, Failure> {
         .filter(|c| c.dir != cx.folder)
         .any(|c| cx.diff.is_some_and(|d| d.under(&c.dir).next().is_some()));
     let scope = |p: &str| !others_touched || change::in_scope(&files, p);
-    let reliable = crate::evidence::reliable_for(cx.config, ch.class);
+    // The class is the class of the acceptance (D70 item 3). With no base, the facts
+    // are absent, and the class of the head intent decides.
+    let class = cx.acceptance.map_or(ch.class, |f| f.class);
+    let reliable = crate::evidence::reliable_for(cx.config, class);
     let mut missing = lifecycle::evidence_missing(&rebuilt, base, head, ch, &scope, reliable);
     // SD617 and SD620 are results of the test reports. A project that turned
     // one off keeps the tags as evidence.
@@ -661,7 +668,8 @@ fn acceptance(cx: &Ctx, ch: &Change, out: &mut Plan) -> Result<Option<String>, F
     let Some(f) = cx.acceptance else {
         return Ok(None);
     };
-    let shallow = match &f.need {
+    out.runs = f.runs;
+    let (shallow, branch_cut) = match &f.need {
         Need::No(note) => {
             out.notes.extend(note.clone());
             // No rule needs the record, but a record in the folder is archived.
@@ -669,7 +677,7 @@ fn acceptance(cx: &Ctx, ch: &Change, out: &mut Plan) -> Result<Option<String>, F
             // A link or a file over the limit is no record: SD928 stops, and
             // nothing is read through the link.
             if let acc::RecordFile::Unreadable(m) = &f.record {
-                if !cx.config.is_off(Code::AcceptanceInvalid) {
+                if !f.gate.is_off(Code::AcceptanceInvalid) {
                     let diags = vec![record_diag(
                         &path,
                         &ch.slug,
@@ -685,9 +693,10 @@ fn acceptance(cx: &Ctx, ch: &Change, out: &mut Plan) -> Result<Option<String>, F
                 // The archive is never edited: a record that is not valid (a
                 // skeleton with `pending` values) must not enter it. The
                 // structural rules of SD928 run here, as with a need.
-                if !cx.config.is_off(Code::AcceptanceInvalid) {
+                if !f.gate.is_off(Code::AcceptanceInvalid) {
                     let facts = acc::plan_facts(ch, cx.head);
-                    let (_, problems) = acc::read_record(cx.config, &text, &ch.slug, facts);
+                    let (_, problems) =
+                        acc::read_record(cx.config, &text, &ch.slug, facts, acc::Place::Folder);
                     if !problems.is_empty() {
                         let diags = problems
                             .into_iter()
@@ -700,10 +709,16 @@ fn acceptance(cx: &Ctx, ch: &Change, out: &mut Plan) -> Result<Option<String>, F
             }
             return Ok(None);
         }
-        Need::Yes { shallow } => *shallow,
+        Need::Yes {
+            shallow,
+            branch_cut,
+        } => (*shallow, *branch_cut),
     };
+    // The head reads the paths; the codes follow the configuration of the need
+    // (D70 item 6): the head, or the base when the head turns the acceptance off.
     let cfg = cx.config;
-    let on = |c: Code| !cfg.is_off(c);
+    let gate = &f.gate;
+    let on = |c: Code| !gate.is_off(c);
     let path = format!("{}/{}", cx.folder, crate::record::FILE_NAME);
     let slug = ch.slug.as_str();
     let stop_with = |code: Code, why: &str, messages: Vec<String>| {
@@ -734,21 +749,23 @@ fn acceptance(cx: &Ctx, ch: &Change, out: &mut Plan) -> Result<Option<String>, F
                     slug,
                     &format!("`{path}` is absent"),
                     shallow,
+                    branch_cut,
                 )],
             );
         }
         return Ok(None);
     };
     let facts = acc::plan_facts(ch, cx.head);
-    let (rec, mut problems) = acc::read_record(cfg, &text, slug, facts);
+    let (rec, mut problems) = acc::read_record(cfg, &text, slug, facts, acc::Place::Folder);
     problems.extend(f.brief_problems.iter().cloned());
     if let Some((code, messages)) = acc::first_stop(
-        cfg,
-        ch.class,
+        gate,
+        (f.class, f.acceptors),
         rec.as_ref(),
         problems,
         f.stale.clone(),
         &f.sections,
+        f.rerun.as_deref(),
     ) {
         let why = match code {
             Code::AcceptanceInvalid => "the acceptance record is not valid".to_string(),
@@ -762,6 +779,10 @@ fn acceptance(cx: &Ctx, ch: &Change, out: &mut Plan) -> Result<Option<String>, F
                 "2 acceptor entries have the same session and the same agent".to_string()
             }
             Code::AcceptorMissing => "the acceptance record has too few acceptors".to_string(),
+            Code::AcceptanceRerun => {
+                "the record comes after 2 rejected records: a third run needs the word of the owner"
+                    .to_string()
+            }
             Code::InvariantInvalid => "an item of `Invariants` is not valid".to_string(),
             Code::InvariantStale => "the hash of an item of `Invariants` is stale".to_string(),
             Code::RecordIncomplete => {

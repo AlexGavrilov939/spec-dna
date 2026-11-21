@@ -32,8 +32,11 @@ use crate::{VERSION, report};
 pub struct Opts<'a> {
     /// `--brief`: print the brief, and write no file.
     pub brief: bool,
-    /// `--role`. `None`: the role `acceptor`.
-    pub role: Option<&'a str>,
+    /// `--follow-up`: the follow-up of a note (D73).
+    pub follow_up: bool,
+    /// `--role`, once or more than once. Empty: the roles of `[owners]` that
+    /// match a role path, or `acceptor` when none matches (D72 item 4).
+    pub roles: &'a [String],
     /// `--session`. `None` or empty: `unknown`.
     pub session: Option<&'a str>,
     /// `--base`.
@@ -76,12 +79,21 @@ pub fn declared(cfg: &Config, ch: &Change, corpus: &Corpus) -> Declared {
     }
 }
 
-/// The roles of `[owners]` that match a path of `paths` (D5), sorted.
-///
-/// HOOK of slice S6: `[owners]` is not a key of the configuration yet, so the
-/// list is empty.
-fn owner_roles(_cfg: &Config, _paths: &[String]) -> Vec<String> {
-    Vec::new()
+/// The roles of the entry: the roles that `--role` names, sorted with no
+/// duplicate, else each role of `[owners]` that matches a role path (D72 item
+/// 4), else `acceptor`. `paths` is the list that the matched roles read.
+fn entry_roles(cfg: &Config, given: &[String], paths: &[String]) -> Vec<String> {
+    let mut roles: Vec<String> = if given.is_empty() {
+        crate::acceptance::matched_roles(cfg, paths)
+    } else {
+        given.to_vec()
+    };
+    roles.sort();
+    roles.dedup();
+    if roles.is_empty() {
+        roles.push(record::DEFAULT_ROLE.to_string());
+    }
+    roles
 }
 
 /// The text of the 3 files of a change, as a tree holds them.
@@ -103,10 +115,16 @@ pub struct Composed<'a> {
 /// the computed fields and of what the files declare. `accept --brief` and the
 /// compare of SD928 (item 8) both call it, so the text of an entry and the
 /// recomputed text are the same function.
+///
+/// `format` is the number of the format of the brief: `record::BRIEF_FORMAT` for
+/// a record of format 2, and `record::BRIEF_FORMAT_1` for an entry of a record
+/// of format 1. `entry_roles` are the roles of the entry, sorted.
+#[allow(clippy::too_many_arguments)]
 pub fn brief_text(
     cfg: &Config,
     slug: &str,
-    role: &str,
+    format: u32,
+    entry_roles: &[String],
     texts: &Texts,
     fields: &Composed,
     decl: &Declared,
@@ -117,10 +135,11 @@ pub fn brief_text(
         .iter()
         .map(|(id, kind, text)| format!("{id} ({kind}): {text}"))
         .collect();
-    let roles = owner_roles(cfg, fields.paths);
+    let roles = crate::acceptance::matched_roles(cfg, fields.paths);
     record::brief(&record::Brief {
         slug,
-        role,
+        format,
+        entry_roles,
         intent: texts.intent,
         spec: texts.spec,
         plan: texts.plan,
@@ -156,8 +175,7 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
             "`{slug}` is not the name of a change; give the folder name of the change, with no `/`"
         )));
     }
-    let role = o.role.unwrap_or(record::DEFAULT_ROLE);
-    if !record::valid_role(role) {
+    if let Some(role) = o.roles.iter().find(|r| !record::valid_role(r)) {
         return Err(Fatal::Usage(format!(
             "`--role {role}` is not a role name; use lowercase letters, digits and `-`, start with a letter, and write at most 40 characters"
         )));
@@ -240,10 +258,24 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
         }
     }
     refuse_uncovered(ch, &head, &scope, &changed, &is_code)?;
+    if o.follow_up {
+        let ctx = FollowCtx {
+            repo,
+            cfg: &cfg,
+            slug,
+            folder: &folder,
+            base_rev: base_rev.as_deref(),
+            scope: &scope,
+            changed: &changed,
+            is_code: &is_code,
+        };
+        return run_follow_up(&ctx, o);
+    }
     let entries = tree::entries(repo, &cfg).map_err(Fatal::Io)?;
     let tree_hash = record::tree_hash(&entries, &paths);
     let decl = crate::acceptance::declared_for(&cfg, &repo.git, base_rev.as_deref(), ch, &head)
         .map_err(Fatal::Io)?;
+    let roles = entry_roles(&cfg, o.roles, &paths);
 
     if o.brief {
         let read = |p: &str| -> Result<String, Fatal> {
@@ -264,7 +296,8 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
         let text = brief_text(
             &cfg,
             slug,
-            role,
+            record::BRIEF_FORMAT,
+            &roles,
             &Texts {
                 intent: &intent_text,
                 spec: spec_text.as_deref(),
@@ -282,7 +315,7 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
                 "{}",
                 Obj::new()
                     .str("slug", slug)
-                    .str("role", role)
+                    .strs("roles", &roles)
                     .str("brief", &record::brief_hash(&text).unwrap_or_default())
                     .str("text", &text)
                     .end()
@@ -333,6 +366,16 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
                 r.change
             )));
         }
+        // A new entry has the roles of format 2, so it cannot join a record of the
+        // pre-release (D72 item 3).
+        if r.format != record::FORMAT {
+            return Err(Fatal::Refused(format!(
+                "`{record_path}` has `format = {}`, and `accept` writes `format = {}`; {}",
+                r.format,
+                record::FORMAT,
+                record::FORMAT_1_MESSAGE
+            )));
+        }
         // The function that SD929, `next` and `finish` use decides first, so
         // no 2 places use 2 rules. The compare of `paths` stays: `paths` also
         // differs when a path left the diff.
@@ -356,13 +399,13 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
                 "the code that `{record_path}` lists changed since the record: {why}; delete the record and accept again"
             )));
         }
-        if !tree::matches(&r.tree, &tree_hash) {
+        if !tree::matches(r.last_tree(), &tree_hash) {
             return Err(Fatal::Refused(format!(
                 "the code that `{record_path}` lists changed since the record: its `tree` differs from the repository now; delete the record and accept again"
             )));
         }
         let n = r.acceptors.len() + 1;
-        let text = record::add_acceptor(&old, role, &session);
+        let text = record::add_acceptor(&old, &roles, &session);
         // The reader of a record refuses a text over the limit, so the size check
         // comes before the check of the new entry.
         if text.len() > record::MAX_BYTES {
@@ -380,7 +423,7 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
         let placed = Record::parse(&text).is_ok_and(|t| {
             t.acceptors.len() == n
                 && t.acceptors[..n - 1] == r.acceptors[..]
-                && t.acceptors[n - 1].role == role
+                && t.acceptors[n - 1].roles == roles
                 && t.acceptors[n - 1].session == session
         });
         if !placed {
@@ -395,7 +438,7 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
             scope: &scope,
             paths: &paths,
             tree: &tree_hash,
-            role,
+            roles: &roles,
             session: &session,
             proofs: &proofs,
             invariants: &decl.invariants,
@@ -421,7 +464,7 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
                 .str("slug", slug)
                 .str("path", &record_path)
                 .num("acceptor", number)
-                .str("role", role)
+                .strs("roles", &roles)
                 .str("session", &session)
                 .bool("created", created)
                 .end()
@@ -431,6 +474,181 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
         println!("acceptor: {number}");
         println!(
             "next: copy the hash of the last line of your brief into `brief` of your entry, replace each `pending` value, then commit the record alone"
+        );
+    }
+    Ok(0)
+}
+
+/// What `accept --follow-up` reads from the run of `accept`.
+struct FollowCtx<'a> {
+    repo: &'a Repo,
+    cfg: &'a Config,
+    slug: &'a str,
+    folder: &'a str,
+    base_rev: Option<&'a str>,
+    scope: &'a [String],
+    changed: &'a [String],
+    is_code: &'a dyn Fn(&str) -> bool,
+}
+
+/// `accept <slug> --follow-up [--brief]` (design 0.8.0, D73). The brief form prints
+/// the follow-up brief, and the other form adds a `[[follow-up]]` entry to the
+/// record. Both refuse (exit code 1), with a message that names a full run, when
+/// the fix is not a fix that a follow-up can check.
+fn run_follow_up(c: &FollowCtx, o: &Opts) -> Result<u8, Fatal> {
+    use crate::acceptance::{Chain, Source};
+    let full = |why: String| {
+        Fatal::Refused(format!(
+            "{why}; a follow-up cannot check this: delete the record, commit, and accept again with a full run (`spec-dna accept {} --brief`)",
+            c.slug
+        ))
+    };
+    let Some(base_rev) = c.base_rev else {
+        return Err(Fatal::Refused(
+            "no lifecycle base is known, so the fix cannot be compared with the record; give `--base`".into(),
+        ));
+    };
+    let record_path = format!("{}/{}", c.folder, record::FILE_NAME);
+    let text = match crate::git::read_limited(
+        &c.repo.root.join(&record_path),
+        crate::acceptance::READ_LIMIT,
+    ) {
+        crate::git::Limited::Bytes(b) => String::from_utf8_lossy(&b).into_owned(),
+        crate::git::Limited::Absent => {
+            return Err(full(format!("`{record_path}` does not exist")));
+        }
+        other => {
+            return Err(Fatal::Refused(crate::acceptance::unreadable_message(
+                &record_path,
+                &other,
+            )));
+        }
+    };
+    let rec =
+        Record::parse(&text).map_err(|e| full(format!("`{record_path}` does not read ({e})")))?;
+    if rec.change != c.slug || rec.format != record::FORMAT {
+        return Err(full(format!(
+            "`{record_path}` is not a record of format {} for `{}`",
+            record::FORMAT,
+            c.slug
+        )));
+    }
+    if rec.result == "rejected" {
+        return Err(full(format!("`{record_path}` says `rejected`")));
+    }
+    // A follow-up that the agent has not finished (its `brief` is `pending`) is not
+    // a link. The brief ignores it; a new entry needs it finished.
+    let unfinished = rec
+        .follow_ups
+        .last()
+        .is_some_and(|u| u.brief == record::PENDING);
+    let m = rec.follow_ups.len() - usize::from(unfinished);
+    if unfinished && !o.brief {
+        return Err(Fatal::Refused(format!(
+            "`{record_path}` has a follow-up with the value `pending`; fill it in and commit it, or delete the entry"
+        )));
+    }
+    let open = rec.open_notes(m);
+    if open.is_empty() {
+        return Err(full(format!("`{record_path}` has no open note")));
+    }
+    // A new code path in scope: a follow-up binds the same `paths` as the record.
+    for p in record::select_paths(c.scope, c.changed, c.is_code) {
+        if !rec.paths.contains(&p) {
+            return Err(full(format!(
+                "the diff of the change has the code path `{p}`, which `scope` matches and `paths` does not list"
+            )));
+        }
+    }
+    let chain =
+        Chain::load(c.cfg, &c.repo.git, base_rev, c.folder, &rec).map_err(Fatal::Refused)?;
+    let positions = chain.follow_positions();
+    let (last_pos, last_tree) = if m == 0 {
+        (chain.record_pos(), rec.tree.clone())
+    } else {
+        (positions[m - 1], rec.follow_ups[m - 1].tree.clone())
+    };
+    let from = chain.source(last_pos);
+    if from == Source::Head {
+        return Err(Fatal::Refused(format!(
+            "the last link of the chain is not committed; commit `{record_path}`, then run the follow-up"
+        )));
+    }
+    let fix = chain.fix(&from, &Source::Head).map_err(Fatal::Io)?;
+    if fix.paths.is_empty() {
+        return Err(full(
+            "the diff of the fix is empty: no code path of `paths` changed since the last link"
+                .into(),
+        ));
+    }
+    let open_paths: Vec<&str> = open
+        .iter()
+        .map(|n| rec.findings[n - 1].path.as_str())
+        .collect();
+    if !fix.paths.iter().any(|p| open_paths.contains(&p.as_str())) {
+        return Err(full(
+            "the diff of the fix changes no path of an open note".into(),
+        ));
+    }
+    if let Some(p) = fix.binary.first() {
+        return Err(full(format!(
+            "the diff of the fix has the binary file `{p}`, and the budget measures text"
+        )));
+    }
+    let len = chain.chain_diff_len(&Source::Head).map_err(Fatal::Io)?;
+    if len > record::MAX_CHAIN_DIFF {
+        return Err(full(format!(
+            "the diff of the chain has {len} bytes, more than {} bytes for the whole chain",
+            record::MAX_CHAIN_DIFF
+        )));
+    }
+    let brief = chain
+        .brief(m, &last_tree, &Source::Head, &fix)
+        .map_err(Fatal::Io)?;
+    if o.brief {
+        if o.json {
+            println!(
+                "{}",
+                Obj::new()
+                    .str("slug", c.slug)
+                    .str(
+                        "brief",
+                        &record::follow_up_brief_hash(&brief).unwrap_or_default()
+                    )
+                    .str("text", &brief)
+                    .end()
+            );
+        } else {
+            print!("{brief}");
+        }
+        return Ok(0);
+    }
+    let session = record::session_value(o.session);
+    let new = record::add_follow_up(&text, &session, &fix.to_tree, &open);
+    if new.len() > record::MAX_BYTES {
+        return Err(Fatal::Refused(format!(
+            "the record `{record_path}` would have {} bytes, and a record has at most {} bytes",
+            new.len(),
+            record::MAX_BYTES
+        )));
+    }
+    write_atomic(&c.repo.root.join(&record_path), &new)
+        .map_err(|e| Fatal::Io(format!("{record_path}: {e}")))?;
+    if o.json {
+        println!(
+            "{}",
+            Obj::new()
+                .str("slug", c.slug)
+                .str("path", &record_path)
+                .num("follow_up", m + 1)
+                .str("session", &session)
+                .end()
+        );
+    } else {
+        println!("wrote {record_path}");
+        println!("follow-up: {}", m + 1);
+        println!(
+            "next: copy the hash of the last line of the follow-up brief into `brief` of the entry, keep in `closes` each note that the diff fixes, write `result` and `text`, then commit the record alone"
         );
     }
     Ok(0)

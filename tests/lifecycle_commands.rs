@@ -664,7 +664,12 @@ fn a_routine_plan_with_files_none_reaches_the_finish_step() {
 
 #[test]
 fn the_stage_deploy_names_the_skills_of_its_steps_in_order() {
-    let r = start();
+    // `acceptance-for = "all"`: a `routine` change needs a record only by the key
+    // (D70). The item `accept` is the item of a change that needs a record.
+    let r = start_with(
+        "policy = \"three-class\"\ngate = \"block\"\nacceptance-for = \"all\"\n",
+        true,
+    );
     stage(
         &r,
         &[

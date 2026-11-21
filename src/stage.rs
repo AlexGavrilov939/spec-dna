@@ -248,6 +248,9 @@ pub struct AcceptItem {
     /// True if the record is valid, fresh and `accepted`.
     pub done: bool,
     pub text: String,
+    /// True if the item waits for the owner (design 0.8.0, D74 item 5): 2 records
+    /// of the branch say `rejected`, so an agent starts no third run.
+    pub person: bool,
 }
 
 /// Reads the working tree, the lifecycle base and the diff. An unknown `--base`
@@ -311,16 +314,24 @@ fn accept_items(
     diff: Option<&Diff>,
 ) -> Result<HashMap<String, AcceptItem>, Fatal> {
     let mut out = HashMap::new();
+    // The configuration of the need (D70 item 6): the head and the base tree.
+    let nc = match base_rev {
+        Some(r) => acceptance::need_config(cfg, &repo.git, r).map_err(Fatal::Io)?,
+        None => acceptance::need_config_of_head(cfg),
+    };
     for ch in change::collect(head) {
         let approved = ch.plan.as_ref().is_some_and(|p| p.status == "approved");
         if !approved || ch.intent_status() != "accepted" {
             continue;
         }
-        let need = acceptance::need_for_change(repo, cfg, &ch, head, base, base_rev)?;
-        if let (Some(Need::Yes { .. }), Some(base_rev)) = (&need, base_rev) {
+        let decision =
+            acceptance::need_for_change(repo, cfg, &nc, &ch, head, base, base_rev, diff)?;
+        if let (Some(d), Some(base_rev), Some(base)) = (&decision, base_rev, base)
+            && matches!(d.need, Need::Yes { .. })
+        {
             out.insert(
                 ch.slug.clone(),
-                accept_item(repo, cfg, &ch, head, base_rev, diff)?,
+                accept_item(repo, cfg, &nc, (&ch, d.class), (head, base), base_rev, diff)?,
             );
         }
     }
@@ -336,15 +347,68 @@ fn accept_items(
 /// 9). An open item names the first problem.
 fn accept_item(
     repo: &Repo,
-    cfg: &Config,
-    ch: &Change,
+    head_cfg: &Config,
+    nc: &acceptance::NeedConfig,
+    (ch, class): (&Change, Class),
+    (head, base): (&Corpus, &Corpus),
+    base_rev: &str,
+    diff: Option<&Diff>,
+) -> Result<AcceptItem, Fatal> {
+    let item = accept_item_of_record(repo, head_cfg, nc, (ch, class), head, base_rev, diff)?;
+    if item.done {
+        return Ok(item);
+    }
+    // The stop rule (D74 item 5): the count after the last approval of the plan can
+    // be 2 or more while the record of the head is not valid, fresh and accepted.
+    // Then the item is the item of a person, and an agent starts no third run.
+    let path = format!("{}/{}", ch.dir, record::FILE_NAME);
+    let committed = repo
+        .git
+        .read_at(&[("HEAD".to_string(), path)])
+        .map_err(Fatal::Io)?
+        .into_iter()
+        .next()
+        .flatten();
+    let state = committed.as_deref().map(|b| acceptance::state_of(Some(b)));
+    let sf = acceptance::stop_facts(
+        head_cfg,
+        nc,
+        &repo.git,
+        base_rev,
+        &ch.dir,
+        state,
+        (base, head),
+    )
+    .map_err(Fatal::Io)?;
+    if sf.since.len() >= 2 {
+        return Ok(AcceptItem {
+            done: false,
+            person: true,
+            text: acceptance::wait_text(&ch.slug, &sf.since, sf.branch),
+        });
+    }
+    Ok(item)
+}
+
+/// The item `accept` for the record of the change, with no stop rule.
+fn accept_item_of_record(
+    repo: &Repo,
+    head_cfg: &Config,
+    nc: &acceptance::NeedConfig,
+    (ch, class): (&Change, Class),
     head: &Corpus,
     base_rev: &str,
     diff: Option<&Diff>,
 ) -> Result<AcceptItem, Fatal> {
     let slug = &ch.slug;
     let path = format!("{}/{}", ch.dir, record::FILE_NAME);
-    let open = |text: String| AcceptItem { done: false, text };
+    let open = |text: String| AcceptItem {
+        done: false,
+        text,
+        person: false,
+    };
+    // The head reads the paths; the codes follow the configuration of the need.
+    let cfg = nc.gate();
     let on = |c: Code| !cfg.is_off(c);
     // `finish` reads the record of `HEAD`, and its step 0 refuses an uncommitted
     // record. The item is done only for a committed record.
@@ -381,14 +445,19 @@ fn accept_item(
             )));
         }
     };
-    let (rec, mut problems): (Option<Record>, Vec<String>) =
-        acceptance::read_record(cfg, &text, slug, acceptance::plan_facts(ch, head));
+    let (rec, mut problems): (Option<Record>, Vec<String>) = acceptance::read_record(
+        head_cfg,
+        &text,
+        slug,
+        acceptance::plan_facts(ch, head),
+        acceptance::Place::Folder,
+    );
     // The checks of `finish` step 5.2, by the one function that `finish` uses:
     // a check that is off stops neither of them.
     let stale = match &rec {
         Some(r) if on(Code::AcceptanceStale) => {
             let plan = acceptance::PlanScope::of(ch, head);
-            acceptance::stale(cfg, &repo.git, r, diff, &plan, Some(base_rev), false)
+            acceptance::stale(head_cfg, &repo.git, r, diff, &plan, Some(base_rev), false)
                 .map_err(Fatal::Io)?
         }
         _ => None,
@@ -397,15 +466,22 @@ fn accept_item(
         && let Some(r) = &rec
     {
         problems.extend(
-            acceptance::brief_problems(cfg, &repo.git, base_rev, &ch.dir, r).map_err(Fatal::Io)?,
+            acceptance::brief_problems(head_cfg, &repo.git, base_rev, &ch.dir, r)
+                .map_err(Fatal::Io)?,
         );
     }
     let first = problems.first().cloned().unwrap_or_default();
     let sections =
         acceptance::sections_of(cfg, &repo.git, Some(base_rev), ch, head).map_err(Fatal::Io)?;
-    let Some((code, messages)) =
-        acceptance::first_stop(cfg, ch.class, rec.as_ref(), problems, stale, &sections)
-    else {
+    let Some((code, messages)) = acceptance::first_stop(
+        cfg,
+        (class, nc.higher_risk_acceptors),
+        rec.as_ref(),
+        problems,
+        stale,
+        &sections,
+        None,
+    ) else {
         // With each check on, the record is valid, fresh and accepted. With a check
         // off, the text says only that the checks that are on passed.
         let all_on = [
@@ -422,6 +498,7 @@ fn accept_item(
         .all(on);
         return Ok(AcceptItem {
             done: true,
+            person: false,
             text: if all_on && rec.is_some() {
                 format!("the record `{path}` is valid, fresh and accepted")
             } else {
@@ -928,7 +1005,11 @@ impl<'a> Ctx<'a> {
             format!("review the diff against {dir}/plan.md"),
         ));
         if let Some(a) = self.view.accept.get(slug) {
-            items.push(item(a.done, Step::Accept, a.text.clone()));
+            items.push(if a.person {
+                person_item(Step::Accept, a.text.clone())
+            } else {
+                item(a.done, Step::Accept, a.text.clone())
+            });
         }
         items.push(item(
             false,

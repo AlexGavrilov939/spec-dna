@@ -1030,6 +1030,181 @@ impl Git {
         })
     }
 
+    /// The entries of the tree of the commit `rev` for `paths`, as (mode, object id,
+    /// path as bytes). A path that the tree does not have, and a folder, are not
+    /// listed. It has the form of the entries of the code tree, so
+    /// `record::tree_hash` can hash it (design 0.8.0, D73 item 5).
+    pub fn tree_entries_at(
+        &self,
+        rev: &str,
+        paths: &[String],
+    ) -> Result<Vec<(String, String, Vec<u8>)>, String> {
+        let mut out: Vec<(String, String, Vec<u8>)> = Vec::new();
+        for chunk in paths.chunks(100) {
+            let mut args: Vec<&str> = vec!["ls-tree", "-r", "-z", "--full-tree", rev, "--"];
+            args.extend(chunk.iter().map(String::as_str));
+            let text = self.run(&args)?;
+            for rec in text.split(|b| *b == 0).filter(|r| !r.is_empty()) {
+                let Some(tab) = rec.iter().position(|b| *b == b'\t') else {
+                    continue;
+                };
+                let meta = String::from_utf8_lossy(&rec[..tab]);
+                let path = &rec[tab + 1..];
+                // `ls-tree -r` lists the files below a folder that a path names.
+                if !chunk.iter().any(|p| p.as_bytes() == path) {
+                    continue;
+                }
+                let mut it = meta.split(' ');
+                let (mode, _ty, oid) = (
+                    it.next().unwrap_or(""),
+                    it.next().unwrap_or(""),
+                    it.next().unwrap_or(""),
+                );
+                out.push((mode.to_string(), oid.to_string(), path.to_vec()));
+            }
+        }
+        Ok(out)
+    }
+
+    /// The command `git diff` of the follow-up (design 0.8.0, D73 item 8): the same
+    /// options in each configuration of the user. The 2 sides are `from`, a commit,
+    /// and `to`: a commit, or `None` for the head tree (the index for a `staged`
+    /// `Git`, else the working tree). The paths are literal. `extra` is added after
+    /// the fixed options.
+    fn follow_diff_run(
+        &self,
+        from: &str,
+        to: Option<&str>,
+        paths: &[String],
+        extra: &[&str],
+    ) -> Result<Vec<u8>, String> {
+        let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
+        let order = format!("-O{null}");
+        let mut args: Vec<String> = [
+            "-c",
+            "core.quotePath=true",
+            "-c",
+            "core.abbrev=auto",
+            "-c",
+            "core.fileMode=true",
+            "-c",
+            "core.whitespace=",
+            "-c",
+            "diff.noprefix=false",
+            "-c",
+            "diff.mnemonicPrefix=false",
+            "-c",
+            "diff.relative=false",
+            "-c",
+            "diff.suppressBlankEmpty=false",
+            "-c",
+            "diff.renames=false",
+            "-c",
+            "diff.algorithm=myers",
+            "-c",
+            "diff.context=3",
+            "-c",
+            "diff.interHunkContext=0",
+            "-c",
+            "diff.wsErrorHighlight=none",
+            "-c",
+            "diff.ignoreSubmodules=none",
+            "-c",
+            "diff.indentHeuristic=true",
+            "-c",
+            "diff.orderFile=",
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-color",
+            "--color-moved=no",
+            "--full-index",
+            "--no-renames",
+            "--diff-algorithm=myers",
+            "--indent-heuristic",
+            "--inter-hunk-context=0",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            "-U3",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        args.push(order);
+        args.extend(extra.iter().map(|s| s.to_string()));
+        match to {
+            Some(t) => {
+                args.push(from.to_string());
+                args.push(t.to_string());
+            }
+            None => {
+                if self.staged {
+                    args.push("--cached".to_string());
+                }
+                args.push(from.to_string());
+            }
+        }
+        args.push("--".to_string());
+        args.extend(paths.iter().map(|p| format!(":(literal){p}")));
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let out = self
+            .cmd(&refs)
+            .env("GIT_CONFIG_GLOBAL", null)
+            .env("GIT_CONFIG_SYSTEM", null)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| format!("cannot run git: {e}"))?;
+        if !out.status.success() {
+            return Err(format!(
+                "git diff failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+        Ok(out.stdout)
+    }
+
+    /// The text of the diff of `paths` between `from` and `to` with the fixed
+    /// options of the follow-up ([`Git::follow_diff_run`]).
+    pub fn follow_diff(
+        &self,
+        from: &str,
+        to: Option<&str>,
+        paths: &[String],
+    ) -> Result<Vec<u8>, String> {
+        if paths.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.follow_diff_run(from, to, paths, &[])
+    }
+
+    /// The paths of `paths` that the diff between `from` and `to` shows as binary
+    /// files: `git diff --numstat` prints `-` for them.
+    pub fn follow_binary_paths(
+        &self,
+        from: &str,
+        to: Option<&str>,
+        paths: &[String],
+    ) -> Result<Vec<String>, String> {
+        if paths.is_empty() {
+            return Ok(Vec::new());
+        }
+        let out = self.follow_diff_run(from, to, paths, &["--numstat", "-z"])?;
+        let mut found = Vec::new();
+        // `-z` with `--numstat`: `<added>\t<deleted>\t<path>\0`.
+        for rec in out.split(|b| *b == 0).filter(|r| !r.is_empty()) {
+            let text = String::from_utf8_lossy(rec);
+            let mut it = text.splitn(3, '\t');
+            if it.next() == Some("-")
+                && it.next() == Some("-")
+                && let Some(p) = it.next()
+            {
+                found.push(p.to_string());
+            }
+        }
+        Ok(found)
+    }
+
     /// The ignore rule of git for a path, as `<source>:<line>:<pattern>`, or
     /// `None` if no rule ignores it (`git check-ignore -v`). A tracked file is
     /// never ignored.

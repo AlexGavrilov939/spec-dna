@@ -11,18 +11,42 @@
 //!
 //! The items that the checks of part 2 call are marked
 //! `allow(dead_code)`: the command `accept` does not call them.
+//!
+//! Format 2 (design 0.8.0, D72) is the format that `accept` writes. Format 1 is
+//! the format of the pre-release of 0.8.0. The reader still reads it, so an
+//! archive file of format 1 stays readable ([`Record::parse`]), but a record of
+//! format 1 in the folder of a change is not valid ([`validate`]).
 
 use crate::change;
 use crate::hash;
 use crate::tree::Entry;
 
-/// The value of `format` that this binary writes and reads.
-pub const FORMAT: i64 = 1;
+/// The value of `format` that this binary writes.
+pub const FORMAT: i64 = 2;
 
-/// The number after `spec-dna-brief` in the first line of a brief. The fixed
-/// text of the brief belongs to this number: a change of the text needs a new
-/// number (design 0.8.0, D3 item 5).
-pub const BRIEF_FORMAT: u32 = 1;
+/// The value of `format` of the pre-release of 0.8.0. The reader reads it. No
+/// release has it, and only 2 archive files of this repository do.
+pub const FORMAT_1: i64 = 1;
+
+/// The message of SD928 for a record of format 1 in the folder of a change
+/// (D72 item 3).
+pub const FORMAT_1_MESSAGE: &str = "format 1 is the format of the pre-release of 0.8.0; delete the record, commit, and accept again";
+
+/// The number after `spec-dna-brief` in the first line of a brief that this
+/// binary writes. The fixed text of the brief belongs to this number: a change
+/// of the text needs a new number (design 0.8.0, D3 item 5).
+pub const BRIEF_FORMAT: u32 = 2;
+
+/// The number of the brief of a record of format 1. The compare of SD928 still
+/// computes it for an entry of such a record.
+pub const BRIEF_FORMAT_1: u32 = 1;
+
+/// The severities of a finding of format 2 (D72 item 1). A `blocker` breaks a
+/// requirement, a delta line, an invariant, a rule of the project or a command
+/// of `Proof`, loses data, or opens a security hole. A `note` is each other
+/// finding.
+pub const BLOCKER: &str = "blocker";
+pub const NOTE: &str = "note";
 
 /// The most bytes that a record can have.
 pub const MAX_BYTES: usize = 16_384;
@@ -45,7 +69,10 @@ const MAX_ROLE: usize = 40;
 /// One entry `[[acceptor]]`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Acceptor {
-    pub role: String,
+    /// The role names of the entry, sorted (format 2). One entry of one pass
+    /// answers each role of `[owners]` that matches. A record of format 1 has
+    /// one `role`, and the reader gives it as the only item.
+    pub roles: Vec<String>,
     /// The hash on the last line of the brief of this entry.
     pub brief: String,
     /// A claim: the session of the acceptor, or `unknown`.
@@ -96,9 +123,33 @@ pub struct Attempt {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Finding {
     pub acceptor: i64,
+    /// `blocker` or `note`. The reader of a record of format 1 gives `important`
+    /// as `blocker` and `nit` as `note`, so a reader shows an old archive file
+    /// with the words of format 2.
     pub severity: String,
     pub path: String,
     pub line: Option<i64>,
+    pub text: String,
+}
+
+/// One entry `[[follow-up]]` (D73). The reader keeps its fields, and
+/// [`validate`] checks their shape only. The checks of the chain (the notes that
+/// `closes` names, the trees of the links and the diff budget) are the rules of a
+/// later slice.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FollowUp {
+    /// The hash of the follow-up brief.
+    pub brief: String,
+    /// A claim: the session of the agent that checked the fix, or `unknown`.
+    pub session: String,
+    /// A claim: the agent id, or `unknown`.
+    pub agent: String,
+    /// The hash of `paths` after the fix.
+    pub tree: String,
+    /// The numbers of the `[[finding]]` entries that the follow-up closes, from 1.
+    pub closes: Vec<i64>,
+    /// `accepted` or `rejected`.
+    pub result: String,
     pub text: String,
 }
 
@@ -118,10 +169,14 @@ pub struct Record {
     pub deviations: Vec<Deviation>,
     pub attempts: Vec<Attempt>,
     pub findings: Vec<Finding>,
+    pub follow_ups: Vec<FollowUp>,
 }
 
 /// What the rules of a valid record need to know about the change.
 pub struct Expect<'a> {
+    /// True for the text of an archive file, which no check validates after its
+    /// pull request: a record of format 1 there is read and is not an error.
+    pub archive: bool,
     /// The name of the folder of the change.
     pub slug: &'a str,
     /// True if the section `Files` of the plan lists a path.
@@ -138,7 +193,24 @@ type Table = toml::map::Map<String, toml::Value>;
 
 /// The keys that the reader accepts in each table. The brief names each key
 /// of the 5 tables of the acceptor (a unit test checks it).
-const KEYS_TOP: [&str; 13] = [
+const KEYS_TOP: [&str; 14] = [
+    "format",
+    "change",
+    "scope",
+    "paths",
+    "tree",
+    "result",
+    "acknowledged-by",
+    "acceptor",
+    "proof",
+    "invariant",
+    "deviation",
+    "attempt",
+    "finding",
+    "follow-up",
+];
+/// The tables of format 1: the same, with no `follow-up`.
+const KEYS_TOP_1: [&str; 13] = [
     "format",
     "change",
     "scope",
@@ -153,7 +225,12 @@ const KEYS_TOP: [&str; 13] = [
     "attempt",
     "finding",
 ];
-const KEYS_ACCEPTOR: [&str; 6] = ["role", "brief", "session", "agent", "model", "result"];
+const KEYS_ACCEPTOR: [&str; 6] = ["roles", "brief", "session", "agent", "model", "result"];
+/// The keys of an entry `[[acceptor]]` of format 1: `role` in place of `roles`.
+const KEYS_ACCEPTOR_1: [&str; 6] = ["role", "brief", "session", "agent", "model", "result"];
+const KEYS_FOLLOW_UP: [&str; 7] = [
+    "brief", "session", "agent", "tree", "closes", "result", "text",
+];
 const KEYS_PROOF: [&str; 3] = ["requirement", "state", "cases"];
 const KEYS_INVARIANT: [&str; 3] = ["id", "answer", "reason"];
 const KEYS_DEVIATION: [&str; 4] = ["id", "kind", "text", "verdict"];
@@ -194,6 +271,20 @@ fn int_of(t: &Table, key: &str, at: &str) -> Result<i64, String> {
     }
 }
 
+fn int_list_of(t: &Table, key: &str, at: &str) -> Result<Vec<i64>, String> {
+    match t.get(key) {
+        None => Ok(Vec::new()),
+        Some(toml::Value::Array(a)) => a
+            .iter()
+            .map(|v| match v {
+                toml::Value::Integer(n) => Ok(*n),
+                _ => Err(format!("`{key}` of {at} must be a list of integers")),
+            })
+            .collect(),
+        Some(_) => Err(format!("`{key}` of {at} must be a list of integers")),
+    }
+}
+
 fn list_of(t: &Table, key: &str, at: &str) -> Result<Vec<String>, String> {
     match t.get(key) {
         None => Ok(Vec::new()),
@@ -229,9 +320,39 @@ fn tables<'a>(root: &'a Table, key: &str) -> Result<Vec<(String, &'a Table)>, St
 }
 
 impl Record {
+    /// The tree of the last link of the chain (D73 item 3): the `tree` of the last
+    /// follow-up, else the `tree` of the record. The record is fresh when the hash
+    /// of `paths` equals it (SD929).
+    pub fn last_tree(&self) -> &str {
+        self.follow_ups.last().map_or(&self.tree, |u| &u.tree)
+    }
+
+    /// The numbers (from 1) of the findings of the severity `note` that the first
+    /// `upto` follow-ups do not close.
+    pub fn open_notes(&self, upto: usize) -> Vec<usize> {
+        let closed: Vec<i64> = self
+            .follow_ups
+            .iter()
+            .take(upto)
+            .flat_map(|u| u.closes.iter().copied())
+            .collect();
+        self.findings
+            .iter()
+            .enumerate()
+            .filter(|(i, f)| f.severity == NOTE && !closed.contains(&(*i as i64 + 1)))
+            .map(|(i, _)| i + 1)
+            .collect()
+    }
+
     /// Reads a record. It fails for a text over `MAX_BYTES`, a text that is no
     /// TOML, an unknown key or table, and a value of a wrong kind. It accepts
     /// the value `pending`, so the skeleton parses: `validate` rejects it.
+    ///
+    /// The value of `format` picks the keys. Format 1 has `role` in an entry
+    /// `[[acceptor]]` and no table `[[follow-up]]`. The reader gives `role` as
+    /// the only item of `roles`, and it gives the severities `important` and
+    /// `nit` as `blocker` and `note`. Any other value of `format` reads with
+    /// the keys of format 2, and [`validate`] reports it.
     pub fn parse(text: &str) -> Result<Record, String> {
         if text.len() > MAX_BYTES {
             return Err(format!(
@@ -242,10 +363,16 @@ impl Record {
         let root: Table = text
             .parse::<toml::Table>()
             .map_err(|e| format!("the record is not valid TOML: {}", e.message()))?;
-        check_keys(&root, &KEYS_TOP, "the record")?;
         let here = "the record";
+        let format = int_of(&root, "format", here)?;
+        let old = format == FORMAT_1;
+        check_keys(
+            &root,
+            if old { &KEYS_TOP_1 } else { &KEYS_TOP },
+            "the record",
+        )?;
         let mut r = Record {
-            format: int_of(&root, "format", here)?,
+            format,
             change: text_of(&root, "change", here)?,
             scope: list_of(&root, "scope", here)?,
             paths: list_of(&root, "paths", here)?,
@@ -258,11 +385,27 @@ impl Record {
             deviations: Vec::new(),
             attempts: Vec::new(),
             findings: Vec::new(),
+            follow_ups: Vec::new(),
         };
         for (at, t) in tables(&root, "acceptor")? {
-            check_keys(t, &KEYS_ACCEPTOR, &at)?;
+            check_keys(
+                t,
+                if old {
+                    &KEYS_ACCEPTOR_1
+                } else {
+                    &KEYS_ACCEPTOR
+                },
+                &at,
+            )?;
+            let roles = if old {
+                vec![text_of(t, "role", &at)?]
+            } else if t.contains_key("roles") {
+                list_of(t, "roles", &at)?
+            } else {
+                return Err(format!("{at} has no `roles`"));
+            };
             r.acceptors.push(Acceptor {
-                role: text_of(t, "role", &at)?,
+                roles,
                 brief: text_of(t, "brief", &at)?,
                 session: text_of(t, "session", &at)?,
                 agent: text_of(t, "agent", &at)?,
@@ -305,9 +448,14 @@ impl Record {
         }
         for (at, t) in tables(&root, "finding")? {
             check_keys(t, &KEYS_FINDING, &at)?;
+            let severity = text_of(t, "severity", &at)?;
             r.findings.push(Finding {
                 acceptor: int_of(t, "acceptor", &at)?,
-                severity: text_of(t, "severity", &at)?,
+                severity: match (old, severity.as_str()) {
+                    (true, "important") => BLOCKER.to_string(),
+                    (true, "nit") => NOTE.to_string(),
+                    _ => severity,
+                },
                 path: text_of(t, "path", &at)?,
                 line: match t.get("line") {
                     None => None,
@@ -315,6 +463,20 @@ impl Record {
                 },
                 text: text_of(t, "text", &at)?,
             });
+        }
+        if !old {
+            for (at, t) in tables(&root, "follow-up")? {
+                check_keys(t, &KEYS_FOLLOW_UP, &at)?;
+                r.follow_ups.push(FollowUp {
+                    brief: text_of(t, "brief", &at)?,
+                    session: text_of(t, "session", &at)?,
+                    agent: text_of(t, "agent", &at)?,
+                    tree: text_of(t, "tree", &at)?,
+                    closes: int_list_of(t, "closes", &at)?,
+                    result: text_of(t, "result", &at)?,
+                    text: text_of(t, "text", &at)?,
+                });
+            }
         }
         Ok(r)
     }
@@ -358,6 +520,16 @@ fn is_proof_state(s: &str) -> bool {
 /// rule "the `brief` of each entry is the brief of its adding commit" needs
 /// git, so the check of part 2 does it with `brief`.
 pub fn validate(r: &Record, x: &Expect) -> Vec<String> {
+    // A record of format 1 is the format of the pre-release (D72 item 3). In the
+    // folder of a change it has one problem, whatever else it holds. An archive
+    // file keeps its format, and no rule of format 2 applies to it.
+    if r.format == FORMAT_1 {
+        return if x.archive {
+            Vec::new()
+        } else {
+            vec![FORMAT_1_MESSAGE.to_string()]
+        };
+    }
     let mut out: Vec<String> = Vec::new();
     if r.format != FORMAT {
         out.push(format!("`format` must be {FORMAT}, not {}", r.format));
@@ -402,10 +574,16 @@ pub fn validate(r: &Record, x: &Expect) -> Vec<String> {
     let n = r.acceptors.len() as i64;
     for (i, a) in r.acceptors.iter().enumerate() {
         let at = format!("acceptor {}", i + 1);
-        if !valid_role(&a.role) {
+        if a.roles.is_empty() {
+            out.push(format!("{at}: `roles` must list at least one role name"));
+        }
+        for role in a.roles.iter().filter(|role| !valid_role(role)) {
+            out.push(format!("{at}: `roles` must hold role names, not `{role}`"));
+        }
+        if let Some(w) = a.roles.windows(2).find(|w| w[0] >= w[1]) {
             out.push(format!(
-                "{at}: `role` must be a role name, not `{}`",
-                a.role
+                "{at}: `roles` must be sorted with no duplicate: `{}` comes before `{}`",
+                w[0], w[1]
             ));
         }
         if !is_hash(&a.brief) {
@@ -420,6 +598,19 @@ pub fn validate(r: &Record, x: &Expect) -> Vec<String> {
             out.push(format!(
                 "{at}: `result` must be `accepted` or `rejected`, not `{}`",
                 a.result
+            ));
+        }
+        // An entry says `rejected` only for a reason (D72 item 2): a blocker of
+        // its own, or one of the reasons that no entry owns.
+        if a.result == "rejected"
+            && !r
+                .findings
+                .iter()
+                .any(|f| f.acceptor == i as i64 + 1 && f.severity == BLOCKER)
+            && !other_reason(r)
+        {
+            out.push(format!(
+                "{at}: `result` is `rejected`, and the entry has no `blocker` finding, and no `violated` invariant, no `rejected` deviation and no `rejected` follow-up gives a reason; a note never gives `rejected`"
             ));
         }
         if !r.attempts.iter().any(|t| t.acceptor == i as i64 + 1) {
@@ -460,9 +651,9 @@ pub fn validate(r: &Record, x: &Expect) -> Vec<String> {
                 f.acceptor
             ));
         }
-        if !matches!(f.severity.as_str(), "important" | "nit") {
+        if !matches!(f.severity.as_str(), BLOCKER | NOTE) {
             out.push(format!(
-                "{at}: `severity` must be `important` or `nit`, not `{}`",
+                "{at}: `severity` must be `{BLOCKER}` or `{NOTE}`, not `{}`",
                 f.severity
             ));
         }
@@ -528,22 +719,49 @@ pub fn validate(r: &Record, x: &Expect) -> Vec<String> {
             seen.push(&d.id);
         }
     }
+    // The shape of each follow-up (D73). The rules of the chain are not here.
+    for (i, u) in r.follow_ups.iter().enumerate() {
+        let at = format!("follow-up {}", i + 1);
+        if !is_hash(&u.brief) {
+            out.push(format!(
+                "{at}: `brief` must be the hash of its brief: 16 hexadecimal digits"
+            ));
+        }
+        if !is_hash(&u.tree) {
+            out.push(format!("{at}: `tree` must be 16 hexadecimal digits"));
+        }
+        if u.session.trim().is_empty() || u.agent.trim().is_empty() {
+            out.push(format!("{at}: `session` and `agent` must not be empty"));
+        }
+        if !matches!(u.result.as_str(), "accepted" | "rejected") {
+            out.push(format!(
+                "{at}: `result` must be `accepted` or `rejected`, not `{}`",
+                u.result
+            ));
+        }
+        if u.closes.iter().any(|n| *n < 1) {
+            out.push(format!("{at}: `closes` lists numbers from 1"));
+        }
+        if u.text.trim().is_empty() {
+            out.push(format!("{at}: `text` is empty"));
+        }
+    }
     for what in pending_values(r) {
         out.push(format!(
             "{what} has the value `{PENDING}`; write the answer"
         ));
     }
-    // The result logic: `accepted` only when no other value contradicts it.
+    // The result logic (D72 item 2). `accepted` only when no other value
+    // contradicts it, and `rejected` only when a reason exists. A note never
+    // gives `rejected`.
+    let blocker = r.findings.iter().any(|f| f.severity == BLOCKER);
     if r.result == "accepted" {
         let against: Vec<&str> = [
             (
                 r.acceptors.iter().any(|a| a.result != "accepted"),
                 "an acceptor did not accept",
             ),
-            (
-                r.findings.iter().any(|f| f.severity == "important"),
-                "a finding is `important`",
-            ),
+            (blocker, "a finding is a `blocker`"),
             (
                 r.invariants.iter().any(|v| v.answer == "violated"),
                 "an invariant is `violated`",
@@ -551,6 +769,10 @@ pub fn validate(r: &Record, x: &Expect) -> Vec<String> {
             (
                 r.deviations.iter().any(|d| d.verdict == "rejected"),
                 "a deviation is `rejected`",
+            ),
+            (
+                r.follow_ups.iter().any(|u| u.result == "rejected"),
+                "a follow-up is `rejected`",
             ),
         ]
         .into_iter()
@@ -564,7 +786,22 @@ pub fn validate(r: &Record, x: &Expect) -> Vec<String> {
             ));
         }
     }
+    if r.result == "rejected" && !blocker && !other_reason(r) {
+        out.push(
+            "`result` is `rejected`, and no reason exists: no `blocker` finding, no `violated` invariant, no `rejected` deviation and no `rejected` follow-up; a note never gives `rejected`, so set `result` to `accepted`, or write the `blocker`"
+                .to_string(),
+        );
+    }
     out
+}
+
+/// True if a reason for `rejected` exists that is no finding: an invariant that
+/// is `violated`, a deviation that is `rejected`, or a follow-up that is
+/// `rejected` (D72 item 2).
+fn other_reason(r: &Record) -> bool {
+    r.invariants.iter().any(|v| v.answer == "violated")
+        || r.deviations.iter().any(|d| d.verdict == "rejected")
+        || r.follow_ups.iter().any(|u| u.result == "rejected")
 }
 
 /// The places that have the value `pending`, each as a short name.
@@ -579,7 +816,6 @@ fn pending_values(r: &Record) -> Vec<String> {
     add(is(&r.result), "`result`".to_string());
     for (i, a) in r.acceptors.iter().enumerate() {
         for (k, v) in [
-            ("role", &a.role),
             ("brief", &a.brief),
             ("session", &a.session),
             ("agent", &a.agent),
@@ -587,6 +823,10 @@ fn pending_values(r: &Record) -> Vec<String> {
         ] {
             add(is(v), format!("acceptor {}: `{k}`", i + 1));
         }
+        add(
+            a.roles.iter().any(|r| is(r)),
+            format!("acceptor {}: `roles`", i + 1),
+        );
         add(
             a.model.as_deref().is_some_and(is),
             format!("acceptor {}: `model`", i + 1),
@@ -617,6 +857,18 @@ fn pending_values(r: &Record) -> Vec<String> {
         add(is(&f.severity), format!("finding {}: `severity`", i + 1));
         add(is(&f.path), format!("finding {}: `path`", i + 1));
         add(is(&f.text), format!("finding {}: `text`", i + 1));
+    }
+    for (i, u) in r.follow_ups.iter().enumerate() {
+        for (k, v) in [
+            ("brief", &u.brief),
+            ("session", &u.session),
+            ("agent", &u.agent),
+            ("tree", &u.tree),
+            ("result", &u.result),
+            ("text", &u.text),
+        ] {
+            add(is(v), format!("follow-up {}: `{k}`", i + 1));
+        }
     }
     out
 }
@@ -719,13 +971,70 @@ Rules of the record:
 The text of the change follows. A line that starts with `=== ` names a part.
 ";
 
+/// The fixed text of the brief format 2 (design 0.8.0, D72 item 4): the text of
+/// format 1, with the 3 passes of the review, the meaning of `blocker` and
+/// `note`, the rule of the shell (D75 item 1) and the rule of the commit (D75
+/// item 4). The acceptor is also the reviewer, so one run gives one record. A
+/// change of one byte changes the hash of each brief, so a change needs a new
+/// `BRIEF_FORMAT`.
+const BRIEF_TEXT_2: &str = "\
+You are the acceptor and the reviewer of one change. You did not write its code. You review the change, you try to break it, and you write one record about it. You edit no code.
+
+Work from this text only. Do not ask the builder for more text.
+
+The shell:
+
+- Start each shell call with the `cd '<root>' &&` of your prompt. If the `cd` fails, stop and report it.
+- Put each test repository that you make under the scratch folder of your session. Never write in another checkout.
+
+Steps:
+
+1. Read the intent, the spec and the plan below.
+2. Run each command that the section `Proof` of the plan names. Run the tests of the paths under `paths`.
+3. Review the change in 3 passes, and give the file and the line of each finding. Bugs: a logic error, a missing check, a wrong edge case, and a test that does not prove the change. Security: a leaked secret, an unsafe input, and an access that the change does not need. Compliance: compare the code with the delta, the invariants and the deviations below, and with the rules of the project. Report a broken requirement, a delta line that the code does not meet, and a file that `Files` does not list.
+4. Run `spec-dna accept <slug> --session \"<your session id>\"`. Add `--role <role>` for each role of the first line of this text, except `acceptor`. The command writes the skeleton `acceptance.toml` in the folder of the change, and it prints the number of your entry. Write that number as `acceptor` in each of your attempts and findings.
+5. Copy the hash of the last line of this text into `brief` of your entry.
+6. Try to break the change: bad input, limits, errors, each path of `Files`, and each requirement of the delta read as a test. Write each try as an `[[attempt]]` with the outcome `held` or `broke`.
+7. Answer each invariant and each deviation that this text lists. Use `held`, `not-affected` or `violated` for an invariant, and `accepted` or `rejected` for a deviation. A `not-affected` or `violated` answer needs a `reason`.
+8. Write each defect as a `[[finding]]` with a severity, a path from the root of the repository and a text. Use `blocker` for a defect that breaks a requirement, a delta line, an invariant, a rule of the project or a command of `Proof`, loses data, or opens a security hole. Use `note` for each other defect. Do not fix a defect.
+9. Set `result` of your entry and the top `result` to `accepted` or `rejected`. Use `rejected` only for a reason: a `blocker`, a `violated` invariant, or a `rejected` deviation. A `note` never gives `rejected`.
+10. Commit `acceptance.toml` alone. This commit is part of your task. It is no approval commit: it changes no `status` line, and it needs no go-ahead of the owner. Make it in a call of its own after the write. Edit no other file.
+
+Tables of the record. Write only these keys:
+
+- `[[acceptor]]`: `roles`, `brief`, `session`, `agent`, `result` and the optional `model`.
+- `[[attempt]]`: `acceptor`, `text` and `outcome` (`held` or `broke`).
+- `[[finding]]`: `acceptor`, `severity` (`blocker` or `note`), `path`, `line` (optional) and `text`.
+- `[[invariant]]`: `id`, `answer` (`held`, `not-affected` or `violated`) and `reason`.
+- `[[deviation]]`: `id`, `kind`, `text` and `verdict` (`accepted` or `rejected`).
+- `[[proof]]`: `requirement`, `state` and `cases`. Do not change it.
+- Write no `[[follow-up]]` entry.
+
+Rules of the record:
+
+- The file is TOML. It has `format = 2`, no unknown key and at most 16,384 bytes.
+- No value is `pending`. Replace each `pending` value with your answer.
+- Each `[[acceptor]]` has `roles`, `brief`, `session`, `agent` and `result`. Do not change `scope`, `paths`, `tree` or `acknowledged-by`.
+- Each `[[acceptor]]` has at least one `[[attempt]]`.
+- Each `[[attempt]]` and `[[finding]]` names the number of its `[[acceptor]]` entry, counted from 1.
+- The top `result` is `accepted` only when each acceptor accepted, no finding is a `blocker`, no invariant is `violated` and no deviation is `rejected`.
+- If the code changes after the record, the record is stale. Do not change the code.
+
+The text of the change follows. A line that starts with `=== ` names a part.
+";
+
 /// The input of `brief`: everything that the brief is a function of. The
 /// command reads these values from the commit; the check of part 2 reads them
 /// from the tree of the commit that added the entry.
 pub struct Brief<'a> {
     pub slug: &'a str,
-    /// The role of the entry, `acceptor` when `--role` is absent.
-    pub role: &'a str,
+    /// The number of the format of the brief: [`BRIEF_FORMAT`] or
+    /// [`BRIEF_FORMAT_1`]. It picks the fixed text and the first line.
+    pub format: u32,
+    /// The role names of the entry, sorted: `acceptor` when `--role` is absent
+    /// and no role of `[owners]` matches. The first line holds them, with `,`
+    /// between them. A brief of format 1 has one.
+    pub entry_roles: &'a [String],
     pub intent: &'a str,
     pub spec: Option<&'a str>,
     pub plan: &'a str,
@@ -763,8 +1072,17 @@ fn push_list(out: &mut String, name: &str, items: &[String], none: bool) {
 
 /// The text before the last line of the brief (design 0.8.0, D3 item 5).
 fn brief_body(b: &Brief) -> String {
-    let mut out = format!("spec-dna-brief {BRIEF_FORMAT} {} {}\n", b.slug, b.role);
-    out.push_str(BRIEF_TEXT);
+    let mut out = format!(
+        "spec-dna-brief {} {} {}\n",
+        b.format,
+        b.slug,
+        b.entry_roles.join(",")
+    );
+    out.push_str(if b.format == BRIEF_FORMAT_1 {
+        BRIEF_TEXT
+    } else {
+        BRIEF_TEXT_2
+    });
     out.push_str("=== intent.md ===\n");
     push_whole(&mut out, b.intent);
     if let Some(spec) = b.spec {
@@ -807,6 +1125,185 @@ pub fn brief_hash(text: &str) -> Option<String> {
     (is_hash(hash) && body_hash(&text[..at]) == hash).then(|| hash.to_string())
 }
 
+// The brief of a follow-up (design 0.8.0, D73 item 8).
+
+/// The most bytes that the diff of the whole chain can have (D73 item 2). The text
+/// of the diff over `paths`, from the commit of the record to the head, is under
+/// this budget. More notes do not buy more diff.
+pub const MAX_CHAIN_DIFF: usize = 16_384;
+
+/// The number after `spec-dna-follow-up` in the first line of a follow-up brief.
+pub const FOLLOW_UP_FORMAT: u32 = 2;
+
+/// The fixed text of the follow-up brief. A change of one byte changes the hash of
+/// each follow-up brief, so a change needs a new `FOLLOW_UP_FORMAT`.
+const FOLLOW_UP_TEXT: &str = "\
+You check the fix of one or more notes of an acceptance record. You did not write the fix. You edit no code.
+
+Work from this text only. Read the whole diff below against the requirements below.
+
+Steps:
+
+1. Run each command of `Proof`. Start each shell call with the `cd '<root>' &&` of your prompt, and stop when the `cd` fails.
+2. Run `spec-dna accept <slug> --follow-up --session \"<your session id>\"`. It adds a `[[follow-up]]` entry to `acceptance.toml`. Copy the hash of the last line of this text into `brief` of the entry.
+3. Keep in `closes` each note that the diff fixes, and remove the others.
+4. Set `result` to `rejected` when the diff changes other behavior or a command of `Proof` fails. Else set it to `accepted`.
+5. Write in `text` the commands that you ran and their results.
+6. Commit `acceptance.toml` alone. This commit is part of your task. It is no approval commit: it changes no `status` line, and it needs no go-ahead of the owner. Edit no other file.
+
+The text of the change follows. A line that starts with `=== ` names a part.
+";
+
+/// One open note of the follow-up brief.
+pub struct BriefNote<'a> {
+    /// The number of the `[[finding]]` entry, from 1.
+    pub number: usize,
+    pub path: &'a str,
+    pub line: Option<i64>,
+    pub text: &'a str,
+}
+
+/// The input of [`follow_up_brief`]: everything that the follow-up brief is a
+/// function of.
+pub struct FollowUpBrief<'a> {
+    pub slug: &'a str,
+    /// The text of the section `Delta` of the spec, or empty.
+    pub delta: &'a str,
+    /// The items of `Invariants` and `Deviations`, as text (D6 and D7).
+    pub invariants: &'a [String],
+    pub deviations: &'a [String],
+    /// The text of the section `Proof` of the plan.
+    pub proof: &'a str,
+    pub notes: &'a [BriefNote<'a>],
+    /// The tree of the last link, and the tree of the code that the follow-up binds.
+    pub from_tree: &'a str,
+    pub to_tree: &'a str,
+    /// One line `<path> <old mode> <old id> <new mode> <new id>` for each path of
+    /// the diff of the fix: the input of the diff. A side that the tree lacks is
+    /// `absent absent`.
+    pub fix: &'a [String],
+    /// The output of `git diff`: it is not part of the hash.
+    pub diff: &'a str,
+}
+
+/// The text of a section of a Markdown file: the lines after `## <heading>` up to
+/// the next heading of level 1 or 2, with the blank lines at both ends removed.
+/// Empty when the file has no such section.
+pub fn section_text(markdown: &str, heading: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    let mut inside = false;
+    for line in markdown.lines() {
+        let t = line.trim_end();
+        if let Some(h) = t.strip_prefix("## ") {
+            if inside {
+                break;
+            }
+            inside = h.trim() == heading;
+            continue;
+        }
+        if inside && t.starts_with("# ") {
+            break;
+        }
+        if inside {
+            out.push(line);
+        }
+    }
+    while out.first().is_some_and(|l| l.trim().is_empty()) {
+        out.remove(0);
+    }
+    while out.last().is_some_and(|l| l.trim().is_empty()) {
+        out.pop();
+    }
+    out.join("\n")
+}
+
+/// The follow-up brief: one text that is a function of `b` only. The last line is
+/// `brief <hash>`. The hash covers each byte before the line `=== diff ===`, so
+/// the part `=== fix ===` binds the content and another version of git, which can
+/// print another diff, gives no false SD928.
+pub fn follow_up_brief(b: &FollowUpBrief) -> String {
+    let mut out = format!("spec-dna-follow-up {FOLLOW_UP_FORMAT} {}\n", b.slug);
+    out.push_str(FOLLOW_UP_TEXT);
+    out.push_str("=== delta ===\n");
+    if b.delta.is_empty() {
+        out.push_str("none\n");
+    } else {
+        push_whole(&mut out, b.delta);
+    }
+    push_list(&mut out, "invariants", b.invariants, false);
+    push_list(&mut out, "deviations", b.deviations, false);
+    out.push_str("=== proof ===\n");
+    if b.proof.is_empty() {
+        out.push_str("none\n");
+    } else {
+        push_whole(&mut out, b.proof);
+    }
+    out.push_str("=== notes ===\n");
+    for n in b.notes {
+        match n.line {
+            Some(l) => out.push_str(&format!("{} {}:{l} {}\n", n.number, n.path, n.text)),
+            None => out.push_str(&format!("{} {} {}\n", n.number, n.path, n.text)),
+        }
+    }
+    out.push_str(&format!(
+        "=== trees ===\nfrom {}\nto {}\n",
+        b.from_tree, b.to_tree
+    ));
+    out.push_str("=== fix ===\n");
+    for l in b.fix {
+        out.push_str(l);
+        out.push('\n');
+    }
+    let h = body_hash(&out);
+    out.push_str("=== diff ===\n");
+    push_whole_or_none(&mut out, b.diff);
+    out.push_str(&format!("brief {h}\n"));
+    out
+}
+
+fn push_whole_or_none(out: &mut String, text: &str) {
+    if !text.is_empty() {
+        push_whole(out, text);
+    }
+}
+
+/// The hash on the last line of a follow-up brief, or `None` if the text has no
+/// such line or the hash does not match the text before `=== diff ===`.
+pub fn follow_up_brief_hash(text: &str) -> Option<String> {
+    let body = text.strip_suffix('\n')?;
+    let at = body.rfind('\n')? + 1;
+    let hash = body[at..].strip_prefix("brief ")?;
+    let cut = text.rfind("\n=== diff ===\n")? + 1;
+    (is_hash(hash) && body_hash(&text[..cut]) == hash).then(|| hash.to_string())
+}
+
+/// Adds one entry `[[follow-up]]` at the end of the text of a record. The fields
+/// that the acceptor writes are `pending`. Each other byte stays, and the new entry
+/// has the line end of the file.
+pub fn add_follow_up(text: &str, session: &str, tree: &str, closes: &[usize]) -> String {
+    let list: Vec<String> = closes.iter().map(|n| n.to_string()).collect();
+    let block = format!(
+        "[[follow-up]]\nbrief = {}\nsession = {}\nagent = {}\ntree = {}\ncloses = [{}]\nresult = {}\ntext = {}\n",
+        toml_string(PENDING),
+        toml_string(session),
+        toml_string(UNKNOWN),
+        toml_string(tree),
+        list.join(", "),
+        toml_string(PENDING),
+        toml_string(PENDING)
+    );
+    let eol = if text.find('\n').is_some_and(|i| text[..i].ends_with('\r')) {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let mut out = text.trim_end_matches(['\r', '\n']).to_string();
+    out.push_str(eol);
+    out.push_str(eol);
+    out.push_str(&block.replace('\n', eol));
+    out
+}
+
 // The writer.
 
 /// A basic string of TOML: the quotes, the escapes of `"` and `\`, and the
@@ -846,10 +1343,10 @@ pub fn session_value(given: Option<&str>) -> String {
 
 /// The text of one entry `[[acceptor]]` of a skeleton: the fields that the
 /// acceptor still writes are `pending`.
-pub fn acceptor_block(role: &str, session: &str) -> String {
+pub fn acceptor_block(roles: &[String], session: &str) -> String {
     format!(
-        "[[acceptor]]\nrole = {}\nbrief = {}\nsession = {}\nagent = {}\nresult = {}\n",
-        toml_string(role),
+        "[[acceptor]]\nroles = {}\nbrief = {}\nsession = {}\nagent = {}\nresult = {}\n",
+        toml_list(roles),
         toml_string(PENDING),
         toml_string(session),
         toml_string(UNKNOWN),
@@ -863,7 +1360,8 @@ pub struct Skeleton<'a> {
     pub scope: &'a [String],
     pub paths: &'a [String],
     pub tree: &'a str,
-    pub role: &'a str,
+    /// The sorted role names of the first entry.
+    pub roles: &'a [String],
     pub session: &'a str,
     pub proofs: &'a [ProofEntry],
     /// The ids of the invariants of the spec (D6, slice S5).
@@ -885,7 +1383,7 @@ pub fn skeleton(s: &Skeleton) -> String {
         toml_string(PENDING)
     );
     out.push('\n');
-    out.push_str(&acceptor_block(s.role, s.session));
+    out.push_str(&acceptor_block(s.roles, s.session));
     for p in s.proofs {
         out.push_str(&format!(
             "\n[[proof]]\nrequirement = {}\nstate = {}\ncases = {}\n",
@@ -988,8 +1486,8 @@ fn table_header(line: &str) -> Option<(bool, &str)> {
 /// Adds one entry `[[acceptor]]` to the text of a record, after its last
 /// `[[acceptor]]` table. Each other byte stays, so the comments and the tables
 /// of the first acceptor stay. It returns the new text.
-pub fn add_acceptor(text: &str, role: &str, session: &str) -> String {
-    let block = acceptor_block(role, session);
+pub fn add_acceptor(text: &str, roles: &[String], session: &str) -> String {
+    let block = acceptor_block(roles, session);
     // The end of the last `[[acceptor]]` table: the first line that starts a
     // table after it, or the end of the text. Another table (an attempt) can sit
     // between 2 acceptor tables, so the scan reads the whole text.
@@ -1061,12 +1559,13 @@ mod tests {
 
     fn valid_text() -> String {
         format!(
-            "format = 1\nchange = \"demo\"\nscope = [\"src/**\"]\npaths = [\"src/a.rs\", \"src/b.rs\"]\ntree = \"3f2a9c1b7e0d4a11\"\nresult = \"accepted\"\nacknowledged-by = []\n\n[[acceptor]]\nrole = \"acceptor\"\nbrief = \"{HASH}\"\nsession = \"s1\"\nagent = \"unknown\"\nresult = \"accepted\"\n\n[[proof]]\nrequirement = \"requirements/a#k\"\nstate = \"passed-once\"\ncases = [\"t::one\"]\n\n[[attempt]]\nacceptor = 1\ntext = \"Sent a NaN value.\"\noutcome = \"held\"\n\n[[finding]]\nacceptor = 1\nseverity = \"nit\"\npath = \"src/a.rs\"\nline = 8\ntext = \"A name has no unit.\"\n"
+            "format = 2\nchange = \"demo\"\nscope = [\"src/**\"]\npaths = [\"src/a.rs\", \"src/b.rs\"]\ntree = \"3f2a9c1b7e0d4a11\"\nresult = \"accepted\"\nacknowledged-by = []\n\n[[acceptor]]\nroles = [\"acceptor\"]\nbrief = \"{HASH}\"\nsession = \"s1\"\nagent = \"unknown\"\nresult = \"accepted\"\n\n[[proof]]\nrequirement = \"requirements/a#k\"\nstate = \"passed-once\"\ncases = [\"t::one\"]\n\n[[attempt]]\nacceptor = 1\ntext = \"Sent a NaN value.\"\noutcome = \"held\"\n\n[[finding]]\nacceptor = 1\nseverity = \"note\"\npath = \"src/a.rs\"\nline = 8\ntext = \"A name has no unit.\"\n"
         )
     }
 
     fn expect(plan_files: bool, task_files: bool) -> Expect<'static> {
         Expect {
+            archive: false,
             slug: "demo",
             plan_has_files: plan_files,
             tasks_have_files: task_files,
@@ -1093,7 +1592,7 @@ mod tests {
     fn a_valid_record_has_no_problem_and_each_field_reads() {
         assert_eq!(problems_of(&valid_text()), Vec::<String>::new());
         let r = Record::parse(&valid_text()).unwrap();
-        assert_eq!(r.format, 1);
+        assert_eq!(r.format, 2);
         assert_eq!(r.scope, ["src/**"]);
         assert_eq!(r.paths, ["src/a.rs", "src/b.rs"]);
         assert_eq!(r.acceptors[0].brief, HASH);
@@ -1104,15 +1603,15 @@ mod tests {
     #[test]
     fn the_reader_stops_on_the_structure() {
         for (text, word) in [
-            ("format = 1\nchange = ".to_string(), "not valid TOML"),
+            ("format = 2\nchange = ".to_string(), "not valid TOML"),
             (
                 edit("acknowledged-by = []\n", "acknowledged-by = []\nnote = 1\n"),
                 "unknown key `note`",
             ),
             (
                 edit(
-                    "role = \"acceptor\"\n",
-                    "role = \"acceptor\"\nmood = \"x\"\n",
+                    "roles = [\"acceptor\"]\n",
+                    "roles = [\"acceptor\"]\nmood = \"x\"\n",
                 ),
                 "unknown key `mood`",
             ),
@@ -1120,7 +1619,7 @@ mod tests {
                 format!("{}\n[[review]]\nx = 1\n", valid_text()),
                 "unknown key `review`",
             ),
-            (edit("format = 1", "format = \"1\""), "must be an integer"),
+            (edit("format = 2", "format = \"2\""), "must be an integer"),
             (
                 edit("scope = [\"src/**\"]", "scope = \"src/**\""),
                 "list of strings",
@@ -1155,7 +1654,7 @@ mod tests {
     #[test]
     fn each_rule_of_a_valid_record_is_checked() {
         let cases: Vec<(String, &str)> = vec![
-            (edit("format = 1", "format = 2"), "`format` must be 1"),
+            (edit("format = 2", "format = 3"), "`format` must be 2"),
             (
                 edit("change = \"demo\"", "change = \"other\""),
                 "`change` must be `demo`",
@@ -1209,8 +1708,8 @@ mod tests {
                 "`result` must be `accepted` or `rejected`",
             ),
             (
-                edit("role = \"acceptor\"", "role = \"Security\""),
-                "`role` must be a role name",
+                edit("roles = [\"acceptor\"]", "roles = [\"Security\"]"),
+                "`roles` must hold role names",
             ),
             (
                 edit("brief = \"9c1b7e0d4a113f2a\"", "brief = \"abc\""),
@@ -1241,8 +1740,8 @@ mod tests {
                 "finding 1: `acceptor` is 3",
             ),
             (
-                edit("severity = \"nit\"", "severity = \"major\""),
-                "`severity` must be `important` or `nit`",
+                edit("severity = \"note\"", "severity = \"major\""),
+                "`severity` must be `blocker` or `note`",
             ),
             (
                 edit("path = \"src/a.rs\"", "path = \"/src/a.rs\""),
@@ -1267,9 +1766,14 @@ mod tests {
             assert!(has(&p, word), "{word}: {p:?}");
         }
         // Each acceptor needs an attempt.
-        let two = format!("{}\n{}", valid_text(), acceptor_block("security", "s2")).replace(
-            "role = \"security\"\nbrief = \"pending\"",
-            "role = \"security\"\nbrief = \"1111111111111111\"",
+        let two = format!(
+            "{}\n{}",
+            valid_text(),
+            acceptor_block(&["security".to_string()], "s2")
+        )
+        .replace(
+            "roles = [\"security\"]\nbrief = \"pending\"",
+            "roles = [\"security\"]\nbrief = \"1111111111111111\"",
         );
         let two = two.replace(
             "session = \"s2\"\nagent = \"unknown\"\nresult = \"pending\"",
@@ -1336,7 +1840,7 @@ mod tests {
             scope: &["src/**".to_string()],
             paths: &["src/a.rs".to_string()],
             tree: "3f2a9c1b7e0d4a11",
-            role: "acceptor",
+            roles: &["acceptor".to_string()],
             session: "s1",
             proofs: &[],
             invariants: &["rules/x#a@0123456789abcdef".to_string()],
@@ -1411,8 +1915,8 @@ mod tests {
     #[test]
     fn accepted_needs_that_nothing_speaks_against_it() {
         let base = valid_text();
-        let important = edit("severity = \"nit\"", "severity = \"important\"");
-        assert!(has(&problems_of(&important), "a finding is `important`"));
+        let important = edit("severity = \"note\"", "severity = \"blocker\"");
+        assert!(has(&problems_of(&important), "a finding is a `blocker`"));
         assert!(has(
             &problems_of(&format!(
                 "{base}\n[[invariant]]\nid = \"i\"\nanswer = \"violated\"\nreason = \"Broken.\"\n"
@@ -1493,10 +1997,22 @@ mod tests {
         assert_eq!(tree_hash(&all, &rev), tree_hash(&all, &listed));
     }
 
+    /// A list of role names that lives for the whole test run.
+    fn entry(names: &[&str]) -> &'static [String] {
+        Box::leak(
+            names
+                .iter()
+                .map(|n| n.to_string())
+                .collect::<Vec<String>>()
+                .into_boxed_slice(),
+        )
+    }
+
     fn sample<'a>(roles: &'a [String], scope: &'a [String], paths: &'a [String]) -> Brief<'a> {
         Brief {
             slug: "demo",
-            role: "acceptor",
+            format: BRIEF_FORMAT,
+            entry_roles: entry(&["acceptor"]),
             intent: "# Intent\n",
             spec: Some("# Spec\n"),
             plan: "# Plan",
@@ -1515,7 +2031,7 @@ mod tests {
         let paths = vec!["src/a.rs".to_string()];
         let b = brief(&sample(&[], &scope, &paths));
         assert_eq!(b, brief(&sample(&[], &scope, &paths)));
-        assert!(b.starts_with("spec-dna-brief 1 demo acceptor\n"));
+        assert!(b.starts_with("spec-dna-brief 2 demo acceptor\n"));
         assert!(b.contains(
             "=== intent.md ===\n# Intent\n=== spec.md ===\n# Spec\n=== plan.md ===\n# Plan\n"
         ));
@@ -1538,9 +2054,9 @@ mod tests {
         changed.plan = "# Plan 2";
         assert_ne!(brief(&changed), b);
         let mut role = sample(&[], &scope, &paths);
-        role.role = "security-reviewer";
+        role.entry_roles = entry(&["db-reviewer", "security-reviewer"]);
         let r = brief(&role);
-        assert!(r.starts_with("spec-dna-brief 1 demo security-reviewer\n"));
+        assert!(r.starts_with("spec-dna-brief 2 demo db-reviewer,security-reviewer\n"));
         assert_ne!(r.lines().last(), b.lines().last());
         let roles = vec!["security-reviewer".to_string()];
         let with_roles = brief(&sample(&roles, &scope, &paths));
@@ -1555,6 +2071,15 @@ mod tests {
 
     #[test]
     fn the_brief_names_each_key_that_the_reader_accepts_in_a_table_of_the_acceptor() {
+        let tables = [
+            "acceptor",
+            "attempt",
+            "finding",
+            "invariant",
+            "deviation",
+            "proof",
+        ];
+        // Format 2: `roles` and the severities `blocker` and `note`.
         let all = KEYS_ACCEPTOR
             .iter()
             .chain(&KEYS_PROOF)
@@ -1563,21 +2088,26 @@ mod tests {
             .chain(&KEYS_ATTEMPT)
             .chain(&KEYS_FINDING);
         for key in all {
-            assert!(BRIEF_TEXT.contains(&format!("`{key}`")), "{key}");
+            assert!(BRIEF_TEXT_2.contains(&format!("`{key}`")), "{key}");
         }
-        for table in [
-            "acceptor",
-            "attempt",
-            "finding",
-            "invariant",
-            "deviation",
-            "proof",
-        ] {
-            assert!(BRIEF_TEXT.contains(&format!("`[[{table}]]`")), "{table}");
+        for table in tables {
+            assert!(BRIEF_TEXT_2.contains(&format!("`[[{table}]]`")), "{table}");
             assert!(KEYS_TOP.contains(&table));
         }
-        // The rule of the top result names each condition of `validate`.
+        assert!(BRIEF_TEXT_2.contains("`severity` (`blocker` or `note`)"));
+        assert!(BRIEF_TEXT_2.contains("Write no `[[follow-up]]` entry."));
+        assert!(BRIEF_TEXT_2.contains("no finding is a `blocker`"));
+        // Format 1 is the text of the pre-release, byte for byte.
+        let all_1 = KEYS_ACCEPTOR_1.iter().chain(&KEYS_PROOF);
+        for key in all_1 {
+            assert!(BRIEF_TEXT.contains(&format!("`{key}`")), "{key}");
+        }
+        for table in tables {
+            assert!(BRIEF_TEXT.contains(&format!("`[[{table}]]`")), "{table}");
+            assert!(KEYS_TOP_1.contains(&table));
+        }
         assert!(BRIEF_TEXT.contains("each acceptor accepted"));
+        assert!(BRIEF_TEXT.contains("`severity` (`important` or `nit`)"));
     }
 
     #[test]
@@ -1585,12 +2115,19 @@ mod tests {
         for part in [
             "Commit `acceptance.toml` alone.",
             "This commit is part of your task.",
-            "It is no approval commit, and it needs no go-ahead of the owner.",
             "Make it in a call of its own after the write.",
             "Edit no other file.",
         ] {
             assert!(BRIEF_TEXT.contains(part), "{part}");
+            assert!(BRIEF_TEXT_2.contains(part), "{part}");
         }
+        assert!(
+            BRIEF_TEXT.contains("It is no approval commit, and it needs no go-ahead of the owner.")
+        );
+        // The rule of the commit of D75 item 4, in the words of the design.
+        assert!(BRIEF_TEXT_2.contains(
+            "It is no approval commit: it changes no `status` line, and it needs no go-ahead of the owner."
+        ));
     }
 
     #[test]
@@ -1601,17 +2138,54 @@ mod tests {
         assert!(BRIEF_TEXT.ends_with('\n'));
     }
 
+    /// D72 item 4: the fixed text of format 2 holds the 3 passes, the meaning of
+    /// the 2 severities, the rule of the shell and the rule of the commit, in about
+    /// 4 KB.
+    #[test]
+    fn the_fixed_text_of_format_2_is_about_4_kilobytes_and_names_each_duty() {
+        let n = BRIEF_TEXT_2.len();
+        assert!((3500..=4500).contains(&n), "{n}");
+        assert!(BRIEF_TEXT_2.is_ascii());
+        assert!(BRIEF_TEXT_2.ends_with('\n'));
+        for part in [
+            "Bugs:",
+            "Security:",
+            "Compliance:",
+            "Use `blocker` for a defect that breaks a requirement, a delta line, an invariant, a rule of the project or a command of `Proof`, loses data, or opens a security hole.",
+            "Use `note` for each other defect.",
+            "A `note` never gives `rejected`.",
+            "Start each shell call with the `cd '<root>' &&` of your prompt. If the `cd` fails, stop and report it.",
+            "scratch folder",
+        ] {
+            assert!(BRIEF_TEXT_2.contains(part), "{part}");
+        }
+        assert!(!BRIEF_TEXT_2.contains("important"));
+    }
+
     /// The layout of the brief and its fixed text are pinned by one hash. A
     /// change of the text or of the layout needs a new brief format (D3 item 5).
     #[test]
     fn the_brief_of_format_1_has_a_pinned_hash() {
         let scope = vec!["src/**".to_string()];
         let paths = vec!["src/a.rs".to_string()];
-        let b = brief(&sample(&[], &scope, &paths));
+        let mut old = sample(&[], &scope, &paths);
+        old.format = BRIEF_FORMAT_1;
+        let b = brief(&old);
+        assert!(b.starts_with("spec-dna-brief 1 demo acceptor\n"));
         assert_eq!(brief_hash(&b).as_deref(), Some(PINNED_BRIEF_HASH));
     }
 
     const PINNED_BRIEF_HASH: &str = "c6493dfa353660cc";
+
+    #[test]
+    fn the_brief_of_format_2_has_a_pinned_hash() {
+        let scope = vec!["src/**".to_string()];
+        let paths = vec!["src/a.rs".to_string()];
+        let b = brief(&sample(&[], &scope, &paths));
+        assert_eq!(brief_hash(&b).as_deref(), Some(PINNED_BRIEF_HASH_2));
+    }
+
+    const PINNED_BRIEF_HASH_2: &str = "9ffc1376d24a6374";
 
     #[test]
     fn toml_strings_round_trip_through_the_reader() {
@@ -1654,7 +2228,7 @@ mod tests {
             scope: &scope,
             paths: &[],
             tree: "3f2a9c1b7e0d4a11",
-            role: "acceptor",
+            roles: &["acceptor".to_string()],
             session: "s\"1",
             proofs: &proofs,
             invariants: &[],
@@ -1672,10 +2246,10 @@ mod tests {
     #[test]
     fn a_second_acceptor_is_added_and_the_other_bytes_stay() {
         let text = format!("# a comment\n{}", valid_text());
-        let out = add_acceptor(&text, "security", "s2");
+        let out = add_acceptor(&text, &["security".to_string()], "s2");
         let r = Record::parse(&out).unwrap();
         assert_eq!(r.acceptors.len(), 2);
-        assert_eq!(r.acceptors[1].role, "security");
+        assert_eq!(r.acceptors[1].roles, ["security"]);
         assert_eq!(r.acceptors[1].session, "s2");
         assert_eq!(r.acceptors[1].brief, "pending");
         // The first acceptor, the comment and each table stay.
@@ -1685,7 +2259,7 @@ mod tests {
         assert_eq!(r.findings.len(), 1);
         assert_eq!(r.proofs.len(), 1);
         // A third entry goes after the second.
-        let third = Record::parse(&add_acceptor(&out, "acceptor", "s3")).unwrap();
+        let third = Record::parse(&add_acceptor(&out, &["acceptor".to_string()], "s3")).unwrap();
         assert_eq!(third.acceptors.len(), 3);
         assert_eq!(third.acceptors[2].session, "s3");
         // A record that ends with its last acceptor.
@@ -1694,7 +2268,7 @@ mod tests {
             valid_text()[..valid_text().find("[[proof]]").unwrap()].trim_end(),
             ""
         );
-        let out = add_acceptor(&only, "acceptor", "s9");
+        let out = add_acceptor(&only, &["acceptor".to_string()], "s9");
         assert_eq!(Record::parse(&out).unwrap().acceptors.len(), 2);
     }
 
@@ -1703,13 +2277,13 @@ mod tests {
         // A hand-written layout: an attempt sits between the 2 acceptor tables.
         let acceptor = |n: u32| {
             format!(
-                "[[acceptor]]\nrole = \"acceptor\"\nbrief = \"{HASH}\"\nsession = \"s{n}\"\nagent = \"unknown\"\nresult = \"accepted\"\n"
+                "[[acceptor]]\nroles = [\"acceptor\"]\nbrief = \"{HASH}\"\nsession = \"s{n}\"\nagent = \"unknown\"\nresult = \"accepted\"\n"
             )
         };
         let attempt = |n: u32| {
             format!("[[attempt]]\nacceptor = {n}\ntext = \"Tried {n}.\"\noutcome = \"held\"\n")
         };
-        let head = "format = 1\nchange = \"demo\"\nscope = [\"src/**\"]\npaths = [\"src/a.rs\"]\ntree = \"3f2a9c1b7e0d4a11\"\nresult = \"accepted\"\nacknowledged-by = []\n";
+        let head = "format = 2\nchange = \"demo\"\nscope = [\"src/**\"]\npaths = [\"src/a.rs\"]\ntree = \"3f2a9c1b7e0d4a11\"\nresult = \"accepted\"\nacknowledged-by = []\n";
         let text = format!(
             "{head}\n{}\n{}\n{}\n{}",
             acceptor(1),
@@ -1717,11 +2291,11 @@ mod tests {
             acceptor(2),
             attempt(2)
         );
-        let out = add_acceptor(&text, "security", "s3");
+        let out = add_acceptor(&text, &["security".to_string()], "s3");
         let r = Record::parse(&out).unwrap();
         assert_eq!(r.acceptors.len(), 3);
         assert_eq!(r.acceptors[2].session, "s3");
-        assert_eq!(r.acceptors[2].role, "security");
+        assert_eq!(r.acceptors[2].roles, ["security"]);
         // The new table follows the second acceptor, and the second attempt
         // keeps its place after the new entry.
         let at = |needle: &str| out.find(needle).unwrap();
@@ -1733,10 +2307,10 @@ mod tests {
 
     #[test]
     fn the_acceptor_header_is_read_with_spaces_a_comment_and_an_indent() {
-        let head = "format = 1\nchange = \"demo\"\nscope = [\"src/**\"]\npaths = [\"src/a.rs\"]\ntree = \"3f2a9c1b7e0d4a11\"\nresult = \"accepted\"\nacknowledged-by = []\n";
+        let head = "format = 2\nchange = \"demo\"\nscope = [\"src/**\"]\npaths = [\"src/a.rs\"]\ntree = \"3f2a9c1b7e0d4a11\"\nresult = \"accepted\"\nacknowledged-by = []\n";
         let body = |n: u32| {
             format!(
-                "role = \"acceptor\"\nbrief = \"{HASH}\"\nsession = \"s{n}\"\nagent = \"unknown\"\nresult = \"accepted\"\n"
+                "roles = [\"acceptor\"]\nbrief = \"{HASH}\"\nsession = \"s{n}\"\nagent = \"unknown\"\nresult = \"accepted\"\n"
             )
         };
         let attempt = |n: u32| {
@@ -1755,11 +2329,11 @@ mod tests {
                 attempt(2)
             );
             assert_eq!(Record::parse(&text).unwrap().acceptors.len(), 2);
-            let out = add_acceptor(&text, "security", "s3");
+            let out = add_acceptor(&text, &["security".to_string()], "s3");
             let r = Record::parse(&out).unwrap();
             assert_eq!(r.acceptors.len(), 3, "{out}");
             assert_eq!(r.acceptors[2].session, "s3", "{out}");
-            assert_eq!(r.acceptors[2].role, "security", "{out}");
+            assert_eq!(r.acceptors[2].roles, ["security"], "{out}");
             let at = |needle: &str| out.find(needle).unwrap();
             assert!(at("session = \"s2\"") < at("session = \"s3\""), "{out}");
             assert!(at("session = \"s3\"") < at("Tried 2."), "{out}");
@@ -1770,18 +2344,18 @@ mod tests {
     fn a_second_acceptor_is_written_with_the_line_end_of_the_file() {
         // A file with CRLF gets CRLF for the whole new entry, and no lone LF.
         let crlf = valid_text().replace('\n', "\r\n");
-        let out = add_acceptor(&crlf, "security", "s2");
+        let out = add_acceptor(&crlf, &["security".to_string()], "s2");
         assert_eq!(Record::parse(&out).unwrap().acceptors.len(), 2);
         assert_eq!(out.matches('\n').count(), out.matches("\r\n").count());
         assert!(out.starts_with(&crlf[..crlf.find("[[proof]]").unwrap()]));
         // A file with LF stays with LF.
-        let lf = add_acceptor(&valid_text(), "security", "s2");
+        let lf = add_acceptor(&valid_text(), &["security".to_string()], "s2");
         assert!(!lf.contains('\r'));
         // A file that ends with its last acceptor.
         let only = crlf[..crlf.find("[[proof]]").unwrap()]
             .trim_end()
             .to_string();
-        let out = add_acceptor(&only, "acceptor", "s9");
+        let out = add_acceptor(&only, &["acceptor".to_string()], "s9");
         assert_eq!(out.matches('\n').count(), out.matches("\r\n").count());
         assert_eq!(Record::parse(&out).unwrap().acceptors.len(), 2);
     }
@@ -1801,6 +2375,285 @@ mod tests {
         for bad in ["", "A", "1a", "-a", "a b", "a_b", "é", &"a".repeat(41)] {
             assert!(!valid_role(bad), "{bad}");
         }
+    }
+
+    /// A record of format 1, as the pre-release wrote it.
+    fn old_text() -> String {
+        valid_text()
+            .replace("format = 2", "format = 1")
+            .replace("roles = [\"acceptor\"]", "role = \"acceptor\"")
+            .replace("severity = \"note\"", "severity = \"nit\"")
+    }
+
+    /// D72 item 3: a record of format 1 in a folder has one problem, with the
+    /// words of the design. An archive file of format 1 is read and no rule of
+    /// format 2 applies to it. The reader shows the old severities as the new ones.
+    #[test]
+    fn a_record_of_format_1_is_read_but_not_valid_in_a_folder() {
+        let old = old_text();
+        let r = Record::parse(&old).unwrap();
+        assert_eq!(r.format, 1);
+        assert_eq!(r.acceptors[0].roles, ["acceptor"]);
+        assert_eq!(r.findings[0].severity, "note");
+        let imp = old.replace("severity = \"nit\"", "severity = \"important\"");
+        assert_eq!(Record::parse(&imp).unwrap().findings[0].severity, "blocker");
+        assert_eq!(
+            problems_of(&old),
+            [
+                "format 1 is the format of the pre-release of 0.8.0; delete the record, commit, and accept again"
+            ]
+        );
+        // The message is the only one, also for a record that breaks other rules.
+        let broken = old.replace("brief = \"9c1b7e0d4a113f2a\"", "brief = \"pending\"");
+        assert_eq!(problems_of(&broken).len(), 1);
+        let archive = Expect {
+            archive: true,
+            ..expect(true, true)
+        };
+        assert!(problems(&old, &archive).is_empty());
+        assert!(problems(&broken, &archive).is_empty());
+        // The table `follow-up` and the key `roles` are not keys of format 1.
+        for text in [
+            format!("{old}\n[[follow-up]]\nx = 1\n"),
+            old.replace("role = \"acceptor\"", "roles = [\"acceptor\"]"),
+        ] {
+            assert!(Record::parse(&text).is_err());
+        }
+        // Format 2 has no `role`.
+        let two = valid_text().replace("roles = [\"acceptor\"]", "role = \"acceptor\"");
+        assert!(
+            Record::parse(&two)
+                .unwrap_err()
+                .contains("unknown key `role`")
+        );
+    }
+
+    #[test]
+    fn the_roles_of_an_entry_are_names_sorted_with_no_duplicate() {
+        let roles = |v: &str| edit("roles = [\"acceptor\"]", &format!("roles = {v}"));
+        assert!(problems_of(&roles("[\"db-reviewer\", \"security-reviewer\"]")).is_empty());
+        for (v, word) in [
+            ("[]", "`roles` must list at least one role name"),
+            (
+                "[\"security-reviewer\", \"db-reviewer\"]",
+                "`roles` must be sorted",
+            ),
+            ("[\"a\", \"a\"]", "no duplicate"),
+            ("[\"Db\"]", "`roles` must hold role names"),
+        ] {
+            let p = problems_of(&roles(v));
+            assert!(has(&p, word), "{v}: {p:?}");
+        }
+    }
+
+    #[test]
+    fn a_rejected_result_needs_a_reason_and_a_note_never_gives_it() {
+        let rejected = |t: String| {
+            t.replace(
+                "result = \"accepted\"\nacknowledged",
+                "result = \"rejected\"\nacknowledged",
+            )
+        };
+        // Notes only: no reason.
+        let p = problems_of(&rejected(valid_text()));
+        assert!(has(&p, "no reason exists"), "{p:?}");
+        assert!(has(&p, "a note never gives `rejected`"), "{p:?}");
+        // A blocker is a reason.
+        let blocker = edit("severity = \"note\"", "severity = \"blocker\"");
+        assert!(problems_of(&rejected(blocker.clone())).is_empty());
+        // The 3 other reasons.
+        let base = valid_text();
+        for tail in [
+            "\n[[invariant]]\nid = \"i\"\nanswer = \"violated\"\nreason = \"Broken.\"\n",
+            "\n[[deviation]]\nid = \"d1\"\nkind = \"plan\"\ntext = \"x\"\nverdict = \"rejected\"\n",
+            "\n[[follow-up]]\nbrief = \"9c1b7e0d4a113f2a\"\nsession = \"s9\"\nagent = \"unknown\"\ntree = \"3f2a9c1b7e0d4a11\"\ncloses = [1]\nresult = \"rejected\"\ntext = \"The fix breaks a case.\"\n",
+        ] {
+            let t = rejected(format!("{base}{tail}"));
+            assert!(problems_of(&t).is_empty(), "{tail}: {:?}", problems_of(&t));
+        }
+        // An entry that says `rejected` needs a blocker of its own, or such a reason.
+        let entry_rejected = |t: String| {
+            t.replace(
+                "session = \"s1\"\nagent = \"unknown\"\nresult = \"accepted\"",
+                "session = \"s1\"\nagent = \"unknown\"\nresult = \"rejected\"",
+            )
+        };
+        let p = problems_of(&entry_rejected(rejected(valid_text())));
+        assert!(has(&p, "acceptor 1: `result` is `rejected`"), "{p:?}");
+        assert!(problems_of(&entry_rejected(rejected(blocker))).is_empty());
+        // A rejected follow-up makes `accepted` invalid.
+        let fu = format!(
+            "{base}\n[[follow-up]]\nbrief = \"9c1b7e0d4a113f2a\"\nsession = \"s9\"\nagent = \"unknown\"\ntree = \"3f2a9c1b7e0d4a11\"\ncloses = [1]\nresult = \"rejected\"\ntext = \"x\"\n"
+        );
+        let p = problems_of(&fu);
+        assert!(has(&p, "a follow-up is `rejected`"), "{p:?}");
+        // A blocker with `accepted` is invalid.
+        let p = problems_of(&edit("severity = \"note\"", "severity = \"blocker\""));
+        assert!(has(&p, "a finding is a `blocker`"), "{p:?}");
+    }
+
+    /// The table `[[follow-up]]` is read and its shape is checked. The chain rules
+    /// (the notes that `closes` names, the trees, the diff budget) are a later slice.
+    #[test]
+    fn a_follow_up_is_read_and_checked_for_its_shape_only() {
+        let ok = format!(
+            "{}\n[[follow-up]]\nbrief = \"0b7e2d91c4a5f310\"\nsession = \"s9\"\nagent = \"unknown\"\ntree = \"5d0e7c2a91b3f4e8\"\ncloses = [1]\nresult = \"accepted\"\ntext = \"TIMEOUT is TIMEOUT_MS now.\"\n",
+            valid_text()
+        );
+        assert!(problems_of(&ok).is_empty(), "{:?}", problems_of(&ok));
+        let r = Record::parse(&ok).unwrap();
+        assert_eq!(
+            r.follow_ups,
+            [FollowUp {
+                brief: "0b7e2d91c4a5f310".to_string(),
+                session: "s9".to_string(),
+                agent: "unknown".to_string(),
+                tree: "5d0e7c2a91b3f4e8".to_string(),
+                closes: vec![1],
+                result: "accepted".to_string(),
+                text: "TIMEOUT is TIMEOUT_MS now.".to_string(),
+            }]
+        );
+        let bad = |from: &str, to: &str| ok.replace(from, to);
+        for (text, word) in [
+            (
+                bad("brief = \"0b7e2d91c4a5f310\"", "brief = \"x\""),
+                "follow-up 1: `brief` must be",
+            ),
+            (
+                bad("tree = \"5d0e7c2a91b3f4e8\"", "tree = \"x\""),
+                "follow-up 1: `tree` must be",
+            ),
+            (
+                bad("session = \"s9\"", "session = \"\""),
+                "follow-up 1: `session` and `agent`",
+            ),
+            (
+                bad("result = \"accepted\"\ntext", "result = \"fine\"\ntext"),
+                "follow-up 1: `result` must be",
+            ),
+            (
+                bad("closes = [1]", "closes = [0]"),
+                "follow-up 1: `closes` lists numbers from 1",
+            ),
+            (
+                bad("text = \"TIMEOUT is TIMEOUT_MS now.\"", "text = \" \""),
+                "follow-up 1: `text` is empty",
+            ),
+            (
+                bad("tree = \"5d0e7c2a91b3f4e8\"", "tree = \"pending\""),
+                "follow-up 1: `tree`",
+            ),
+        ] {
+            let p = problems_of(&text);
+            assert!(has(&p, word), "{word}: {p:?}");
+        }
+        // A wrong kind of value, and an unknown key, stop the reader.
+        for (text, word) in [
+            (bad("closes = [1]", "closes = [\"1\"]"), "list of integers"),
+            (
+                bad("closes = [1]", "closes = [1]\nmood = 1"),
+                "unknown key `mood`",
+            ),
+            (bad("tree = \"5d0e7c2a91b3f4e8\"\n", ""), "has no `tree`"),
+        ] {
+            let e = Record::parse(&text).unwrap_err();
+            assert!(e.contains(word), "{word}: {e}");
+        }
+    }
+
+    #[test]
+    fn the_skeleton_of_format_2_has_roles_and_the_new_format() {
+        let sk = skeleton(&Skeleton {
+            slug: "demo",
+            scope: &[],
+            paths: &[],
+            tree: "3f2a9c1b7e0d4a11",
+            roles: &["db-reviewer".to_string(), "security-reviewer".to_string()],
+            session: "s1",
+            proofs: &[],
+            invariants: &[],
+            deviations: &[],
+        });
+        assert!(sk.starts_with("format = 2\n"));
+        assert!(sk.contains("roles = [\"db-reviewer\", \"security-reviewer\"]\n"));
+        assert!(!sk.contains("\nrole = "));
+        let r = Record::parse(&sk).unwrap();
+        assert_eq!(r.acceptors[0].roles, ["db-reviewer", "security-reviewer"]);
+    }
+
+    #[test]
+    fn a_section_text_stops_at_the_next_heading_and_drops_the_blank_ends() {
+        let md = "# T\n\n## Delta\n\n- ADD a#b: x.\n- ADD a#c: y.\n\n## Proof\n\nRun it.\n";
+        assert_eq!(section_text(md, "Delta"), "- ADD a#b: x.\n- ADD a#c: y.");
+        assert_eq!(section_text(md, "Proof"), "Run it.");
+        assert_eq!(section_text(md, "Risks"), "");
+    }
+
+    #[test]
+    fn the_follow_up_brief_hash_covers_the_text_before_the_diff_only() {
+        let notes = [BriefNote {
+            number: 1,
+            path: "src/a.rs",
+            line: Some(3),
+            text: "A name.",
+        }];
+        let make = |diff: &str| {
+            follow_up_brief(&FollowUpBrief {
+                slug: "demo",
+                delta: "- ADD a#b: x.",
+                invariants: &[],
+                deviations: &["d1 (plan): Moved.".to_string()],
+                proof: "Run it.",
+                notes: &notes,
+                from_tree: "3f2a9c1b7e0d4a11",
+                to_tree: "5d0e7c2a91b3f4e8",
+                fix: &["src/a.rs absent absent 100644 abc".to_string()],
+                diff,
+            })
+        };
+        let a = make("+one\n");
+        let b = make("+another text of the diff\n");
+        assert!(a.starts_with("spec-dna-follow-up 2 demo\n"));
+        assert_ne!(a, b);
+        // The diff is not hashed, so the hash is the same.
+        assert_eq!(a.lines().last(), b.lines().last());
+        assert_eq!(follow_up_brief_hash(&a), follow_up_brief_hash(&b));
+        assert!(follow_up_brief_hash(&a).is_some());
+        // The text before the diff is hashed.
+        let c = a.replace("A name.", "Another name.");
+        assert_eq!(follow_up_brief_hash(&c), None);
+        assert!(a.contains("=== notes ===\n1 src/a.rs:3 A name.\n"));
+        assert!(a.contains("=== deviations ===\n- d1 (plan): Moved.\n"));
+        assert!(!a.contains("=== invariants ==="));
+        let t = FOLLOW_UP_TEXT.len();
+        assert!(
+            (500..=1200).contains(&t) && FOLLOW_UP_TEXT.is_ascii(),
+            "{t}"
+        );
+    }
+
+    #[test]
+    fn a_follow_up_is_added_at_the_end_and_the_chain_counts_open_notes() {
+        let text = format!(
+            "{}\n[[finding]]\nacceptor = 1\nseverity = \"note\"\npath = \"src/b.rs\"\ntext = \"Another.\"\n",
+            valid_text()
+        );
+        let out = add_follow_up(&text, "s2", "5d0e7c2a91b3f4e8", &[1, 2]);
+        let r = Record::parse(&out).unwrap();
+        assert_eq!(r.follow_ups.len(), 1);
+        assert_eq!(r.follow_ups[0].closes, [1, 2]);
+        assert_eq!(r.follow_ups[0].brief, "pending");
+        assert_eq!(r.last_tree(), "5d0e7c2a91b3f4e8");
+        assert!(out.starts_with(text.trim_end()));
+        assert_eq!(r.open_notes(0), [1, 2]);
+        assert_eq!(r.open_notes(1), Vec::<usize>::new());
+        let crlf = add_follow_up(&text.replace('\n', "\r\n"), "s2", "5d0e7c2a91b3f4e8", &[1]);
+        assert_eq!(crlf.matches('\n').count(), crlf.matches("\r\n").count());
+        assert_eq!(
+            Record::parse(&valid_text()).unwrap().last_tree(),
+            "3f2a9c1b7e0d4a11"
+        );
     }
 
     #[test]

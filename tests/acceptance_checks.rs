@@ -37,9 +37,18 @@ const INTENT_TEXT: &str = "---\nstatus: accepted\nclass: routine\n---\n# Valve t
 const SPEC_TEXT: &str = "---\nstatus: approved\n---\n# Valve timeout\n\n## Delta\n\n- ADD requirements/valves#sensor-timeout: When a sensor gives no value for 60 seconds, the controller SHALL close the valve of its bed.\n\n## Interfaces\n\nNone.\n\n## Decisions\n\nNone.\n\n## Concerns\n\n- [x] A slow sensor. Resolution: 60 seconds.\n\n## Open questions\n\n- [x] Does the valve reopen? Answer: no.\n";
 const PLAN_TEXT: &str = "---\nstatus: approved\n---\n# Valve timeout\n\n## Files\n\n- `src/valves.py`\n- `tests/test_valves.py`\n\n## Order\n\n- [x] t1: Close the valve. Files: `src/valves.py`. Verify: the test passes.\n\n## Risks\n\n- A slow sensor.\n\n## Proof\n\nThe test covers `requirements/valves#sensor-timeout`.\n";
 
+/// The configuration of a test. The tests of the record mechanics (the checks, the
+/// compare of the brief, the archive file) need a record for each change, so the
+/// fixture sets `acceptance-for = "all"` unless the test sets the key itself. The
+/// rule of the need (D70) has its own tests, in `tests/acceptance_need.rs`.
 fn config_with(profile: &str, change: &str, rules: &str) -> String {
+    let all = if change.contains("acceptance-for") {
+        ""
+    } else {
+        "acceptance-for = \"all\"\n"
+    };
     format!(
-        "profile = \"{profile}\"\n\n[change]\npolicy = \"three-class\"\ngate = \"block\"\n{change}\n[rules]\nSD608 = \"off\"\n{rules}\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.intent]\ntypes = [\"intent\", \"spec\", \"plan\"]\nmoves-to = [\"requirements\"]\nkeep = \"until-finished\"\n"
+        "profile = \"{profile}\"\n\n[change]\npolicy = \"three-class\"\ngate = \"block\"\n{all}{change}\n[rules]\nSD608 = \"off\"\n{rules}\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.intent]\ntypes = [\"intent\", \"spec\", \"plan\"]\nmoves-to = [\"requirements\"]\nkeep = \"until-finished\"\n"
     )
 }
 
@@ -159,6 +168,10 @@ fn record_text(r: &Repo, roles: &[&str], result: &str) -> String {
     t = t.replace("result = \"pending\"", &format!("result = \"{result}\""));
     for n in 1..=roles.len() {
         t.push_str(&ATTEMPT.replace("{n}", &n.to_string()));
+    }
+    // A `rejected` record has a reason (D72 item 2): a blocker.
+    if result == "rejected" {
+        t.push_str("\n[[finding]]\nacceptor = 1\nseverity = \"blocker\"\npath = \"src/valves.py\"\ntext = \"The timeout is not checked.\"\n");
     }
     t
 }
@@ -489,16 +502,16 @@ fn an_ignored_archive_path_stops_finish_before_it_writes_and_names_the_rule() {
 
 #[test]
 fn a_record_that_breaks_a_rule_stops_with_sd928() {
-    // `accepted` with an `important` finding.
+    // `accepted` with a `blocker` finding.
     let r = built();
     let mut t = record_text(&r, &["acceptor"], "accepted");
-    t.push_str("\n[[finding]]\nacceptor = 1\nseverity = \"important\"\npath = \"src/valves.py\"\ntext = \"The timeout has no unit.\"\n");
+    t.push_str("\n[[finding]]\nacceptor = 1\nseverity = \"blocker\"\npath = \"src/valves.py\"\ntext = \"The timeout has no unit.\"\n");
     r.write(RECORD, &t);
     r.commit("record");
     let (code, out, err) = run(&r, &["finish", SLUG]);
     assert_eq!(code, 1, "{out}{err}");
     assert!(has(&out, "SD928"), "{out}");
-    assert!(out.contains("important"), "{out}");
+    assert!(out.contains("blocker"), "{out}");
     // A record of 16,385 bytes.
     let r = built();
     let mut t = record_text(&r, &["acceptor"], "accepted");
@@ -693,12 +706,12 @@ fn a_committed_record_with_the_brief_of_its_commit_gives_no_sd928() {
 
 #[test]
 fn check_reports_sd928_for_a_broken_rule_a_wrong_hash_and_a_pending_hash() {
-    for how in ["important", "hash", "pending"] {
+    for how in ["blocker", "hash", "pending"] {
         let r = base_flow();
         let mut t = record_text(&r, &["acceptor"], "accepted");
         let good = brief_hash(&r, "acceptor");
         match how {
-            "important" => t.push_str("\n[[finding]]\nacceptor = 1\nseverity = \"important\"\npath = \"src/valves.py\"\ntext = \"A defect.\"\n"),
+            "blocker" => t.push_str("\n[[finding]]\nacceptor = 1\nseverity = \"blocker\"\npath = \"src/valves.py\"\ntext = \"A defect.\"\n"),
             "hash" => t = t.replace(&good, "0123456789abcdef"),
             _ => t = t.replace(&format!("brief = \"{good}\""), "brief = \"pending\""),
         }
@@ -795,11 +808,11 @@ fn a_later_commit_that_edits_the_findings_does_not_move_the_adding_commit() {
         &PLAN_TEXT.replace("- A slow sensor.", "- A slow sensor, and a slow valve."),
     );
     r.commit("edit the plan");
-    // A later commit adds a nit to the record. The entry keeps its triple.
+    // A later commit adds a note to the record. The entry keeps its triple.
     let mut t = r.read(RECORD);
-    t.push_str("\n[[finding]]\nacceptor = 1\nseverity = \"nit\"\npath = \"src/valves.py\"\ntext = \"A name.\"\n");
+    t.push_str("\n[[finding]]\nacceptor = 1\nseverity = \"note\"\npath = \"src/valves.py\"\ntext = \"A name.\"\n");
     r.write(RECORD, &t);
-    r.commit("a nit");
+    r.commit("a note");
     let (code, out, err) = run(&r, &["check"]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(!has(&out, "SD928"), "{out}");
@@ -2184,5 +2197,122 @@ fn a_glob_that_the_key_lost_after_the_record_names_shared_paths_and_not_the_plan
     assert!(
         out.contains("neither the plan nor `[change] shared-paths` has"),
         "{out}{err}"
+    );
+}
+
+// Format 2 (design 0.8.0, D72): the severities, the reason of `rejected` and the
+// record of format 1.
+
+/// A record of format 1, as the pre-release wrote it: `role`, and the severities
+/// `important` and `nit`. It has no attempt, so no rule of format 2 would accept it.
+const FORMAT_1_RECORD: &str = "format = 1\nchange = \"old-change\"\nscope = []\npaths = []\ntree = \"0123456789abcdef\"\nresult = \"accepted\"\nacknowledged-by = []\n\n[[acceptor]]\nrole = \"acceptor\"\nbrief = \"0123456789abcdef\"\nsession = \"s1\"\nagent = \"unknown\"\nresult = \"accepted\"\n\n[[finding]]\nacceptor = 1\nseverity = \"nit\"\npath = \"src/other.py\"\ntext = \"A name.\"\n";
+
+#[test]
+fn a_rejected_record_with_notes_only_gives_sd928_and_no_sd930_in_finish_and_check() {
+    // The top `result` is `rejected` only for a reason. A note is no reason
+    // (before: SD930 and a new run).
+    let notes_only = |r: &Repo| {
+        let t = record_text(r, &["acceptor"], "accepted")
+            .replace("result = \"accepted\"", "result = \"rejected\"");
+        r.write(
+            RECORD,
+            &format!("{t}\n[[finding]]\nacceptor = 1\nseverity = \"note\"\npath = \"src/valves.py\"\ntext = \"The constant has no unit.\"\n"),
+        );
+        r.commit("record");
+    };
+    let r = built();
+    notes_only(&r);
+    let (code, out, err) = run(&r, &["finish", SLUG]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(has(&out, "SD928"), "{out}");
+    assert!(!has(&out, "SD930"), "{out}");
+    assert!(out.contains("a note never gives `rejected`"), "{out}");
+    let r = base_flow();
+    notes_only(&r);
+    let (code, out, err) = run(&r, &["check"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(has(&out, "SD928"), "{out}");
+    assert!(out.contains("a note never gives `rejected`"), "{out}");
+    // With a blocker the same record is valid, and `finish` stops with SD930.
+    let r = built();
+    commit_record(&r, &["acceptor"], "rejected");
+    let (code, out, err) = run(&r, &["finish", SLUG]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(has(&out, "SD930") && !has(&out, "SD928"), "{out}");
+}
+
+#[test]
+fn a_record_of_format_1_in_the_folder_gives_sd928_with_the_message_of_the_pre_release() {
+    let msg = "format 1 is the format of the pre-release of 0.8.0; delete the record, commit, and accept again";
+    let old = |r: &Repo| {
+        let t = record_text(r, &["acceptor"], "accepted")
+            .replace("format = 2", "format = 1")
+            .replace("roles = [\"acceptor\"]", "role = \"acceptor\"");
+        r.write(RECORD, &t);
+        r.commit("record");
+    };
+    let r = built();
+    old(&r);
+    let (code, out, err) = run(&r, &["finish", SLUG]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(has(&out, "SD928") && out.contains(msg), "{out}");
+    let r = base_flow();
+    old(&r);
+    let (code, out, err) = run(&r, &["check"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(has(&out, "SD928") && out.contains(msg), "{out}");
+    // `next` leaves the item open.
+    let (_, out, err) = run(&r, &["next", SLUG]);
+    assert!(
+        out.contains("[ ] ") && out.contains("format 1"),
+        "{out}{err}"
+    );
+}
+
+#[test]
+fn an_archive_file_of_format_1_is_read_and_gets_no_rule_of_format_2() {
+    // The 2 archive files of the pre-release have format 1. A diff that adds
+    // such a file gives no SD928: no check validates an archive file with the rules
+    // of format 2.
+    let r = base_flow();
+    commit_record(&r, &["acceptor"], "accepted");
+    r.write(".spec-dna/accepted/old-change.toml", FORMAT_1_RECORD);
+    r.commit("an archive file of the pre-release");
+    let (_, out, err) = run(&r, &["check"]);
+    assert!(
+        !out.lines()
+            .any(|l| l.contains(".spec-dna/accepted/old-change.toml")),
+        "{out}{err}"
+    );
+    // The same text in the folder of a change is not valid.
+    let r = base_flow();
+    r.write(RECORD, &FORMAT_1_RECORD.replace("old-change", SLUG));
+    r.commit("a record of the pre-release");
+    let (code, out, err) = run(&r, &["check"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        has(&out, "SD928") && out.contains("format 1 is the format"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_record_of_format_2_with_a_follow_up_table_reads_and_the_shape_is_checked() {
+    // The table `[[follow-up]]` is read in this slice. A bad shape is SD928, and
+    // the rules of the chain are a later slice.
+    let r = built();
+    let t = record_text(&r, &["acceptor"], "accepted");
+    let fu = |tree: &str| {
+        format!(
+            "{t}\n[[follow-up]]\nbrief = \"0b7e2d91c4a5f310\"\nsession = \"s9\"\nagent = \"unknown\"\ntree = \"{tree}\"\ncloses = [1]\nresult = \"accepted\"\ntext = \"The name has a unit now.\"\n"
+        )
+    };
+    r.write(RECORD, &fu("not-a-hash"));
+    r.commit("record");
+    let (code, out, err) = run(&r, &["finish", SLUG]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        has(&out, "SD928") && out.contains("follow-up 1: `tree` must be"),
+        "{out}"
     );
 }

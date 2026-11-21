@@ -106,6 +106,14 @@
           "maximum": 3,
           "default": 1
         },
+        "acceptance-for": {
+          "description": "The changes that need an acceptance record before `finish`. `none`: no change needs one by this key. `higher-risk`: a change with the class `higher-risk` needs one. `all`: each change that has a plan needs one. Without the key, the profile gives the value: `all` in `strict`, and `higher-risk` in `standard` and `lite`. `init` writes nothing. The value that the check reads is the stricter of the value in the head and the value in the tree of the base. In `lite` the codes of the record are off, so the key has an effect only with a rule that turns on the group `acceptance`.",
+          "enum": [
+            "none",
+            "higher-risk",
+            "all"
+          ]
+        },
         "invariants": {
           "description": "Turns on the invariants of a spec. With `true`, `spec-dna new spec` writes the section `Invariants`, a spec lists there the rules that the change must keep true as `<doc-id>#<key>@<hash>`, SD936 and SD937 check the items, and the acceptance record answers each one (SD938). Without the key, a section `Invariants` is plain text. Default `false`. `init` writes `true` in the profile `strict`.",
           "type": "boolean",

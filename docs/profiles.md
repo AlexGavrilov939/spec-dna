@@ -26,7 +26,7 @@ An error fails `check` when the error is new against the base. A warning never f
 | `proof` | SD618 (a proof debt and no evidence) | off | warning | warning |
 | `proof` | SD619 (a proof marker that is not valid or stale) | off | warning | error |
 | `proof` | SD620 (a requirement is below the level `reliable`) | off | error | error |
-| `acceptance` | SD927 (acceptance missing), SD928 (acceptance invalid), SD929 (acceptance stale), SD930 (acceptance rejected), SD931 (self-accepted), SD933 (acceptor missing), SD935 (record edited) | off | error | error |
+| `acceptance` | SD927 (acceptance missing), SD928 (acceptance invalid), SD929 (acceptance stale), SD930 (acceptance rejected), SD931 (self-accepted), SD933 (acceptor missing), SD935 (record edited), SD941 (acceptance rerun: with `approval = "branch"` only) | off | error | error |
 | `acceptance` | SD938 (record incomplete), SD939 (deviation invalid), SD940 (deviation unresolved) | off | error | error |
 | `acceptance` | SD936 (invariant invalid), SD937 (invariant stale). They run only with `[change] invariants = true`, also when a rule for the group or the code turns them on | off | error | error |
 | `lint` | SD801 to SD805 (BCP 14 keyword, EARS pattern, sentence length, vague terms, passive voice) | off | off | warning |
@@ -91,9 +91,11 @@ In `standard`, a mature corpus that links no tests yet gets one SD608 for each a
 | `[harness] protect-approvals` | not written | not written | `true` |
 | `[evidence] reports` | not written | `[]`, with a comment | `[]`, with a comment |
 | `[evidence] reliable-for` | not written | not written | `# reliable-for = "higher-risk"`, as a comment |
+| `[change] acceptance-for` | not written | not written | not written |
 | `[change] higher-risk-acceptors` | not written | not written | `2` |
 | `[change] invariants` | not written | not written | `true` |
 
+- The profile also sets the default of `[change] acceptance-for` at run time: `all` in `strict`, and `higher-risk` in `standard` and `lite` ([config.md](config.md#the-acceptance-record)). `init` writes nothing, so a change of `profile` moves the default. In `standard`, only a `higher-risk` change needs an acceptance record. In `strict`, each change that has a plan needs one. In `lite` the codes are off, so the key has an effect only with a rule for the group `acceptance`. A key in the file replaces the default.
 - `init` detects no test runner, so it writes `reports = []`. The key turns the test reports on when the project lists the globs of its report files ([config.md](config.md#test-reports)). `--reconfigure` keeps the list.
 - `strict` writes `reliable-for` as a comment under `reports`, because the key needs `reports` ([config.md](config.md#proof-levels-and-the-proof-debt)). An active key with an empty `reports` is an error (exit code 3). `--reconfigure` keeps `reliable-for` and `reliable-runs` when the file sets them.
 - A skill is on by default when `spec-dna skill list` says so. The rule of [ADR 0023](adr/0023-default-skills-from-the-release-table.md) reads the 8 skills of the design (the 7 of D2 and `accept`), the verdict of the skill in the table of the release, and a constant of the release. A skill outside the 8 can be on by default when its verdict is `on`. `full` ignores the verdicts: a person chooses it.
