@@ -1,5 +1,5 @@
 ---
-status: draft
+status: accepted
 class: routine
 ---
 # Build of 0.8.0 part B, slice S6: the agent roles of [owners]
