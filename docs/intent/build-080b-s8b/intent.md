@@ -1,5 +1,5 @@
 ---
-status: draft
+status: accepted
 class: routine
 ---
 # Build of 0.8.0 part B, slice S8b: the roll-up with finish, next, context and the area budget
