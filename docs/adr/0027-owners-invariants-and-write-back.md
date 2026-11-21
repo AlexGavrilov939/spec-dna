@@ -110,3 +110,14 @@ ADR 0001 and ADR 0006 are accepted and locked, so this ADR does not edit them. W
 - ADR 0006, "Delta", the sentence "A `[[id#key@hash]]` reference still ignores its hash (ADR 0001). Only a delta line checks it.": an item of the section `Invariants` checks it too. A delta line, `rests-on` of [ADR 0028](0028-roll-up-and-summaries.md) and an `Invariants` item compare the hash. Other references still ignore it.
 
 ## Amendments
+
+### 2026-11-21
+
+[ADR 0032](0032-acceptance-in-one-pass.md) amends these items of this ADR. [D77 of design 0.8.0](../design/0.8.0.md#d70-to-d79-the-acceptance-in-one-pass) gives the detail.
+
+- "Owners by path", item 1: an entry `@<login>` or an e-mail gives a warning and needs nothing in 0.8.0. It is no exit code 3.
+- "Owners by path", item 3: a role reads the role paths. They add a code path of the diff that no `scope` matches, and the paths since the commit that added the plan for a pull request with only `finish`.
+- "Owners by path", item 4: an acceptor entry has `roles`, so one entry answers each matched role. The builder passes no `--role`.
+- "Owners by path", item 5: a matched role makes a record needed, also for a `routine` change. The table is the union of the head and the base configuration.
+- "Deviations", item 4: `finish` prints the `[[deviation]]` entries of the record.
+- "Consequences", the item on the cost of each matched role: one pass answers each matched role.

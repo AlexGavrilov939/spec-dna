@@ -126,3 +126,7 @@ SD925 (`checkbox-missing`) joins SD923 and SD924 in the row "Checks that this pr
 ### 2026-11-17
 
 See ADR 0018 and ADR 0023.
+
+### 2026-11-21
+
+See ADR 0032.
