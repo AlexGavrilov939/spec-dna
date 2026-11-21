@@ -1,5 +1,5 @@
 ---
-status: draft
+status: accepted
 class: routine
 ---
 # 0.8.0 part B design: acceptance in one pass
