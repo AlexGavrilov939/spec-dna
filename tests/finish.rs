@@ -2154,6 +2154,24 @@ fn s5_without(text: &str, table: &str) -> String {
     out
 }
 
+/// The block of the first entry of a table of the record, with its header.
+fn s5_only(text: &str, table: &str) -> String {
+    let head = format!("[[{table}]]");
+    let mut out = String::new();
+    let mut on = false;
+    for l in text.split_inclusive('\n') {
+        if l.trim() == head {
+            on = true;
+        } else if on && l.trim_start().starts_with("[[") {
+            break;
+        }
+        if on {
+            out.push_str(l);
+        }
+    }
+    out
+}
+
 #[test]
 fn a_declared_invariant_with_no_answer_stops_finish_with_sd938_and_the_named_fix_works() {
     let r = s5_built("standard", "invariants = true\n", "", s5_one_pin, "");
@@ -2288,6 +2306,22 @@ fn a_deviation_that_the_record_lacks_or_copies_with_another_text_stops_with_sd93
 }
 
 #[test]
+fn a_record_with_2_entries_of_one_deviation_id_stops_finish_with_sd928() {
+    let r = s5_built("standard", "", "", |_| String::new(), S5_DEV_PLAN);
+    s5_record(&r, |t| {
+        let block = s5_only(&t, "deviation");
+        format!("{t}\n{block}")
+    });
+    let (code, out, err) = s5_finish(&r, &["--json"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(out.contains("\"code\":\"SD928\""), "{out}");
+    assert!(
+        out.contains("deviation `d1` is the id of more than one"),
+        "{out}"
+    );
+}
+
+#[test]
 fn a_deviation_that_the_builder_adds_after_the_record_gives_sd938() {
     let r = s5_built("standard", "", "", |_| String::new(), S5_DEV_PLAN);
     s5_record(&r, |t| t);
@@ -2335,6 +2369,93 @@ fn finish_prints_the_deviations_after_hours_with_the_verdict_also_with_dry_run_a
             break;
         }
     }
+}
+
+#[test]
+fn finish_prints_the_deviations_of_the_record_not_of_the_plan() {
+    // The record has an entry that no plan item names, and the plan has no other
+    // item: part 5.3 lists the 2 entries of the record, with their verdicts.
+    let r = s5_built("standard", "", "", |_| String::new(), S5_DEV_PLAN);
+    s5_record(&r, |t| {
+        format!(
+            "{t}\n[[deviation]]\nid = \"d9\"\nkind = \"spec\"\ntext = \"The unit of the timeout changed.\"\nverdict = \"accepted\"\n"
+        )
+    });
+    let (code, out, err) = s5_finish(&r, &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let lines: Vec<&str> = out.lines().collect();
+    let at = lines
+        .iter()
+        .position(|l| l.starts_with("Deviations: 2"))
+        .unwrap_or_else(|| panic!("{out}"));
+    assert_eq!(
+        lines[at + 1],
+        "- d1 (plan), accepted: The timeout check moved to `src/sensors.rs`.",
+        "{out}"
+    );
+    assert_eq!(
+        lines[at + 2],
+        "- d9 (spec), accepted: The unit of the timeout changed.",
+        "{out}"
+    );
+    let (code, out, err) = s5_finish(&r, &["--dry-run", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("\"id\":\"d9\",\"kind\":\"spec\",\"text\":\"The unit of the timeout changed.\",\"verdict\":\"accepted\""),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_record_that_does_not_read_with_sd928_off_gives_no_verdict_in_part_5_3() {
+    let r = s5_built(
+        "standard",
+        "",
+        "SD928 = \"off\"\n",
+        |_| String::new(),
+        S5_DEV_PLAN,
+    );
+    s5_record(&r, |t| format!("{t}\nunknown-key = 1\n"));
+    let (code, out, err) = s5_finish(&r, &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.lines().any(|l| l.contains("record did not read")),
+        "{out}"
+    );
+    assert!(
+        out.lines()
+            .any(|l| l == "- d1 (plan): The timeout check moved to `src/sensors.rs`."),
+        "{out}"
+    );
+    let (code, out, err) = s5_finish(&r, &["--dry-run", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("\"verdict\":\"none\",\"record\":\"unread\""),
+        "{out}"
+    );
+    // A record that reads has no such key.
+    let r = s5_built("standard", "", "", |_| String::new(), S5_DEV_PLAN);
+    s5_record(&r, |t| t);
+    let (_, out, _) = s5_finish(&r, &["--dry-run", "--json"]);
+    assert!(!out.contains("unread"), "{out}");
+}
+
+#[test]
+fn part_5_3_prints_the_text_of_an_entry_on_one_line() {
+    let r = s5_built("standard", "", "", |_| String::new(), S5_DEV_PLAN);
+    s5_record(&r, |t| {
+        t.replace(
+            "text = \"The timeout check moved to `src/sensors.rs`.\"",
+            "text = \"\"\"The timeout check\n  moved   to `src/sensors.rs`.\"\"\"",
+        )
+    });
+    let (code, out, err) = s5_finish(&r, &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.lines()
+            .any(|l| l == "- d1 (plan), accepted: The timeout check moved to `src/sensors.rs`."),
+        "{out}"
+    );
 }
 
 #[test]

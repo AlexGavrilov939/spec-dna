@@ -1106,6 +1106,17 @@ pub fn parse_pin(text: &str) -> Result<Pin, String> {
         .unwrap_or(t)
         .trim();
     let form = "write `<doc-id>#<key>@<hash>`, with the hash that `spec-dna show <doc-id>#<key>` prints, or write the one item `none`";
+    let found = match (t.contains("[["), t.contains("]]")) {
+        (true, true) => Some("the brackets `[[` and `]]`"),
+        (true, false) => Some("the bracket `[[`"),
+        (false, true) => Some("the bracket `]]`"),
+        (false, false) => None,
+    };
+    if let Some(found) = found {
+        return Err(format!(
+            "`{t}` has {found}; an item is no link, so write the pin with no brackets; {form}"
+        ));
+    }
     if t.is_empty() || t.contains(char::is_whitespace) {
         return Err(format!("`{}` is not a pin of a rule; {form}", shown(text)));
     }
@@ -1145,6 +1156,8 @@ pub struct InvariantLine {
 
 /// The items of the section `Invariants` of a spec. The one item `none` says
 /// that no rule applies. It stands alone, so `none` with a pin is invalid.
+/// Backticks around `none` do not count. A section with no item gives no line:
+/// [`invariants_heading_line`] finds that case.
 pub fn invariant_lines(spec: &Doc) -> Vec<InvariantLine> {
     let items: Vec<&ListItem> = section_items(spec, ItemSection::Invariants).collect();
     items
@@ -1153,7 +1166,7 @@ pub fn invariant_lines(spec: &Doc) -> Vec<InvariantLine> {
             let text = shown(&item.text);
             let parsed = if item.nested || item.text.lines().any(|l| l.trim().is_empty()) {
                 Err("an item of `Invariants` is one paragraph with no nested list".to_string())
-            } else if is_none_text(&item.text) {
+            } else if is_none_text(&item.text.replace('`', "")) {
                 if items.len() == 1 {
                     Ok(None)
                 } else {
@@ -1172,6 +1185,29 @@ pub fn invariant_lines(spec: &Doc) -> Vec<InvariantLine> {
             }
         })
         .collect()
+}
+
+/// The line of the heading of the section `Invariants` of a spec, if the spec
+/// has the section. The heading is a heading of level 2, as the parser reads
+/// the section.
+/// It is `None` where the parser reads no such section: a heading of level 2
+/// below an `Order` heading of level 1 belongs to `Order`, as the parser keeps it.
+pub fn invariants_heading_line(spec: &Doc) -> Option<u32> {
+    // The same rule as the parser for the level of `Order` (`ItemScan::step`).
+    let mut order: Option<u8> = None;
+    for c in spec.parsed.chunks.iter().filter(|c| c.level > 0) {
+        let found = ItemSection::from_heading(&c.heading);
+        let named = found.filter(|s| !s.is_new());
+        order = match (named, order) {
+            (Some(ItemSection::Order), _) => Some(c.level),
+            (_, Some(o)) if c.level > o => Some(o),
+            _ => None,
+        };
+        if c.level == 2 && found == Some(ItemSection::Invariants) {
+            return order.is_none().then_some(c.line);
+        }
+    }
+    None
 }
 
 /// The pins of the valid items of `Invariants`, in the order of the file. The
@@ -1202,6 +1238,14 @@ pub struct DeviationFix {
     /// True if the text has the label `Delta:` and no valid verb and target
     /// follow it.
     pub delta_bad: bool,
+    /// With `delta_bad`: the label and the 2 words after it, as the text has
+    /// them, for a message.
+    pub delta_found: String,
+    /// True if the label `Follow-up:` has no word after it.
+    pub follow_up_empty: bool,
+    /// The first word that holds a label in another form: in a bracket
+    /// (`(Delta:`), or in another case (`delta:`). It is no label.
+    pub stray: Option<String>,
 }
 
 /// An item of `Deviations` in a valid form.
@@ -1228,9 +1272,20 @@ fn is_deviation_id(id: &str) -> bool {
         && c.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
-/// The label `Delta:` and the label `Follow-up:` of a deviation text.
+/// The label `Delta:` and the label `Follow-up:` of a deviation text. A code
+/// span reads as its text: the backticks do not count.
 fn deviation_fix(text: &str) -> DeviationFix {
-    let words: Vec<&str> = text.split_whitespace().collect();
+    // A code span reads as its text. A span that touches a colon keeps its
+    // words apart from the label: `Delta:`ADD` reads as `Delta: ADD`.
+    let mut plain = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if ch != '`' {
+            plain.push(ch);
+        } else if plain.ends_with(':') {
+            plain.push(' ');
+        }
+    }
+    let words: Vec<&str> = plain.split_whitespace().collect();
     let mut fix = DeviationFix::default();
     for (i, w) in words.iter().enumerate() {
         match *w {
@@ -1249,18 +1304,36 @@ fn deviation_fix(text: &str) -> DeviationFix {
                     });
                 match (verb, target) {
                     (Some(v), Some(t)) => fix.delta = Some((v, t.to_string())),
-                    _ => fix.delta_bad = true,
-                }
-            }
-            "Follow-up:" if fix.follow_up.is_none() => {
-                if let Some(s) = words.get(i + 1) {
-                    let s = s.trim_end_matches(['.', ',', ';']);
-                    if !s.is_empty() {
-                        fix.follow_up = Some(s.to_string());
+                    _ => {
+                        fix.delta_bad = true;
+                        let end = (i + 3).min(words.len());
+                        fix.delta_found = words[i..end].join(" ");
                     }
                 }
             }
-            _ => {}
+            "Follow-up:" if fix.follow_up.is_none() => {
+                let slug = words
+                    .get(i + 1)
+                    .map(|s| s.trim_end_matches(['.', ',', ';']))
+                    .filter(|s| !s.is_empty());
+                match slug {
+                    Some(s) => fix.follow_up = Some(s.to_string()),
+                    None => fix.follow_up_empty = true,
+                }
+            }
+            "Delta:" | "Follow-up:" => {}
+            other => {
+                // A label that has a mark before it or another letter case. A word
+                // that only holds the text (a URL) is no label.
+                let lower = other
+                    .trim_start_matches(['(', '[', '{', '<', '"', '\'', '*', '_'])
+                    .to_ascii_lowercase();
+                if fix.stray.is_none()
+                    && (lower.starts_with("delta:") || lower.starts_with("follow-up:"))
+                {
+                    fix.stray = Some(other.to_string());
+                }
+            }
         }
     }
     fix
@@ -2549,6 +2622,51 @@ mod section_tests {
         assert!(both[0].parsed.is_err());
         assert!(both[1].parsed.is_ok());
         assert!(inv("- Not decided yet").iter().all(|l| l.parsed.is_err()));
+    }
+
+    #[test]
+    fn the_message_for_a_bracket_names_the_brackets_that_the_item_has() {
+        let msg = |t: &str| parse_pin(t).unwrap_err();
+        let both = msg(&format!("[[rules/a#b@{H}]]"));
+        assert!(both.contains("the brackets `[[` and `]]`"), "{both}");
+        let open = msg(&format!("[[rules/a#b@{H}"));
+        assert!(
+            open.contains("the bracket `[[`") && !open.contains("`]]`"),
+            "{open}"
+        );
+        let close = msg(&format!("rules/a#b@{H}]]"));
+        assert!(
+            close.contains("the bracket `]]`") && !close.contains("`[[`"),
+            "{close}"
+        );
+    }
+
+    #[test]
+    fn a_code_span_next_to_a_label_colon_keeps_the_words_apart() {
+        let fix = |t: &str| deviation_fix(t);
+        let f = fix("x. Delta:`ADD requirements/valves#timeout`");
+        assert_eq!(
+            f.delta,
+            Some((Verb::Add, "requirements/valves#timeout".to_string()))
+        );
+        assert!(!f.delta_bad && f.stray.is_none(), "{f:?}");
+        let f = fix("x. `Delta:`ADD requirements/valves#timeout");
+        assert!(f.delta.is_some(), "{f:?}");
+        let f = fix("x. `Follow-up:`later");
+        assert_eq!(f.follow_up.as_deref(), Some("later"));
+    }
+
+    #[test]
+    fn a_word_is_a_stray_label_only_if_it_starts_with_a_label_form() {
+        let fix = |t: &str| deviation_fix(t);
+        assert_eq!(fix("x. see http://x/delta:y here").stray, None);
+        assert_eq!(fix("x. a/follow-up:b").stray, None);
+        assert_eq!(fix("x. (Delta: ADD a#b)").stray.as_deref(), Some("(Delta:"));
+        assert_eq!(fix("x. delta: ADD a#b").stray.as_deref(), Some("delta:"));
+        assert_eq!(
+            fix("x. *Follow-up:* a").stray.as_deref(),
+            Some("*Follow-up:*")
+        );
     }
 
     #[test]

@@ -12,8 +12,8 @@ status: approved
 
 ## Order
 
-- [ ] t1: Fix the 5 notes of D78 with a test for each that fails before the fix. Files: `src/record.rs`, `src/acceptance.rs`, `src/finish.rs`, `src/change.rs`, `src/lifecycle.rs`. Verify: `cargo test` passes, and each new test failed before the change. Hours: 3.
-- [ ] t2: Update the reference pages. Files: `docs/commands.md`, `docs/diagnostics.md`, `docs/guides/change.md`. Verify: `pre-commit run --all-files` passes. Hours: 1.
+- [x] t1: Fix the 5 notes of D78 with a test for each that fails before the fix. Files: `src/record.rs`, `src/acceptance.rs`, `src/finish.rs`, `src/change.rs`, `src/lifecycle.rs`. Verify: `cargo test` passes, and each new test failed before the change. Hours: 3.
+- [x] t2: Update the reference pages. Files: `docs/commands.md`, `docs/diagnostics.md`, `docs/guides/change.md`. Verify: `pre-commit run --all-files` passes. Hours: 1.
 
 ## Risks
 

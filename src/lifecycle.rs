@@ -267,7 +267,9 @@ pub fn skip_early_plans(
 /// and that a commit added when `spec-dna.toml` pinned a version before 0.8.0
 /// ([`crate::acceptance::section_is_read`]): its section keeps the meaning of
 /// 0.7.1. `head` and `new` are the parallel lists of `check`. It runs one lookup
-/// for each such path. With no base, it removes nothing.
+/// for each such path. With no base, it reads the history of `HEAD` for each
+/// path, as it does for a file that the base tree lacks. A repository with no
+/// commit removes nothing.
 pub fn skip_early_sections(
     git: &Git,
     base_rev: Option<&str>,
@@ -1166,10 +1168,12 @@ fn decision_ids(text: &str) -> Vec<&str> {
 /// codes is off without the key). They read the head tree only, so `check`,
 /// `finish` step 5.2 and `next` use this one function.
 ///
-/// - SD936: an item has no valid form, names no document, no requirement or a
+/// - SD936: an item has no valid form (backticks around `none` or a pin do
+///   not count, and `[[...]]` is no form), names no document, no requirement or a
 ///   requirement outside a `rule` document, or names a rule that the delta of the
-///   same spec adds or removes (Q45). A spec in any status gives it, so the
-///   author sees it before the approval.
+///   same spec adds or removes (Q45). The section has text and no list item, or
+///   no text (D78). A spec in any status gives it, so the author sees it before
+///   the approval.
 /// - SD937: the hash of an item is not the hash of the rule now. If the delta of
 ///   the same spec has a `CHANGE` line for the rule, the hash of the item must be
 ///   the hash of that line: the line pins the old text, and after `finish` the
@@ -1188,6 +1192,20 @@ pub fn invariant_diags(config: &Config, c: &Corpus, ch: &Change) -> Vec<Diag> {
             .filter_map(|l| l.parsed.as_ref().ok())
             .find(|d| change::same_target(c, &d.target()) == key)
     };
+    // The section has no list item: a paragraph or no text. Neither declares an
+    // invariant, so the author must write an item, or `- none`.
+    if let Some(line) = change::invariants_heading_line(doc)
+        && change::invariant_lines(doc).is_empty()
+    {
+        out.push(crate::check::diag(
+            doc,
+            line,
+            Code::InvariantInvalid,
+            "Invariants".to_string(),
+            "the section `Invariants` has no list item before the next heading: write each item as a list item, or `- none`"
+                .to_string(),
+        ));
+    }
     for l in change::invariant_lines(doc) {
         let pin = match l.parsed {
             Ok(None) => continue,
@@ -1291,7 +1309,8 @@ pub fn invariant_diags(config: &Config, c: &Corpus, ch: &Change) -> Vec<Diag> {
 ///   and `spec`, or repeats an id.
 /// - SD940: a `spec` item names no line of the delta of the spec and no change
 ///   folder of the tree. The label `Delta: <verb> <doc-id>#<key>` names a line, and
-///   the label `Follow-up: <slug>` names a folder.
+///   the label `Follow-up: <slug>` names a folder. A code span reads as its text.
+///   The message names the form that the item has (D78).
 pub fn deviation_diags(config: &Config, c: &Corpus, ch: &Change) -> Vec<Diag> {
     let mut out = Vec::new();
     let Some(plan) = &ch.plan else { return out };
@@ -1347,10 +1366,18 @@ pub fn deviation_diags(config: &Config, c: &Corpus, ch: &Change) -> Vec<Diag> {
                 }
             )
         } else if d.fix.delta_bad {
-            "`Delta:` is not followed by `<verb> <doc-id>#<key>` with the verb ADD, CHANGE or REMOVE"
-                .to_string()
+            format!(
+                "`{}` is not `Delta: <verb> <doc-id>#<key>` with the verb ADD, CHANGE or REMOVE",
+                d.fix.delta_found
+            )
         } else if let Some(s) = &d.fix.follow_up {
             format!("`Follow-up: {s}` names no change folder of the tree")
+        } else if d.fix.follow_up_empty {
+            "`Follow-up:` has no slug after it".to_string()
+        } else if let Some(w) = &d.fix.stray {
+            format!(
+                "`{w}` is not a label; write `Delta:` or `Follow-up:` as a word of its own, with a capital first letter and no mark before it"
+            )
         } else {
             "it has no `Delta:` and no `Follow-up:`".to_string()
         };

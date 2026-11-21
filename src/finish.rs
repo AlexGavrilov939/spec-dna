@@ -92,10 +92,11 @@ pub struct Plan {
     /// The archive file that step 5.5 adds to `writes`, if the change needed a
     /// record.
     pub archive: Option<String>,
-    /// Step 5.3 (design 0.8.0, D7): the deviations of the plan, for a change that
-    /// needs a record, each with the verdict of the record (`none` if the record
-    /// has no entry for it). `finish` prints them. In 0.8.0 the merge of the pull
-    /// request acknowledges them.
+    /// Step 5.3 (design 0.8.0, D7 and D78): the `[[deviation]]` entries of the
+    /// record, for a change that needs a record, each with its verdict. If no
+    /// record reads, they are the declared items of the plan, with the verdict
+    /// `none`. `finish` prints them. In 0.8.0 the merge of the
+    /// pull request acknowledges them.
     pub deviations: Vec<Deviation>,
 }
 
@@ -114,6 +115,8 @@ pub struct Deviation {
     pub kind: String,
     pub text: String,
     pub verdict: String,
+    /// True if the record did not read, so `verdict` is no answer of the record.
+    pub unread: bool,
 }
 
 /// The hours of the tasks of a plan (design 0.7.0, section 15). Each task that
@@ -549,9 +552,11 @@ pub fn plan(cx: &Ctx) -> Result<Plan, Failure> {
     // Step 5.2: the acceptance record.
     let record = acceptance(cx, ch, &mut out)?;
 
-    // Step 5.3: the deviations. They come from the plan, with the verdict of the
-    // record. A change that needs no record has none (a section of an older plan
-    // is plain text).
+    // Step 5.3: the deviations. They come from the record: the merge
+    // acknowledges the entries that the record holds, so the list must hold each
+    // one. SD938 already stops at a plan item that the record does not answer. A
+    // change that needs no record has none (a section of an older plan is plain
+    // text).
     if let Some(f) = cx
         .acceptance
         .filter(|f| matches!(f.need, crate::acceptance::Need::Yes { .. }))
@@ -559,22 +564,33 @@ pub fn plan(cx: &Ctx) -> Result<Plan, Failure> {
         let rec = record
             .as_deref()
             .and_then(|t| crate::record::Record::parse(t).ok());
-        // The items are the declared ones: the rule of the pin is applied.
-        out.deviations = f
-            .sections
-            .declared
-            .deviations
-            .iter()
-            .map(|(id, kind, text)| Deviation {
-                verdict: rec
-                    .as_ref()
-                    .and_then(|r| r.deviations.iter().find(|e| e.id == *id))
-                    .map_or_else(|| "none".to_string(), |e| e.verdict.clone()),
-                id: id.clone(),
-                kind: kind.clone(),
-                text: text.clone(),
-            })
-            .collect();
+        out.deviations = match rec {
+            Some(r) => r
+                .deviations
+                .iter()
+                .map(|e| Deviation {
+                    id: e.id.clone(),
+                    kind: e.kind.clone(),
+                    text: e.text.clone(),
+                    verdict: e.verdict.clone(),
+                    unread: false,
+                })
+                .collect(),
+            // No record reads (SD928 is off): the declared items, with no verdict.
+            None => f
+                .sections
+                .declared
+                .deviations
+                .iter()
+                .map(|(id, kind, text)| Deviation {
+                    verdict: "none".to_string(),
+                    unread: true,
+                    id: id.clone(),
+                    kind: kind.clone(),
+                    text: text.clone(),
+                })
+                .collect(),
+        };
     }
 
     // Step 5: the evidence, then the check of the whole result.

@@ -503,6 +503,31 @@ pub fn validate(r: &Record, x: &Expect) -> Vec<String> {
             ));
         }
     }
+    // An id answers one item. SD938 reads the first entry of an id, so no check
+    // reads a second entry with that id.
+    let mut seen: Vec<String> = Vec::new();
+    for v in &r.invariants {
+        let key = change::parse_pin(&v.id).map_or_else(|_| v.id.clone(), |p| p.text());
+        if seen.contains(&key) {
+            out.push(format!(
+                "invariant `{}` is the id of more than one `[[invariant]]` entry; keep one entry for each id",
+                v.id
+            ));
+        } else {
+            seen.push(key);
+        }
+    }
+    let mut seen: Vec<&str> = Vec::new();
+    for d in &r.deviations {
+        if seen.contains(&d.id.as_str()) {
+            out.push(format!(
+                "deviation `{}` is the id of more than one `[[deviation]]` entry; keep one entry for each id",
+                d.id
+            ));
+        } else {
+            seen.push(&d.id);
+        }
+    }
     for what in pending_values(r) {
         out.push(format!(
             "{what} has the value `{PENDING}`; write the answer"
@@ -1356,6 +1381,31 @@ mod tests {
         };
         assert!(problems_of(&dev("accepted")).is_empty());
         assert!(has(&problems_of(&dev("later")), "`verdict` must be"));
+    }
+
+    #[test]
+    fn a_repeated_id_of_an_invariant_or_a_deviation_is_a_problem() {
+        let base = valid_text();
+        let dev = "\n[[deviation]]\nid = \"d1\"\nkind = \"plan\"\ntext = \"Moved.\"\nverdict = \"accepted\"\n";
+        let one = format!("{base}{dev}");
+        assert!(problems_of(&one).is_empty());
+        let two = format!("{one}{dev}");
+        let found = problems_of(&two);
+        assert!(
+            has(&found, "deviation `d1`") && has(&found, "more than one `[[deviation]]`"),
+            "{found:?}"
+        );
+        let inv = "\n[[invariant]]\nid = \"rules/x#a@0123456789abcdef\"\nanswer = \"held\"\n";
+        assert!(problems_of(&format!("{base}{inv}")).is_empty());
+        let found = problems_of(&format!("{base}{inv}{inv}"));
+        assert!(
+            has(&found, "invariant `rules/x#a@0123456789abcdef`")
+                && has(&found, "more than one `[[invariant]]`"),
+            "{found:?}"
+        );
+        // Two other ids are no repeat.
+        let other = dev.replace("d1", "d2");
+        assert!(problems_of(&format!("{base}{dev}{other}")).is_empty());
     }
 
     #[test]
