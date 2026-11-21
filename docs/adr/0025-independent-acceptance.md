@@ -134,3 +134,7 @@ ADR 0006, ADR 0012, ADR 0018 and ADR 0023 are accepted and locked, so this ADR d
 - ADR 0023, the 7 skills of D2 of 0.7.0: the set also holds the skill `accept`, in the profiles where the acceptance is on (design 0.8.0, Q19).
 
 ## Amendments
+
+### 2026-11-21
+
+ADR 0032.
