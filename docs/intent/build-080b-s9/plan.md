@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 ---
 # Build of 0.8.0 part B, slice S9: the evals of the review with the record and the cost of one pass: plan
 
