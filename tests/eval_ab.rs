@@ -3044,7 +3044,15 @@ const LITE_REVIEW: &str =
 fn the_target_accept_runs_the_5_evals_of_accept_and_the_target_review_keeps_its_5() {
     let fx = Fx::new(&["brainstorm"], &["review", "accept", "tdd"], 4);
     let ids = |target: &str| -> Vec<String> {
-        let (code, out, err) = fx.run(&[target, "--dry-run", "--json", "--max-total-usd", "100"]);
+        let (code, out, err) = fx.run(&[
+            target,
+            "--harness",
+            "lean",
+            "--dry-run",
+            "--json",
+            "--max-total-usd",
+            "100",
+        ]);
         assert_eq!(code, 0, "{target}: {out}{err}");
         out.split("{\"id\":\"")
             .skip(1)
@@ -3063,7 +3071,14 @@ fn the_target_accept_runs_the_5_evals_of_accept_and_the_target_review_keeps_its_
     assert!(ids("all").iter().all(|id| !id.starts_with("accept-")));
     // A dry run of `accept` prints 5 evals, 40 runs and the estimate: 5 evals,
     // 4 runs, 2 arms, and 1 USD for each run in this fixture.
-    let (code, out, err) = fx.run(&["accept", "--dry-run", "--max-total-usd", "100"]);
+    let (code, out, err) = fx.run(&[
+        "accept",
+        "--harness",
+        "lean",
+        "--dry-run",
+        "--max-total-usd",
+        "100",
+    ]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(
         out.contains(
@@ -3160,16 +3175,6 @@ fn the_arm_without_of_the_target_review_keeps_no_skill_file() {
 }
 
 #[test]
-fn without_harness_the_target_accept_gives_the_arms_the_2_texts_of_review() {
-    let fx = Fx::new(&["brainstorm"], &["accept"], 1);
-    let (code, out, err) = fx.run(&["accept", "--runs", "1", "--max-total-usd", "100", "--json"]);
-    assert_eq!(code, 0, "{out}{err}");
-    let review = skill_path("review");
-    assert!(fx.text(0, &review).contains("acceptance.toml"));
-    assert!(fx.text(1, &review).contains(LITE_REVIEW));
-}
-
-#[test]
 fn the_result_of_the_target_accept_is_a_result_of_the_skill_review_that_eval_records_reads() {
     let fx = Fx::new(&["brainstorm"], &["accept"], 1);
     let (code, out, err) = fx.run(&[
@@ -3199,4 +3204,101 @@ fn the_result_of_the_target_accept_is_a_result_of_the_skill_review_that_eval_rec
         "{out}"
     );
     assert_eq!(out.lines().count(), 10, "5 evals, 1 run, 2 arms: {out}");
+}
+#[test]
+fn the_target_accept_needs_a_harness_arm_that_writes_the_skills() {
+    // Without `--harness`, the copy has the files of the host, and the arms would
+    // not have the same skills (`verify`). The target refuses, before any run.
+    let fx = Fx::new(&["brainstorm"], &["accept"], 1);
+    let sets: [&[&str]; 3] = [&[], &["--harness", "project"], &["--harness", "none"]];
+    for extra in sets {
+        for dry in [false, true] {
+            let mut args = vec!["accept", "--runs", "1", "--max-total-usd", "100"];
+            args.extend_from_slice(extra);
+            if dry {
+                args.push("--dry-run");
+            }
+            let (code, out, err) = fx.run(&args);
+            assert_eq!(code, 2, "{args:?}: {out}{err}");
+            assert!(
+                err.contains("`accept` needs `--harness lean`, `lean-no-advisor` or `full`"),
+                "{err}"
+            );
+            assert!(!fx.path("log").exists(), "the stub ran");
+        }
+    }
+    let (code, out, err) = fx.run(&["accept", "--harness", "full", "--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+#[test]
+fn both_arms_of_the_target_accept_have_the_same_tools_and_no_tool_agent() {
+    // D62, 2026-11-22 item 5: the same list in both arms, and no subagent.
+    let fx = Fx::new(&["brainstorm"], &["accept"], 1);
+    let (code, out, err) = fx.run(&[
+        "accept",
+        "--harness",
+        "lean",
+        "--runs",
+        "1",
+        "--max-total-usd",
+        "100",
+    ]);
+    assert_eq!(code, 0, "{out}{err}");
+    let tools = |n: usize| -> String {
+        let args = fx.args(n);
+        args[args.iter().position(|a| a == "--allowedTools").unwrap() + 1].clone()
+    };
+    assert_eq!(tools(0), tools(1));
+    let joined = tools(0);
+    let list: Vec<&str> = joined.split(',').collect();
+    assert!(
+        !list.contains(&"Agent") && !list.contains(&"Task"),
+        "{list:?}"
+    );
+    let denied = |n: usize| fx.args(n).iter().any(|a| a == "Bash(spec-dna skill:*)");
+    assert!(!denied(0) && denied(1));
+}
+
+#[test]
+fn the_target_accept_needs_python3_with_tomllib_and_stops_before_a_run() {
+    // The checks read the record with `tomllib` (Python 3.11 or later). A
+    // `python3` without it would fail each check, and the paid run would look
+    // like 0 of 40. The command stops with exit code 2 before the first run.
+    let fx = Fx::new(&["brainstorm"], &["accept"], 1);
+    stub_bin(
+        &fx.stubs.dir.join("bin"),
+        "python3",
+        "#!/bin/sh\necho 'ModuleNotFoundError: No module named tomllib' >&2\nexit 1\n",
+    );
+    let (code, out, err) = fx.run(&["accept", "--harness", "lean", "--runs", "1"]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(err.contains("python3") && err.contains("tomllib"), "{err}");
+    assert!(!fx.path("log").exists(), "the stub ran");
+    // The other targets do not need it.
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    stub_bin(&fx.stubs.dir.join("bin"), "python3", "#!/bin/sh\nexit 1\n");
+    let (code, out, err) = fx.run(&["tdd", "--runs", "1", "--max-total-usd", "100"]);
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+#[test]
+fn eval_run_prints_the_version_of_the_pin_that_it_writes_into_the_copies() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    let (code, out, err) = fx.run(&["tdd", "--runs", "1", "--max-total-usd", "100"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        err.contains(&format!(
+            "eval run: pin of the copies: spec-dna = \"{VERSION}\"\n"
+        )),
+        "{err}"
+    );
+    // The line is on the standard error, so `--json` keeps its output.
+    let (code, out, err) = fx.run(&["tdd", "--runs", "1", "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.starts_with('{') && !out.contains("pin of the copies"),
+        "{out}"
+    );
+    assert!(err.contains("pin of the copies"), "{err}");
 }

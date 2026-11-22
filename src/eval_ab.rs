@@ -224,6 +224,45 @@ impl Target {
     }
 }
 
+/// The target `accept` needs a built-in harness arm (design 0.8.0, D62). Without
+/// `--harness`, the copy has the files of the host, and the 2 arms would not have
+/// the same skills (`verify`). The arm `none` writes no skill.
+pub fn check_harness(target: &Target, harness: HarnessArm) -> Result<(), Fatal> {
+    if *target == Target::Accept && matches!(harness, HarnessArm::Project | HarnessArm::None) {
+        return Err(Fatal::Usage(
+            "the target `accept` needs `--harness lean`, `lean-no-advisor` or `full`: without a harness arm the copies have the files of the host, and the 2 arms do not have the same skills"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+/// The checks of the target `accept` read the record with `python3` and its
+/// module `tomllib` (Python 3.11 or later). A `python3` without it fails each
+/// check, so a paid run would look like 0 passes. Exit code 2, before any run.
+fn preflight_tomllib() -> Result<(), Fatal> {
+    let ok = std::process::Command::new("python3")
+        .args(["-c", "import tomllib"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success());
+    if ok {
+        return Ok(());
+    }
+    Err(Fatal::Usage(
+        "the checks of the target `accept` need `python3` with the module `tomllib` (Python 3.11 or later), and `python3 -c 'import tomllib'` fails; install it, then run the command again"
+            .into(),
+    ))
+}
+
+/// One line on the standard error: the pin that the runner writes into the
+/// `spec-dna.toml` of each copy. It is the version of this binary.
+fn announce_pin() {
+    eprintln!("eval run: pin of the copies: spec-dna = \"{VERSION}\"");
+}
+
 pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
     let target = Target::parse(&o.target)?;
     let first = first_wait()?;
@@ -364,6 +403,10 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
         );
     }
 
+    // The target `accept` needs `python3` with `tomllib`: stop before a run.
+    if target == Target::Accept {
+        preflight_tomllib()?;
+    }
     // A bad `--out` must stop the command before the first run spends money.
     make_out_dir(repo, &out_dir)?;
     let claude_code = claude_version()?;
@@ -371,6 +414,7 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
     if !o.json {
         println!("eval run --ab {}: {header}", o.target);
     }
+    announce_pin();
     catch_interrupts();
     let mut ctx = Ctx {
         limits,
@@ -2111,6 +2155,7 @@ pub fn run_arms(repo: &Repo, cfg: &Config, o: &ArmsOpts) -> Result<u8, Fatal> {
     if !o.json {
         println!("eval run --arms {}: {header}", names.join(","));
     }
+    announce_pin();
     catch_interrupts();
     let mut ctx = Ctx {
         limits,

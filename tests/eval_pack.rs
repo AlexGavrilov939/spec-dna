@@ -144,6 +144,9 @@ fn each_file_of_the_pack_is_valid_for_the_runner() {
             "--dry-run",
             "--max-total-usd",
             "1000",
+            // The target `accept` needs a harness arm.
+            "--harness",
+            "lean",
         ]);
         assert_eq!(code, 0, "{skill}: {out}{err}");
     }
@@ -247,7 +250,11 @@ fn a_check_that_runs_spec_dna_check_names_the_codes_that_it_reads() {
     assert!(!packed(&r).is_empty(), "the binary holds no eval");
     for name in packed(&r) {
         let text = r.read(&format!("evals/pack/{name}"));
-        for line in text.lines().filter(|l| l.contains("spec-dna check")) {
+        // A tool of `allowed-tools`, such as `Bash(spec-dna check:*)`, is no check.
+        for line in text
+            .lines()
+            .filter(|l| l.contains("spec-dna check") && !l.contains("Bash("))
+        {
             assert!(line.contains("SD"), "{name}: a check names no code: {line}");
         }
     }
@@ -592,7 +599,9 @@ const ACCEPT: [(&str, &str, &[&str], &str); 5] = [
         "accept-5",
         "parcel-fee",
         &[],
-        "from parcel import parcel_fee_cents\nassert [parcel_fee_cents(w) for w in (19, 20, 21)] == [0, 500, 500]\n",
+        // The control meets each line of the delta: the fee is added to the
+        // shipping, so a strict acceptor has no ground to reject it.
+        "from parcel import parcel_fee_cents, parcel_shipping_cents\nassert [parcel_fee_cents(w) for w in (19, 20, 21)] == [0, 500, 500]\nassert [parcel_shipping_cents(w) for w in (19, 20, 21)] == [300, 800, 800]\n",
     ),
 ];
 
@@ -624,14 +633,47 @@ fn an_accept_eval_is_a_built_change_of_a_higher_risk_intent_with_the_same_task_i
             text.contains(&format!("\"change\": \"evals/pack/changes/{id}\"")),
             "{id}"
         );
-        assert!(text.contains("Bash(spec-dna accept:*)"), "{id}");
+        // The tools of both arms (D62, 2026-11-22 item 5): no tool `Agent`, so
+        // the agent of the eval is the acceptor itself.
+        let tools: Vec<&str> = text
+            .split("\"allowed-tools\": [")
+            .nth(1)
+            .unwrap()
+            .split(']')
+            .next()
+            .unwrap()
+            .split(',')
+            .map(|t| t.trim().trim_matches('"'))
+            .collect();
+        assert_eq!(
+            tools,
+            [
+                "Read",
+                "Grep",
+                "Glob",
+                "Write",
+                "Edit",
+                "Bash(spec-dna accept:*)",
+                "Bash(spec-dna next:*)",
+                "Bash(spec-dna show:*)",
+                "Bash(spec-dna context:*)",
+                "Bash(spec-dna check:*)",
+                "Bash(git status:*)",
+                "Bash(git diff:*)",
+                "Bash(git log:*)",
+                "Bash(git merge-base:*)",
+                "Bash(python3 -m pytest:*)",
+                "Bash(sh test.sh:*)",
+            ],
+            "{id}"
+        );
         assert_eq!(number(&text, "max-budget-usd"), 2.5, "{id}");
         assert_eq!(number(&text, "max-turns"), 40.0, "{id}");
         // The task is the text of D62. It names no step of the skill, and no
         // option of `accept`: the arm with the skill gets the brief from it.
         assert!(
             text.contains(&format!(
-                "\"task\": \"The change `{slug}` is built. Before `spec-dna finish`, check it. Run `spec-dna accept {slug}` for the skeleton of the acceptance record, and fill it in.\""
+                "\"task\": \"The change `{slug}` is built. You did not build it. Before `spec-dna finish`, check it. Run `spec-dna accept {slug}` for the skeleton of the acceptance record, and fill it in.\""
             )),
             "{id}: {text}"
         );

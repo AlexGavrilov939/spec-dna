@@ -556,3 +556,44 @@ fn the_real_pack_runs_in_both_arms_of_ab_accept_and_the_reference_record_passes_
     assert_eq!(passed, 2 * (4 * (1 + 4) + (1 + 2)), "{out}");
     assert_eq!(out.matches("\"claude_exit\":0").count(), 10, "{out}");
 }
+
+/// Design 0.8.0, D62: at the start of the agent, the copy of each eval `accept-<n>`
+/// has the whole change in its commit: the commit lists the plan with its ticked
+/// box and the 2 files of the code, the tree is clean, and `spec-dna accept` does
+/// not refuse. A file of the change that git took for unchanged (the same size and
+/// the same time as the file of the fixture) would give an empty or partial diff
+/// and a refusal that no reference record shows.
+#[test]
+fn the_copy_of_each_accept_eval_has_the_whole_change_in_its_commit_and_a_clean_tree() {
+    let lab = Lab::new();
+    let facts = solutions().join("accept-facts");
+    let slugs = [
+        ("accept-1", "bulk-discount"),
+        ("accept-2", "order-export"),
+        ("accept-3", "partial-refund"),
+        ("accept-4", "item-sync"),
+        ("accept-5", "parcel-fee"),
+    ];
+    for (id, slug) in slugs {
+        let (exit, _) = lab.run(id, &facts);
+        assert_eq!(exit, 0, "{id}");
+        let text = fs::read_to_string(lab.tmp.dir.join(format!("tmp/facts-{slug}")))
+            .unwrap_or_else(|e| panic!("{id}: no facts: {e}"));
+        let fact = |key: &str| -> String {
+            text.lines()
+                .find_map(|l| l.strip_prefix(&format!("{key}=")))
+                .unwrap_or_else(|| panic!("{id}: no {key} in {text}"))
+                .trim()
+                .to_string()
+        };
+        assert_eq!(
+            fact("stat"),
+            "1",
+            "{id}: the plan is not in the commit: {text}"
+        );
+        assert_eq!(fact("files"), "3", "{id}: {text}");
+        assert_eq!(fact("ticked"), "1", "{id}: {text}");
+        assert_eq!(fact("dirty"), "0", "{id}: the tree is not clean: {text}");
+        assert_eq!(fact("accept"), "0", "{id}: `accept` refuses: {text}");
+    }
+}

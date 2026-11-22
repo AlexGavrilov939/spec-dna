@@ -825,6 +825,12 @@ pub fn read_items(bytes: &[u8]) -> Vec<ItemVerdict> {
     let Ok(value) = json::parse(text) else {
         return Vec::new();
     };
+    // The result of `eval run --ab accept` has one item with the name `review`.
+    // It decides no verdict: the verdict of `review` stays the verdict of the
+    // batch of the target `review` (design 0.8.0, D62, 2026-11-22, item 2).
+    if value.get("target").as_str() == Some("accept") {
+        return Vec::new();
+    }
     value
         .get("skills")
         .as_arr()
@@ -1199,6 +1205,40 @@ mod tests {
             .into_iter()
             .map(|i| (i.name, i.verdict))
             .collect()
+    }
+
+    #[test]
+    fn a_result_of_the_target_accept_decides_no_verdict_of_review() {
+        // Design 0.8.0, D62 (2026-11-22, item 2). The result of `--ab accept` has
+        // one item with the name `review`. `eval verdict` and SD507 skip it, so
+        // the verdict of `review` stays the verdict of its own batch.
+        let accept = br#"{"target":"accept","skills":[{"name":"review","verdict":"on","rule":1}]}"#;
+        let review = br#"{"target":"review","skills":[{"name":"review","verdict":"off"}]}"#;
+        assert!(read_items(accept).is_empty());
+        assert_eq!(read_result(review), [("review".to_string(), Verdict::Off)]);
+        // A result file of 0.7.1 has no key `target` for an item that it keeps.
+        let old = br#"{"skills":[{"name":"review","verdict":"off"}]}"#;
+        assert_eq!(read_result(old).len(), 1);
+        // The newest file is the one of `accept`, and the older file decides.
+        let files = vec![
+            (
+                "evals/results/skills-20261101T000000Z.json".to_string(),
+                review.to_vec(),
+            ),
+            (
+                "evals/results/skills-20261122T000000Z.json".to_string(),
+                accept.to_vec(),
+            ),
+        ];
+        let r = resolve("review", &files);
+        assert_eq!(r.verdict, Some(Verdict::Off));
+        assert_eq!(
+            r.source,
+            Source::Project("evals/results/skills-20261101T000000Z.json".to_string())
+        );
+        // With the file of `accept` alone, the row of the release decides.
+        let r = resolve("review", &files[1..]);
+        assert_eq!(r.source, Source::Release);
     }
 
     fn pair(w: bool, o: bool) -> Pair {
@@ -1832,6 +1872,15 @@ mod tests {
         })
     }
 
+    /// True for a record that can decide a row of `RELEASE`. A batch of `--arms`
+    /// has the skill `harness`, and it never enters the table of the skills
+    /// (ADR 0030). A record of an eval `accept-<n>` has the skill `review`, and it
+    /// decides no row: the row `review` keeps its batch of 0.7.1 (design 0.8.0,
+    /// D62, 2026-11-22, item 2).
+    fn decides_a_row(r: &Rec) -> bool {
+        r.skill != "harness" && !r.eval.starts_with("accept-")
+    }
+
     /// Each file of the records: its stem and its records, in the order of
     /// the batches.
     fn load() -> Vec<(String, Vec<Rec>)> {
@@ -1855,7 +1904,7 @@ mod tests {
                     .map(|(i, l)| {
                         read_record(l).unwrap_or_else(|e| panic!("{name}:{}: {e}", i + 1))
                     })
-                    .filter(|r| r.skill != "harness")
+                    .filter(decides_a_row)
                     .collect();
                 Some((stem, recs))
             })
@@ -2038,6 +2087,22 @@ mod tests {
             "RELEASE does not agree with bench/results/evals. Paste this text:\n{}",
             rust_text(&rows)
         );
+    }
+
+    #[test]
+    fn a_record_of_an_accept_eval_decides_no_row_of_the_release() {
+        // Design 0.8.0, D62 (2026-11-22, item 2): the records of the target
+        // `accept` have the skill `review`, and the row `review` keeps its batch
+        // of 0.7.1.
+        let rec = |eval: &str| {
+            read_record(&format!(
+                "{{\"skill\":\"review\",\"eval\":\"{eval}\",\"run\":1,\"arm\":\"with\",\"pass\":true,\"cost\":1.5,\"tokens\":null,\"models\":[\"claude-x\"],\"claude_code\":null}}"
+            ))
+            .unwrap()
+        };
+        assert!(decides_a_row(&rec("review-1")));
+        assert!(!decides_a_row(&rec("accept-1")));
+        assert!(!decides_a_row(&rec("accept-5")));
     }
 
     #[test]

@@ -50,18 +50,27 @@
 
 use super::PackEval;
 
-/// The tools of an `accept` eval. `Bash(spec-dna accept:*)` is in both arms, so
-/// both arms write a record of the same form (D62).
+/// The tools of an `accept` eval, the same list in both arms (D62, amendment of
+/// 2026-11-22, item 5). `Bash(spec-dna accept:*)` is in both arms, so both arms
+/// write a record of the same form. There is no tool `Agent`: neither arm starts
+/// a subagent, and the agent of the eval is the acceptor of a new session.
 const ACCEPT_TOOLS: &[&str] = &[
     "Read",
-    "Edit",
-    "Write",
-    "Glob",
     "Grep",
-    "Bash(git:*)",
-    "Bash(sh:*)",
-    "Bash(python3:*)",
+    "Glob",
+    "Write",
+    "Edit",
     "Bash(spec-dna accept:*)",
+    "Bash(spec-dna next:*)",
+    "Bash(spec-dna show:*)",
+    "Bash(spec-dna context:*)",
+    "Bash(spec-dna check:*)",
+    "Bash(git status:*)",
+    "Bash(git diff:*)",
+    "Bash(git log:*)",
+    "Bash(git merge-base:*)",
+    "Bash(python3 -m pytest:*)",
+    "Bash(sh test.sh:*)",
 ];
 
 /// The oracle: `python3 - <mode> <record> <planted path>...`. The program is
@@ -77,6 +86,8 @@ macro_rules! oracle {
             "/acceptance.toml ",
             $planted,
             r#" <<'PY'
+import os
+import re
 import sys
 import tomllib
 
@@ -91,9 +102,20 @@ found = [f for f in found if isinstance(f, dict)] if isinstance(found, list) els
 
 
 def path_of(f):
-    p = str(f.get("path", ""))
-    head, sep, tail = p.rpartition(":")
-    return head if sep and tail.isdigit() else p
+    # The forms of a path that an agent writes: `./src/a.py`, an absolute path
+    # in the copy, and a suffix `:3`, `:3-4` or `:3:5`.
+    p = re.sub(r":[0-9]+(-[0-9]+)?(:[0-9]+)?$", "", str(f.get("path", "")).strip())
+    if os.path.isabs(p):
+        rel = os.path.relpath(os.path.realpath(p), os.path.realpath("."))
+        if not rel.startswith(".."):
+            p = rel
+    return os.path.normpath(p)
+
+
+def is_blocker(f):
+    # `important` is the word of 0.7.1. The arm without has that text, so the
+    # oracle does not fail it for the word.
+    return str(f.get("severity", "")).lower() in ("blocker", "important")
 
 
 if mode == "read":
@@ -103,7 +125,7 @@ elif mode == "rejected":
 elif mode == "accepted":
     ok = rec.get("result") == "accepted"
 elif mode == "blocker":
-    ok = any(f.get("severity") == "blocker" and path_of(f) in planted for f in found)
+    ok = any(is_blocker(f) and path_of(f) in planted for f in found)
 elif mode == "focused":
     ok = len({path_of(f) for f in found}) <= 3
 else:
@@ -617,7 +639,7 @@ const A5_PLAN: &str = plan!(
     "parcel",
     "parcel",
     "parcel",
-    "Add `parcel_fee_cents(weight_kg)`. It gives the fee in cents.",
+    "Add `parcel_fee_cents(weight_kg)` and `parcel_shipping_cents(weight_kg)`. The first gives the fee in cents, and the second adds it to the shipping.",
     "A fee that starts at the wrong weight.",
     " "
 );
@@ -627,7 +649,7 @@ const A5_PLAN_DONE: &str = plan!(
     "parcel",
     "parcel",
     "parcel",
-    "Add `parcel_fee_cents(weight_kg)`. It gives the fee in cents.",
+    "Add `parcel_fee_cents(weight_kg)` and `parcel_shipping_cents(weight_kg)`. The first gives the fee in cents, and the second adds it to the shipping.",
     "A fee that starts at the wrong weight.",
     "x"
 );
@@ -652,7 +674,9 @@ class ShippingTest(unittest.TestCase):
         self.assertEqual(shipping_cents(), 300)
 "#;
 
-const A5_PARCEL: &str = r#"HEAVY_KG = 20
+const A5_PARCEL: &str = r#"from shipping import shipping_cents
+
+HEAVY_KG = 20
 HEAVY_FEE_CENTS = 500
 
 
@@ -661,23 +685,31 @@ def parcel_fee_cents(weight_kg):
     if weight_kg >= HEAVY_KG:
         return HEAVY_FEE_CENTS
     return 0
+
+
+def parcel_shipping_cents(weight_kg):
+    """The shipping of a parcel with its fee, in cents."""
+    return shipping_cents() + parcel_fee_cents(weight_kg)
 "#;
 
 const A5_TEST_PARCEL: &str = r#"# covers: requirements/shipping#heavy-parcel
 import unittest
 
-from parcel import parcel_fee_cents
+from parcel import parcel_fee_cents, parcel_shipping_cents
 
 
 class ParcelTest(unittest.TestCase):
     def test_a_light_parcel_has_no_fee(self):
         self.assertEqual(parcel_fee_cents(19), 0)
+        self.assertEqual(parcel_shipping_cents(19), 300)
 
     def test_a_parcel_of_20_kg_has_the_fee(self):
         self.assertEqual(parcel_fee_cents(20), 500)
+        self.assertEqual(parcel_shipping_cents(20), 800)
 
     def test_a_heavier_parcel_has_the_fee(self):
         self.assertEqual(parcel_fee_cents(31), 500)
+        self.assertEqual(parcel_shipping_cents(31), 800)
 "#;
 
 static ACCEPT_5_FILES: &[(&str, &str)] = &[
@@ -724,7 +756,7 @@ macro_rules! task {
         concat!(
             "The change `",
             $slug,
-            "` is built. Before `spec-dna finish`, check it. Run `spec-dna accept ",
+            "` is built. You did not build it. Before `spec-dna finish`, check it. Run `spec-dna accept ",
             $slug,
             "` for the skeleton of the acceptance record, and fill it in."
         )

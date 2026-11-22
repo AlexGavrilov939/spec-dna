@@ -16,7 +16,7 @@ result = "rejected"
 @PROOF@
 [[attempt]]
 acceptor = 1
-text = "Ran `sh test.sh`: the tests pass. Called `parcel_fee_cents(19)`, `parcel_fee_cents(20)` and `parcel_fee_cents(31)`: 0, 500 and 500, as the requirement says."
+text = "Ran `sh test.sh`: the tests pass. Called `parcel_shipping_cents(19)`, `parcel_shipping_cents(20)` and `parcel_shipping_cents(31)`: 300, 800 and 800, so the fee of 500 cents is added from 20 kg, as the requirement says."
 outcome = "held"
 
 [[attempt]]

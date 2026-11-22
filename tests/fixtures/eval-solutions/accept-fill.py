@@ -7,9 +7,11 @@ usage: python3 accept-fill.py <template> <record>
 record that an acceptor writes. It has these placeholders, which the script
 takes from the skeleton and from `spec-dna accept <slug> --brief`: @SCOPE@,
 @PATHS@, @TREE@ (the lines of the skeleton), @BRIEF@ (the hash of the last
-line of the brief), and @PROOF@ (the `[[proof]]` entries of the skeleton).
+line of the brief), @PROOF@ (the `[[proof]]` entries of the skeleton), and
+@ROOT@ (the absolute path of the copy).
 """
 
+import os
 import re
 import subprocess
 import sys
@@ -34,6 +36,7 @@ values = {
     "@TREE@": line("tree"),
     "@BRIEF@": brief,
     "@PROOF@": skeleton[skeleton.index("[[proof]]") :].rstrip("\n") + "\n",
+    "@ROOT@": os.getcwd(),
 }
 for key, value in values.items():
     text = text.replace(key, value)

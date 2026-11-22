@@ -3916,7 +3916,7 @@ fn eval(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
             ));
         }
         // The target and `SPEC_DNA_EVAL_BACKOFF` are checked before the pin.
-        eval_ab::Target::parse(&target)?;
+        eval_ab::check_harness(&eval_ab::Target::parse(&target)?, harness)?;
         if cfg.pin != VERSION {
             return Err(pin_mismatch(&cfg));
         }
