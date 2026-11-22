@@ -5443,3 +5443,117 @@ fn import_without_a_project_is_exit_code_3_and_names_init() {
     assert_eq!(code, 3, "{out}{err}");
     assert!(err.contains("run `spec-dna init` first"), "{err}");
 }
+
+// `mv` and the roll-up (design 0.8.0, D54): the preservation check does not count
+// SD641 and SD642, and `mv` names the summaries whose frontier the move changed.
+
+const ROLLUP_REQ_A: &str = "---\nstatus: active\n---\n# Intake\n\n## Requirements\n\n- **fill**: The tank SHALL fill in 10 minutes.\n- **vent**: The tank SHALL vent at 3 bar.\n";
+const ROLLUP_REQ_B: &str = "---\nstatus: active\n---\n# Outlet\n\n## Requirements\n\n- **drain**: The tank SHALL drain in 5 minutes.\n";
+
+/// A project with the areas `a` and `b`, each with a summary that has current
+/// pins, committed.
+fn rollup_project() -> Repo {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        &format!(
+            "spec-dna = \"{VERSION}\"\nprofile = \"standard\"\n\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.summaries]\ntypes = [\"summary\"]\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n"
+        ),
+    );
+    r.write("docs/requirements/a/intake.md", ROLLUP_REQ_A);
+    r.write("docs/requirements/b/outlet.md", ROLLUP_REQ_B);
+    for area in ["a", "b"] {
+        let (code, out, err) = r.run(&["new", "summary", area]);
+        assert_eq!(code, 0, "{out}{err}");
+        let path = format!("docs/summaries/{area}.md");
+        let text = r.read(&path);
+        let end = text.find("\n---\n").unwrap() + 5;
+        r.write(
+            &path,
+            &format!("{}\n# Area {area}\n\nText.\n", &text[..end]),
+        );
+    }
+    r.commit("start");
+    r
+}
+
+#[test]
+fn a_move_to_another_area_is_no_refusal_and_names_the_2_summaries() {
+    let r = rollup_project();
+    let (code, out, err) = r.run(&["mv", "requirements/a/intake", "requirements/b/intake"]);
+    // Before: the new SD641 and SD642 of the move refused it.
+    assert_eq!(code, 0, "{out}{err}");
+    let (_, check, _) = r.run(&["check", "--all"]);
+    assert!(
+        out.contains("roll-up: the move changes the frontier of summaries/a, summaries/b"),
+        "{out}\n{check}"
+    );
+    assert!(out.contains("spec-dna refresh"), "{out}");
+    // The summaries are stale now, and the gate shows it.
+    let (_, check, _) = r.run(&["check", "--all"]);
+    assert!(
+        check.contains("SD641") || check.contains("SD642"),
+        "{check}"
+    );
+    // `--json` has the list.
+    let r = rollup_project();
+    let (code, out, err) = r.run(&[
+        "mv",
+        "requirements/a/intake",
+        "requirements/b/intake",
+        "--json",
+    ]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("\"summaries\":[\"summaries/a\",\"summaries/b\"]"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_move_of_requirements_to_another_area_names_the_2_summaries() {
+    let r = rollup_project();
+    let (code, out, err) = r.run(&["mv", "requirements/a/intake#vent", "requirements/b/outlet"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("roll-up: the move changes the frontier of summaries/a, summaries/b"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_move_inside_one_area_changes_no_pin_result() {
+    let r = rollup_project();
+    let (code, out, err) = r.run(&["mv", "requirements/a/intake", "requirements/a/inlet"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!out.contains("roll-up"), "{out}");
+    let (_, check, _) = r.run(&["check", "--all"]);
+    assert!(
+        !check.contains("SD641") && !check.contains("SD642"),
+        "{check}"
+    );
+}
+
+#[test]
+fn a_project_with_no_summary_sees_no_roll_up_text_in_mv() {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        &format!(
+            "spec-dna = \"{VERSION}\"\nprofile = \"standard\"\n\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n"
+        ),
+    );
+    r.write("docs/requirements/a/intake.md", ROLLUP_REQ_A);
+    r.commit("start");
+    let (code, out, err) = r.run(&[
+        "mv",
+        "requirements/a/intake",
+        "requirements/b/intake",
+        "--json",
+    ]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        !out.contains("summaries") && !out.contains("roll-up"),
+        "{out}"
+    );
+}

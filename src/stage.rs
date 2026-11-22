@@ -87,7 +87,8 @@ pub fn skill(step: Step) -> &'static str {
 }
 
 /// The most items that `next` prints. With the 2 lines before them (the change
-/// and the base), the output has at most 12 lines.
+/// and the base), the output has at most 12 lines. The note of the roll-up
+/// (D54) is one more line after them.
 pub const MAX_ITEMS: usize = 10;
 
 /// The stage of a change.
@@ -1280,6 +1281,10 @@ pub fn next(
         ))
     })?;
     let r = cx.derive(ch);
+    // The note of the roll-up (design 0.8.0, D54). It comes after the notes of
+    // the base, which the text prints as the reason of the missing base.
+    let mut notes = view.notes.clone();
+    notes.extend(rollup_note(cfg, &view.head, ch, r.stage));
     if json {
         let items = r.items.iter().map(|i| {
             let o = Obj::new()
@@ -1299,7 +1304,7 @@ pub fn next(
                 .raw("items", &json::array(items))
                 .raw("next_task", &opt_task_json(r.next_task.as_ref()))
                 .str("next", r.next())
-                .strs("notes", &view.notes)
+                .strs("notes", &notes)
                 .end()
         );
         return Ok(0);
@@ -1327,7 +1332,45 @@ pub fn next(
             item_tail(i)
         );
     }
+    for note in &notes[view.notes.len()..] {
+        println!("note: {note}");
+    }
     Ok(0)
+}
+
+/// The note for the roll-up documents that the delta of a change makes due at
+/// `finish` (design 0.8.0, D54): the summaries, and the `system` or `product`
+/// documents with `rests-on`, whose frontier holds a requirement that a line of
+/// the delta names. It is one note for all of them. It has no done state, asks
+/// for no edit and changes no stage. A change with no delta, a closed change
+/// and a project with no roll-up document have none.
+fn rollup_note(cfg: &Config, head: &Corpus, ch: &Change, stage: Stage) -> Option<String> {
+    if stage == Stage::Closed {
+        return None;
+    }
+    let targets: Vec<String> = ch
+        .delta(head)
+        .iter()
+        .filter_map(|l| l.parsed.as_ref().ok())
+        .map(|d| d.id.clone())
+        .collect();
+    if targets.is_empty() {
+        return None;
+    }
+    let mut ids: Vec<String> = crate::rollup::Rollup::build(cfg, head)
+        .due(&targets)
+        .into_iter()
+        .map(|i| head.docs[i as usize].id.clone())
+        .collect();
+    if ids.is_empty() {
+        return None;
+    }
+    ids.sort();
+    Some(format!(
+        "the delta makes {} due at finish; edit the text of a summary whose meaning changes, and name each other one in `spec-dna finish {} --holds <id>`",
+        ids.join(", "),
+        ch.slug
+    ))
 }
 
 /// The source of the approval of each artifact of a change, in the order

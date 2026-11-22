@@ -343,6 +343,9 @@ pub struct Plan {
     /// For `--reconfigure`: the `[budgets.<type>]` tables. A new budget level
     /// replaces them.
     pub kept_budgets: Vec<String>,
+    /// For `--reconfigure`: the lines of `[budgets.area]` (design 0.8.0, D55).
+    /// A budget level does not replace them.
+    pub kept_area: Vec<String>,
     /// The agent harness (ADR 0004).
     pub harness: Harness,
     /// The harness of the current configuration, for `--reconfigure`.
@@ -974,6 +977,7 @@ fn defaults(facts: &Facts, root: Option<&str>) -> Plan {
         kept: Vec::new(),
         rules: Vec::new(),
         kept_budgets: Vec::new(),
+        kept_area: Vec::new(),
         harness: Harness::new(Level::Lean),
         harness_old: None,
         harness_notes: Vec::new(),
@@ -1159,10 +1163,17 @@ fn current(cfg: &Config, text: &str, facts: &Facts) -> Plan {
     if let Some(toml::Value::Table(t)) = table.get("budgets") {
         for (ty, v) in t {
             if let toml::Value::Table(b) = v {
-                p.kept_budgets.push(format!("\n[budgets.{ty}]"));
+                // The table of the area is no table of a type: a new budget
+                // level does not replace it.
+                let lines = if ty == "area" {
+                    &mut p.kept_area
+                } else {
+                    &mut p.kept_budgets
+                };
+                lines.push(format!("\n[budgets.{ty}]"));
                 for k in ["soft", "hard"] {
                     if let Some(v) = b.get(k) {
-                        p.kept_budgets.push(format!("{k} = {}", toml_value(v)));
+                        lines.push(format!("{k} = {}", toml_value(v)));
                     }
                 }
             }
@@ -1474,6 +1485,18 @@ pub fn render(plan: &Plan) -> String {
                 ));
             }
         }
+    }
+    // The budget of an area (design 0.8.0, D55). A new project gets the table
+    // in `standard` and `strict`. `--reconfigure` writes none: it keeps the
+    // table of the file at each budget level, and adds none to a file that has
+    // none.
+    if plan.kind != "reconfigure"
+        && let Some((soft, hard)) = area_budget_of(plan.profile, plan.budgets)
+    {
+        out.push_str(&format!("\n[budgets.area]\nsoft = {soft}\nhard = {hard}\n"));
+    }
+    for k in &plan.kept_area {
+        out.push_str(&format!("{k}\n"));
     }
     if plan.budgets == Budgets::Default {
         for k in &plan.kept_budgets {
@@ -2169,6 +2192,24 @@ fn parse_style(w: &str) -> Result<Style, String> {
         "both" => Style::Both,
         _ => return Err(format!("link style `{w}`: use covers, verified-by or both")),
     })
+}
+
+/// The `[budgets.area]` that `init` writes for a new project (design 0.8.0,
+/// D55): `standard` 60,000 and 120,000 characters, `strict` 40,000 and 80,000,
+/// and none in `lite`. The budget level scales it as it scales the budget of a
+/// type: relaxed by 2, tight by 0.5, and `off` writes none.
+fn area_budget_of(profile: Profile, level: Budgets) -> Option<(u32, u32)> {
+    let (soft, hard) = match profile {
+        Profile::Lite => return None,
+        Profile::Standard => (60_000, 120_000),
+        Profile::Strict => (40_000, 80_000),
+    };
+    match level {
+        Budgets::Off => None,
+        Budgets::Relaxed => Some((soft * 2, hard * 2)),
+        Budgets::Tight => Some((soft / 2, hard / 2)),
+        Budgets::Default => Some((soft, hard)),
+    }
 }
 
 fn parse_budgets(w: &str) -> Result<Budgets, String> {

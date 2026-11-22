@@ -1539,6 +1539,10 @@ struct DocPaths {
     generated: HashSet<String>,
     /// A document that has requirements.
     requirements: HashSet<String>,
+    /// A roll-up document (design 0.8.0, D54): a summary, and a `system` or
+    /// `product` document with `rests-on`. The head decides. A roll-up document
+    /// that the diff deletes counts through the base.
+    rollup: HashSet<String>,
 }
 
 struct Ctx<'a> {
@@ -1600,6 +1604,16 @@ impl<'a> Ctx<'a> {
                     if requirement_doc(d) {
                         out.requirements.insert(d.path.clone());
                     }
+                }
+            }
+            for d in &self.head.docs {
+                if crate::rollup::is_rollup(d) {
+                    out.rollup.insert(d.path.clone());
+                }
+            }
+            for d in &self.base.docs {
+                if crate::rollup::is_rollup(d) && !self.head.by_path.contains_key(&d.path) {
+                    out.rollup.insert(d.path.clone());
                 }
             }
             out
@@ -2328,8 +2342,9 @@ fn approval_missing(
 /// SD913: a path of the diff is outside the scope of each change of the diff.
 /// It runs only if a change of the diff has a plan: before a plan exists, a
 /// change has no `Files`, so it has no scope to check against. It does not
-/// report a file that SD503 does not count (`init::is_tool_file`), or a path
-/// that a glob of `[change] shared-paths` matches.
+/// report a file that SD503 does not count (`init::is_tool_file`), a roll-up
+/// document (D54: `execute` must not stop and ask for a summary that is due),
+/// or a path that a glob of `[change] shared-paths` matches.
 fn outside_plan(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
     if !changes.iter().any(|c| c.has_plan(ctx)) {
         return Vec::new();
@@ -2344,6 +2359,7 @@ fn outside_plan(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
             || ctx.paths().generated.contains(p)
             || crate::init::is_tool_file(ctx.config, p)
             || crate::acceptance::is_archive_path(p)
+            || ctx.paths().rollup.contains(p)
             || shared_path(ctx.config, p)
             || changes.iter().any(|c| c.covers(ctx, p))
         {

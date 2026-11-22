@@ -138,7 +138,7 @@ Reference: [guides/change.md](guides/change.md), [config.md](config.md#the-table
 
 ## Context
 
-`spec-dna context <file>` gives an agent the sections that apply to the files that it will change. Examples are the requirements that cite the file, the rules whose `applies-to` matches the path, and the summaries of the linked decisions. `context` gives the layers by level, so it gives the stable layers first.
+`spec-dna context <file>` gives an agent the sections that apply to the files that it will change. Examples are the requirements that cite the file, the rules whose `applies-to` matches the path, and the summaries of the linked decisions. `context` gives the layers by level, so it gives the stable layers first. If the project has summaries, `context` gives the summaries of the areas that the request reaches before the layers. They use at most a quarter of the budget.
 
 The unit is a section, with its id and its hash. Thus an agent can cite what it read. A spec names the hash of each requirement that it changes, and `finish` stops if that text changed after the author read it (SD914). A budget limits the size of the output. `context` lists a section that does not fit with its id, hash and size. It counts the documents of `on-request` layers in one line and does not give them.
 

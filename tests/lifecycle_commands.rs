@@ -2117,3 +2117,90 @@ fn the_next_task_is_the_first_open_task_of_an_agent() {
     let (_, out, _) = r.run(&["status"]);
     assert!(out.contains("next-task t1 [person]"), "{out}");
 }
+
+// The roll-up (design 0.8.0, D54): the note of `next` for the due summaries
+
+const ROLLUP_LAYER: &str = "\n[layers.summaries]\ntypes = [\"summary\"]\n";
+
+/// A build-stage change with the delta `ADD_FLUSH`. With `summary`, the area
+/// `valves` has a summary and the area `sensors` has one too.
+fn rollup_start(summary: bool) -> Repo {
+    let r = Repo::with_config(&config(
+        "policy = \"three-class\"\ngate = \"block\"\n",
+        ROLLUP_LAYER,
+    ));
+    r.write(CLOSING, VALVES);
+    r.write("docs/requirements/sensors/timeouts.md", SENSORS);
+    r.write("src/dose.py", "x = 1\n");
+    if summary {
+        for area in ["valves", "sensors"] {
+            let (code, out, err) = r.run(&["new", "summary", area]);
+            assert_eq!(code, 0, "{out}{err}");
+        }
+    }
+    r.commit("base");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    stage(
+        &r,
+        &[
+            (INTENT, &intent("accepted", "higher-risk", "")),
+            (SPEC, &spec("approved", ADD_FLUSH)),
+            (
+                PLAN,
+                &plan("approved", &["src/dose.py"], "- [ ] t1: Edit the code."),
+            ),
+        ],
+    );
+    r
+}
+
+#[test]
+fn next_prints_one_note_for_the_summaries_that_the_delta_makes_due() {
+    let r = rollup_start(true);
+    let text = next_text(&r);
+    // Only the area of the delta is due, not `sensors`.
+    assert!(
+        text.lines().any(|l| l
+            == "note: the delta makes summaries/valves due at finish; edit the text of a summary whose meaning changes, and name each other one in `spec-dna finish dose --holds <id>`"),
+        "{text}"
+    );
+    assert_eq!(text.matches("note: ").count(), 1, "{text}");
+    assert!(
+        next_json(&r).contains("\"notes\":[\"the delta makes summaries/valves due at finish;"),
+        "{}",
+        next_json(&r)
+    );
+    // The note asks for no edit and changes no item and no stage: a project
+    // with no summary has the same items.
+    let twin = rollup_start(false);
+    let plain = next_text(&twin);
+    assert!(!plain.contains("note: "), "{plain}");
+    assert_eq!(items(&text)[..items(&plain).len()], items(&plain)[..]);
+    assert_eq!(stage_of(&r), stage_of(&twin));
+    assert!(next_json(&twin).contains("\"notes\":[]"));
+    // `status` has no note.
+    let (_, out, _) = r.run(&["status"]);
+    assert!(!out.contains("due at finish"), "{out}");
+}
+
+#[test]
+fn the_note_follows_the_base_note_and_does_not_replace_it() {
+    // With no base, the text of `next` gives the first note as the reason.
+    let r = Repo::with_config(&config("policy = \"three-class\"\n", ROLLUP_LAYER));
+    r.write(CLOSING, VALVES);
+    let (code, out, err) = r.run(&["new", "summary", "valves"]);
+    assert_eq!(code, 0, "{out}{err}");
+    r.write(INTENT, &intent("accepted", "higher-risk", ""));
+    r.write(SPEC, &spec("approved", ADD_FLUSH));
+    r.write(PLAN, &plan("approved", &["src/dose.py"], "- [ ] t1: Edit."));
+    r.commit("all");
+    let (code, out, err) = r.run(&["next", "dose"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let base_line = out.lines().find(|l| l.starts_with("base none: ")).unwrap();
+    assert!(!base_line.contains("due at finish"), "{base_line}");
+    assert!(
+        out.contains("note: the delta makes summaries/valves due"),
+        "{out}"
+    );
+}

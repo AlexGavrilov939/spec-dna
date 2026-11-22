@@ -25,6 +25,10 @@ pub struct Config {
     pub roots: Vec<Root>,
     /// Soft and hard budgets in characters, per document type.
     pub budgets: [(u32, u32); DocType::COUNT],
+    /// `[budgets.area]`: the soft and the hard budget of an area, in characters
+    /// (design 0.8.0, D55). `None`: no table, so no area has a budget. A field
+    /// that is 0 turns that budget off.
+    pub area_budget: Option<(u32, u32)>,
     pub max_words: u32,
     pub context_budget: u32,
     pub repos: Vec<(String, String)>,
@@ -1116,6 +1120,11 @@ impl Profile {
             // pins. A stale summary is an error in `standard` and `strict`.
             "SD641" | "SD642" | "SD643" | "SD644" => (None, Some(E), Some(E)),
             "SD645" => (None, Some(W), Some(W)),
+            // The budget of an area (design 0.8.0, D55). Off in `lite`. The
+            // codes run only with the key `[budgets.area]`.
+            "SD705" => (None, Some(W), Some(E)),
+            "SD706" => (None, Some(E), Some(E)),
+            "SD707" => (None, Some(W), Some(E)),
             _ => return Some(code.severity()),
         };
         match self {
@@ -1131,10 +1140,11 @@ impl Profile {
 pub type Rules = Vec<(String, Option<Severity>)>;
 
 /// The rule groups. A rule with a group name sets every code of the group.
-pub const GROUPS: [(&str, &[&str]); 12] = [
+pub const GROUPS: [(&str, &[&str]); 13] = [
     ("references", &["SD101", "SD102", "SD104", "SD106"]),
     ("ids", &["SD201", "SD202", "SD203", "SD204"]),
     ("budgets", &["SD701", "SD702", "SD703", "SD704"]),
+    ("area-budget", &["SD705", "SD706", "SD707"]),
     ("drift", &["SD606", "SD607"]),
     ("evidence", &["SD103", "SD105", "SD608"]),
     ("reports", &["SD613", "SD614", "SD615", "SD616", "SD617"]),
@@ -1538,6 +1548,7 @@ impl Config {
         set_namespaces(&mut roots);
         let mut budgets = DEFAULT_BUDGETS;
         let mut growth = DEFAULT_GROWTH;
+        let mut area_budget = None;
         if let Some(v) = t.take("budgets") {
             let tbl = v.as_table().ok_or("`budgets` must be a table")?;
             let mut b = Fields::new(tbl, "budgets.");
@@ -1546,6 +1557,19 @@ impl Config {
                 if DocType::from_name(name).is_none() && DocType::from_old_name(name).is_some() {
                     return Err(unknown_type(&format!("`budgets.{name}`"), name));
                 }
+            }
+            // The area has its own budget (D55): a missing field is 0, which
+            // turns that budget off. No table, no area budget.
+            if let Some(v) = b.take("area") {
+                let tbl = v.as_table().ok_or("`budgets.area` must be a table")?;
+                let mut f = Fields::new(tbl, "budgets.area.");
+                let soft = f.opt_u32("soft")?.unwrap_or(0);
+                let hard = f.opt_u32("hard")?.unwrap_or(0);
+                if hard > 0 && hard < soft {
+                    return Err("`budgets.area`: `hard` is below `soft`".to_string());
+                }
+                f.done()?;
+                area_budget = Some((soft, hard));
             }
             for ty in DocType::ALL {
                 if let Some(v) = b.take(ty.name()) {
@@ -1803,6 +1827,7 @@ impl Config {
             exclude,
             roots,
             budgets,
+            area_budget,
             max_words,
             context_budget,
             repos,
@@ -4338,6 +4363,92 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             DEFAULT_BUDGETS[DocType::Summary as usize],
             DEFAULT_BUDGETS[DocType::Rule as usize]
         );
+    }
+
+    #[test]
+    fn the_area_budget_codes_have_their_profile_rows_and_their_own_group() {
+        use Severity::{Error as E, Warning as W};
+        type Sev = Option<Severity>;
+        // Design 0.8.0, D55: code, lite, standard, strict. Off in `lite`.
+        let rows: [(Code, &str, Sev, Sev, Sev); 3] = [
+            (Code::AreaBudgetSoft, "SD705", None, Some(W), Some(E)),
+            (Code::AreaBudgetHard, "SD706", None, Some(E), Some(E)),
+            (Code::AreaBudgetHardKept, "SD707", None, Some(W), Some(E)),
+        ];
+        for (code, name, lite, standard, strict) in rows {
+            assert_eq!(code.code(), name);
+            // The default of a code is a warning (P6).
+            assert_eq!(code.severity(), Severity::Warning, "{name}");
+            for (profile, want) in [("lite", lite), ("standard", standard), ("strict", strict)] {
+                let c = with(&format!("profile = \"{profile}\""), "").unwrap();
+                assert_eq!(c.severity(code, Some(0)), want, "{name} {profile}");
+            }
+            let groups: Vec<&str> = GROUPS
+                .iter()
+                .filter(|g| g.1.contains(&name))
+                .map(|g| g.0)
+                .collect();
+            assert_eq!(groups, ["area-budget"], "{name}");
+            // The group sets the code, and a rule for the code wins.
+            let c = with("profile = \"lite\"\n[rules]\narea-budget = \"error\"", "").unwrap();
+            assert_eq!(c.severity(code, Some(0)), Some(E), "{name}");
+            let c = with(
+                "profile = \"standard\"\n[rules]\narea-budget = \"off\"\n",
+                "",
+            )
+            .unwrap();
+            assert_eq!(c.severity(code, Some(0)), None, "{name}");
+            let c = with(
+                &format!(
+                    "profile = \"standard\"\n[rules]\narea-budget = \"off\"\n{name} = \"warning\"\n"
+                ),
+                "",
+            )
+            .unwrap();
+            assert_eq!(c.severity(code, Some(0)), Some(W), "{name}");
+            // The group `budgets` of 0.7.1 does not change the codes, and
+            // the group `area-budget` does not change the codes of `budgets`.
+            let c = with("profile = \"standard\"\n[rules]\nbudgets = \"off\"\n", "").unwrap();
+            assert_eq!(c.severity(code, Some(0)), standard, "{name}");
+        }
+        let c = with(
+            "profile = \"standard\"\n[rules]\narea-budget = \"off\"\n",
+            "",
+        )
+        .unwrap();
+        assert_eq!(c.severity(Code::BudgetHard, Some(0)), Some(E));
+    }
+
+    #[test]
+    fn the_table_budgets_area_is_read_and_checked() {
+        // No table: no area budget (P5).
+        assert_eq!(with("", "").unwrap().area_budget, None);
+        assert_eq!(
+            with("[budgets.requirements]\nsoft = 1\nhard = 2\n", "")
+                .unwrap()
+                .area_budget,
+            None
+        );
+        let area = |keys: &str| with(&format!("[budgets.area]\n{keys}"), "");
+        assert_eq!(
+            area("soft = 60000\nhard = 120000\n").unwrap().area_budget,
+            Some((60_000, 120_000))
+        );
+        // A missing field is 0: that budget is off. An empty table has none.
+        assert_eq!(area("hard = 300\n").unwrap().area_budget, Some((0, 300)));
+        assert_eq!(area("soft = 300\n").unwrap().area_budget, Some((300, 0)));
+        assert_eq!(area("").unwrap().area_budget, Some((0, 0)));
+        // The table does not touch the budget of a type.
+        let c = area("hard = 300\n").unwrap();
+        assert_eq!(c.budgets, DEFAULT_BUDGETS);
+        let e = area("soft = 300\nhard = 200\n").unwrap_err();
+        assert!(e.contains("`budgets.area`") && e.contains("below"), "{e}");
+        let e = area("hard = \"big\"\n").unwrap_err();
+        assert!(e.contains("budgets.area.hard"), "{e}");
+        let e = area("limit = 5\n").unwrap_err();
+        assert!(e.contains("budgets.area.limit"), "{e}");
+        let e = with("[budgets]\narea = 5\n", "").unwrap_err();
+        assert!(e.contains("`budgets.area` must be a table"), "{e}");
     }
 
     #[test]

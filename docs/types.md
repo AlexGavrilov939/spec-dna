@@ -21,7 +21,7 @@ This page gives the 16 document types of spec-dna. It lists the purpose, the sta
 | `intent` | The request for one change | draft, accepted, closed | `Intent`, `Problem` or `Summary` | 6,000, 12,000 | counted only (`on-request` layer) |
 | `spec` | The delta that one change makes to the requirements | draft, approved | `Delta` | 10,000, 20,000 | counted only (`on-request` layer) |
 | `plan` | The files and the order of one change | draft, approved | `Files` | none | counted only (`on-request` layer) |
-| `summary` | The short text of one area of the requirements, with the pins of the documents below it | none | none | 3,000, 6,000 | when a target names it |
+| `summary` | The short text of one area of the requirements, with the pins of the documents below it | none | none | 3,000, 6,000 | in the tier `summary`, for the areas that the request reaches ([context](commands.md#context)) |
 
 A root can change the required sections (`required-sections`) and the budgets (`[budgets.<type>]`). [config.md](config.md) gives the keys.
 

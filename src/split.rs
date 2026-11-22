@@ -18,7 +18,9 @@
 //!   key at its new id).
 //! - The locked text of every accepted decision is the same (a link
 //!   destination is not locked text).
-//! - No error diagnostic is new.
+//! - No error diagnostic is new. SD641 and SD642 do not count (design 0.8.0,
+//!   D54): a move can change what a summary must pin. The move writes no pin,
+//!   and `mv` names the summaries whose frontier it changed.
 //!
 //! If a check fails, `mv` changes no file and exits with code 1.
 
@@ -45,6 +47,10 @@ pub(crate) fn item_span(text: &str, start: usize, end: usize) -> (usize, usize) 
     (a, b)
 }
 
+/// The counts of the preservation check: requirement hashes compared, ids
+/// that resolve and accepted decisions compared.
+type Counts = (usize, usize, usize);
+
 /// The result of a split.
 pub struct Split {
     pub to: String,
@@ -68,7 +74,9 @@ pub struct Split {
     pub files: Vec<String>,
     /// Requirement hashes compared, ids that resolve, accepted decisions
     /// compared.
-    pub preserved: (usize, usize, usize),
+    pub preserved: Counts,
+    /// The roll-up documents whose pins the move makes stale (D54).
+    pub summaries: Vec<String>,
 }
 
 /// Options of a split.
@@ -460,7 +468,7 @@ pub fn run(
         }
     }
 
-    let preserved = preserve(
+    let (preserved, summaries) = preserve(
         config,
         c,
         &changed,
@@ -502,6 +510,7 @@ pub fn run(
         supersede_candidates,
         files,
         preserved,
+        summaries,
     })
 }
 
@@ -1188,7 +1197,7 @@ fn preserve(
     to_id: &str,
     new_ids: &HashSet<String>,
     section_aliases: &[String],
-) -> Result<(usize, usize, usize), String> {
+) -> Result<(Counts, Vec<String>), String> {
     let created: Vec<String> = created.map(|p| vec![p.to_string()]).unwrap_or_default();
     let n = rebuilt(config, c, changed, &created);
 
@@ -1259,7 +1268,84 @@ fn preserve(
         decisions += 1;
     }
     new_errors(config, c, &n)?;
-    Ok((after.len(), ids, decisions))
+    Ok(((after.len(), ids, decisions), rollup_effect(config, c, &n)))
+}
+
+/// `rollup_effect` of the move of a whole document from `from` to `to`.
+/// `texts` has the new text of each file that the move writes, by its new path.
+pub(crate) fn rollup_after_move(
+    config: &Config,
+    c: &Corpus,
+    from: &str,
+    to: &str,
+    texts: &HashMap<String, String>,
+) -> Vec<String> {
+    if !c.docs.iter().any(crate::rollup::is_rollup) {
+        return Vec::new();
+    }
+    let name = |p: &str| {
+        if p == from {
+            to.to_string()
+        } else {
+            p.to_string()
+        }
+    };
+    let docs = c
+        .docs
+        .iter()
+        .map(|d| {
+            let path = name(&d.path);
+            let parsed = match texts.get(&path) {
+                Some(t) => Arc::new(parse(t)),
+                None => d.parsed.clone(),
+            };
+            (path, parsed)
+        })
+        .collect();
+    let files = c.files.iter().map(|f| name(f)).collect();
+    rollup_effect(config, c, &Corpus::build(config, files, docs))
+}
+
+/// The roll-up documents of `after` that a change makes stale (design 0.8.0,
+/// D54): each one that has a stale pin or a missing pin (the shared rule
+/// `rollup::Finding::is_stale`), or no area any more (the move emptied the
+/// folder of its area), that the same document of `before` did not have. A moved document keeps its old id as an alias, so the pins still
+/// resolve. A move inside one area changes no result, and a move to another
+/// area makes the summary of each area stale. The ids are sorted. A tree with
+/// no roll-up document gives none.
+pub fn rollup_effect(config: &Config, before: &Corpus, after: &Corpus) -> Vec<String> {
+    use crate::rollup::{Kind, Rollup, is_rollup};
+    if !after.docs.iter().any(is_rollup) {
+        return Vec::new();
+    }
+    // A move never writes a pin, so SD643 is no effect of it.
+    let stale_of = |r: &Rollup, i: u32| -> HashSet<(u8, String)> {
+        r.findings(i)
+            .into_iter()
+            .filter(|f| f.kind != Kind::Invalid)
+            .map(|f| (f.kind as u8, f.target))
+            .collect()
+    };
+    let (rb, ra) = (Rollup::build(config, before), Rollup::build(config, after));
+    let mut out: Vec<String> = Vec::new();
+    for (i, d) in after.docs.iter().enumerate() {
+        if !is_rollup(d) {
+            continue;
+        }
+        let now = stale_of(&ra, i as u32);
+        if now.is_empty() {
+            continue;
+        }
+        let was = crate::check::head_to_base(before, d)
+            .and_then(|b| before.by_path.get(&b.path).copied())
+            .map(|b| stale_of(&rb, b))
+            .unwrap_or_default();
+        if !now.is_subset(&was) {
+            out.push(d.id.clone());
+        }
+    }
+    out.sort();
+    out
 }
 
 /// The corpus after a change: `changed` holds the new texts, and `created`
@@ -1332,6 +1418,11 @@ pub(crate) fn new_error_diags(
             .into_iter()
             .filter(|d| d.severity == Severity::Error)
             .filter(|d| only.is_none_or(|codes| codes.contains(&d.code)))
+            // A move changes the frontier of the summaries (design 0.8.0, D54):
+            // `mv` names them, and `check` reports them after the move.
+            .filter(|d| {
+                only.is_some() || !matches!(d.code, Code::SummaryStale | Code::SummaryIncomplete)
+            })
             .collect()
     };
     let mut seen: HashMap<(Code, String), usize> = HashMap::new();

@@ -254,7 +254,9 @@ section of HEAD keeps its old id as an alias, and the companion rows of the
 moved requirements move with them. Each moved section leaves its heading
 with a one-line pointer. A decision keeps its locked text: only its amendment
 and history sections move, into a research document. A preservation
-check runs first; if it fails, nothing changes.",
+check runs first; if it fails, nothing changes. It does not count SD641 and
+SD642: the command writes no pin, and it names the summaries whose frontier
+the move changed.",
     ),
     (
         "refresh",
@@ -291,7 +293,7 @@ reports a stale index (SD610).",
     ),
     (
         "finish",
-        "finish <slug> [--dry-run] [--base <rev>]",
+        "finish <slug> [--holds <id>]... [--dry-run] [--base <rev>]",
         "Finishes the change <slug>: it applies the delta of its spec to the
 requirements, checks the evidence of each requirement that it adds or
 changes, and deletes the folder of the change. It stops at the first failed
@@ -317,8 +319,13 @@ acceptance record, it prints the line `Deviations: <n>` and one line for each
 `[[deviation]]` entry of the record, with its verdict (--json: the list
 `deviations`); with approval = base, the merge of the pull request acknowledges
 them, and with approval = branch, an entry of acknowledged-by does. It is the only command that
-deletes documents. Exit codes: 1 a stop, 3 pin, base or configuration, 4
-write error, 5 no folder.",
+deletes documents. The roll-up runs after the evidence and never stops: a
+summary (or a system or product document with rests-on) that the delta makes
+due and that is stale in the result gets its pins if the change edited its
+text, or if --holds <id> names it (one id for each use; the claim that the
+text still holds, which check shows as SD645); else finish leaves it and prints
+it as stale. Exit codes: 1 a stop, 2 usage (also a --holds id that is no due
+roll-up document), 3 pin, base or configuration, 4 write error, 5 no folder.",
     ),
     (
         "approve",
@@ -393,7 +400,7 @@ closes it. A routine change whose plan has
 one Files item that starts with none needs no changed file: the build stage
 ends when each task is closed. Each line has the name of the skill for its step: brainstorm, specify, clarify, write-plan, execute, tdd, review,
 verify or finish. The names are fixed, and `spec-dna skill show <name>`
-prints the text of a skill. The output has at most 12 lines. The base is the merge base of --base (default:
+prints the text of a skill. The output has at most 12 lines, and the note of the roll-up is one more. The base is the merge base of --base (default:
 origin/HEAD, then [change] base) and HEAD. Without a base, the stage stops at
 build, and the output has a note. With the policy none, it says that the change process is
 off. Exit codes: 2 usage, 3 base or configuration, 4 git, 5 no folder.",
@@ -671,8 +678,10 @@ struct Args {
     roles: Vec<String>,
     /// `--session <id>` of `accept` (D3).
     session: Option<String>,
-    /// `--holds` of `refresh` (D53).
+    /// `--holds` of `refresh` (D53). It takes no value there.
     holds: bool,
+    /// `--holds <id>` of `finish` (D54). It can come more than once.
+    hold_ids: Vec<String>,
 }
 
 /// The options of `layer add`.
@@ -766,6 +775,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         roles: Vec::new(),
         session: None,
         holds: false,
+        hold_ids: Vec::new(),
     };
     let mut it = raw.into_iter();
     while let Some(arg) = it.next() {
@@ -789,6 +799,11 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--reports" => a.reports = true,
             "--brief" => a.brief = true,
             "--follow-up" => a.follow_up = true,
+            // `refresh` takes the flag, and `finish` takes one id for each use.
+            "--holds" if a.command == "finish" => {
+                let v = value("--holds")?;
+                a.hold_ids.push(v);
+            }
             "--holds" => a.holds = true,
             "--role" => {
                 let v = value("--role")?;
@@ -998,7 +1013,9 @@ fn run(a: Args) -> Result<u8, Fatal> {
         }
     }
     if a.holds && a.command != "refresh" {
-        return Err(Fatal::Usage("--holds is an option of `refresh`".into()));
+        return Err(Fatal::Usage(
+            "--holds is an option of `refresh` and `finish`".into(),
+        ));
     }
     if a.skip_open && a.command != "import" {
         return Err(Fatal::Usage("--skip-open is an option of `import`".into()));
@@ -1689,6 +1706,24 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             .new
             .extend(std::iter::repeat_n(true, report.diags.len()));
         outcome.head.append(&mut report.diags);
+        // SD645 does not report a roll-up document whose text a change that this
+        // diff finished edited: the new pins are the work of `finish` (D52).
+        if outcome
+            .head
+            .iter()
+            .any(|d| d.code == diag::Code::SummaryRepinned)
+        {
+            let edited = finish::finished_edits(repo, &cfg, head, life, rev, !a.no_cache)?;
+            let keep: Vec<bool> = outcome
+                .head
+                .iter()
+                .map(|d| !(d.code == diag::Code::SummaryRepinned && edited.contains(&d.doc)))
+                .collect();
+            let mut at = keep.iter();
+            outcome.head.retain(|_| *at.next().unwrap_or(&true));
+            let mut at = keep.iter();
+            outcome.new.retain(|_| *at.next().unwrap_or(&true));
+        }
     }
     // SD911 is a state code: it reports the tree, so it is never new. It needs
     // a real merge base, and it is silent with the tip fallback.
@@ -4232,6 +4267,29 @@ fn finish(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         None => None,
     };
     let accept_on = acceptance::need_on(&cfg, &repo.git, base_rev.as_deref()).map_err(Fatal::Io)?;
+    // The roll-up compares with the tree before the commit that added the plan
+    // (design 0.8.0, D54). A project with no roll-up document reads no such tree.
+    let pre_plan = if head.docs.iter().any(rollup::is_rollup) {
+        let plan = change::collect(&head)
+            .into_iter()
+            .find(|c| c.dir == folder)
+            .and_then(|c| c.plan);
+        let rev = plan.and_then(|p| {
+            let path = &head.docs[p.doc as usize].path;
+            let in_base = base.as_ref().is_some_and(|b| b.by_path.contains_key(path));
+            finish::pre_plan_rev(&repo.git, path, base_rev.as_deref(), in_base)
+        });
+        match rev {
+            Some(rev) => {
+                let snap = Snapshot::at(repo, &rev)?;
+                let mut loaded = repo::load(repo, &cfg, &[&snap], !a.no_cache, false)?;
+                Some(loaded.corpora.remove(0))
+            }
+            None => None,
+        }
+    } else {
+        None
+    };
     let cx = finish::Ctx {
         config: &cfg,
         head: &head,
@@ -4245,6 +4303,8 @@ fn finish(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         reports: reads.as_ref(),
         acceptance: facts.as_ref(),
         accept_on,
+        holds: &a.hold_ids,
+        pre_plan: pre_plan.as_ref(),
     };
     let plan = match finish::plan(&cx) {
         Ok(p) => p,
@@ -4256,6 +4316,7 @@ fn finish(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             )));
         }
         Err(finish::Failure::Io(m)) => return Err(Fatal::Io(m)),
+        Err(finish::Failure::Usage(m)) => return Err(Fatal::Usage(m)),
     };
     // `finish` stages each file that it writes. An edit of the author in such a
     // file, not committed, would go into the same stage.
@@ -4331,6 +4392,31 @@ fn report_finish(slug: &str, folder: &str, a: &Args, plan: &finish::Plan, pin: &
                 &Obj::new().num("runs", n).num("rejected", r).end(),
             );
         }
+        // A project with no roll-up document sees no new key.
+        if let Some(rl) = &plan.rollup {
+            let ids = |v: &[String]| {
+                json::array(v.iter().map(|id| {
+                    let mut s = String::new();
+                    json::string(&mut s, id);
+                    s
+                }))
+            };
+            o = o.raw(
+                "rollup",
+                &Obj::new()
+                    .raw("repinned", &ids(&rl.repinned))
+                    .raw("held", &ids(&rl.held))
+                    .raw(
+                        "stale",
+                        &json::array(
+                            rl.stale
+                                .iter()
+                                .map(|s| Obj::new().str("id", &s.id).strs("pins", &s.pins).end()),
+                        ),
+                    )
+                    .end(),
+            );
+        }
         println!(
             "{}",
             o.raw("hours", &plan.hours.json())
@@ -4366,6 +4452,26 @@ fn report_finish(slug: &str, folder: &str, a: &Args, plan: &finish::Plan, pin: &
     }
     for note in &plan.notes {
         eprintln!("note: {note}");
+    }
+    // The roll-up (design 0.8.0, D54): the documents that the delta made due.
+    if let Some(rl) = &plan.rollup {
+        let (re, held) = if a.dry_run {
+            ("would re-pin", "would hold")
+        } else {
+            ("re-pinned", "held")
+        };
+        for id in &rl.repinned {
+            println!("roll-up: {re} {id} (the change edited its text)");
+        }
+        for id in &rl.held {
+            println!("roll-up: {held} {id} (--holds)");
+        }
+        for s in &rl.stale {
+            println!(
+                "roll-up: stale {0} ({1}); edit it and run spec-dna refresh {0}, or run spec-dna refresh {0} --holds",
+                s.id, s.detail
+            );
+        }
     }
     // `finish` makes no commit, so the person or the agent that commits writes
     // the line in the message.
@@ -4456,6 +4562,10 @@ fn report_move(m: &mv::Moved, json: bool) {
         }
         if m.kind == "document" {
             o = o.opt_str("alias_dropped", m.alias_dropped.as_deref());
+        }
+        // A project with no summary, or a move that changes no pin, adds no key.
+        if !m.summaries.is_empty() {
+            o = o.strs("summaries", &m.summaries);
         }
         if let Some(s) = &m.split {
             let (hashes, ids, decisions) = s.preserved;
@@ -4578,6 +4688,13 @@ fn report_move(m: &mv::Moved, json: bool) {
         println!(
             "left a stub at {st} (`moved-to: {}`) for tools that read the old path; it has no id and no budget",
             m.to
+        );
+    }
+    // The roll-up (design 0.8.0, D54): the move wrote no pin.
+    if !m.summaries.is_empty() {
+        println!(
+            "roll-up: the move changes the frontier of {}; the move wrote no pin. Read each one, edit its text if its meaning changes, then run `spec-dna refresh <id>` (or `spec-dna refresh <id> --holds` if the text still holds); `spec-dna check` shows what each one needs",
+            m.summaries.join(", ")
         );
     }
 }

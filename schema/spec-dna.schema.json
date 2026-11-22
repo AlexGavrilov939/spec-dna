@@ -364,6 +364,21 @@
         "summary": {
           "$ref": "#/$defs/budget"
         },
+        "area": {
+          "description": "The soft and hard budget of an area, in Unicode characters of body text (design 0.8.0, D55). An area is a folder under the folder of the layer `requirements`. Its size is the sum of its documents, and a summary of a sub-area counts in place of the documents of the sub-area. `soft` gives SD705. `hard` gives SD706 and SD707. A field of 0, or an absent field, means no budget of that kind. With no table, no area has a budget. A `hard` below `soft` is a configuration error, unless `hard` is 0.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "soft": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "hard": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
         "growth": {
           "description": "The number of characters that a document over its hard budget in the base can grow in one change. Growth up to this number gives a warning (SD703), not an error (SD702). Default 4000.",
           "type": "integer",
@@ -1006,10 +1021,10 @@
       ]
     },
     "rules": {
-      "description": "Severity overrides. Each key is a rule group (references, ids, budgets, drift, evidence, reports, proof, acceptance, rollup, lint, layers, changes) or a diagnostic code such as `SD702`. A code rule has priority over a group rule. See docs/profiles.md.",
+      "description": "Severity overrides. Each key is a rule group (references, ids, budgets, area-budget, drift, evidence, reports, proof, acceptance, rollup, lint, layers, changes) or a diagnostic code such as `SD702`. A code rule has priority over a group rule. See docs/profiles.md.",
       "type": "object",
       "propertyNames": {
-        "pattern": "^(references|ids|budgets|drift|evidence|reports|proof|acceptance|rollup|lint|layers|changes|SD[0-9]{3})$"
+        "pattern": "^(references|ids|budgets|area-budget|drift|evidence|reports|proof|acceptance|rollup|lint|layers|changes|SD[0-9]{3})$"
       },
       "additionalProperties": {
         "$ref": "#/$defs/severity"

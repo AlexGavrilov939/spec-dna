@@ -18,6 +18,8 @@ An error fails `check` when the error is new against the base. A warning never f
 | `ids` | SD201, SD202, SD203, SD204 | warning | error | error |
 | `budgets` | SD702 (a new document over the hard budget, a document that was under it in the base, or a document over it that grew) | warning | error | error |
 | `budgets` | SD701 (over the soft budget), SD703 (over the soft budget and grew), SD704 (over the hard budget, no growth) | warning | warning | error |
+| `area-budget` | SD705 (an area over its soft budget), SD707 (an area over its hard budget in the base) | off | warning | error |
+| `area-budget` | SD706 (a new area over the hard budget, or one that was under it in the base, or one that grew by more than `growth`) | off | error | error |
 | `drift` | SD606, SD607 | off | warning | error |
 | `evidence` | SD103 (a `verified-by` path is not in the git tree), SD105 (a `covers:` tag names no requirement) | warning | error | error |
 | `evidence` | SD608 (an active requirement has no evidence) | off | warning | error |
@@ -45,6 +47,10 @@ The group `reports` is new in 0.8.0. Its codes run only with `[evidence] reports
 The group `proof` is new in 0.8.0. SD618 and SD619 run on a marker `<!-- proof-owed: <reason> -->`. The marker is an act of the author on one requirement, as `verified-by` is, so no key turns it on. In `standard` its codes are warnings, so a marker never stops a change there. SD620 runs only with `[evidence] reports` and `[evidence] reliable-for` ([config.md](config.md#proof-levels-and-the-proof-debt)). The codes are off in `lite`. A rule for the group `evidence` or `reports` does not change them. A rule for the group `proof`, or for one code, turns them on in `lite` too.
 
 The group `rollup` is new in 0.8.0. It needs no key, and it has no effect on a tree with no `summary` document and no `system` or `product` document with `rests-on`: `upgrade` gives a project of 0.7.1 no new diagnostic. The codes are off in `lite`, because each new mechanism of 0.8.0 is off there. In `standard` and `strict`, a stale summary is an error: an error fails `check` only when it is new against the base, so a stale summary of the base does not stop a later change. A rule for the group `rollup`, or for one code, turns the codes on in `lite` too. A rule for the group `budgets` does not change them. The default severity of each code is a warning, and the table sets the rest.
+
+The group `area-budget` is new in 0.8.0. Its codes run only with the table `[budgets.area]` ([config.md](config.md#area-budget)). With no table, they give nothing. `upgrade` writes no table, so a project of 0.7.1 gets no new diagnostic. `init` writes the table for a new project of `standard` and `strict`.
+
+The codes of `area-budget` are off in `lite`. A rule for the group `area-budget`, or for one code, turns them on there, but only where the project has the table. A rule for the group `budgets` does not change them.
 
 The group `acceptance` is new in 0.8.0. It needs no key: `finish` needs an acceptance record for a change that has a plan and that `[change] acceptance-for` selects, in `standard` and `strict`. The codes are off in `lite`. With `[change] policy = "none"` they are off in each profile, and no rule enables them. A rule for the group `changes` does not change them. A rule for the group `acceptance`, or for one code, turns them on in `lite` too. The command `spec-dna accept` runs in each profile: the codes decide only whether `finish` and `check` need a record ([accept](commands.md#accept)). A plan that a commit added on the base at a pin before 0.8.0 needs no record. A project that runs `upgrade` gets no new error for the plans that it has. A plan that the branch adds needs one ([the rule](diagnostics.md#the-acceptance-record-sd927-to-sd935)).
 
@@ -98,7 +104,9 @@ In `standard`, a mature corpus that links no tests yet gets one SD608 for each a
 | `[change] acceptance-for` | not written | not written | not written |
 | `[change] higher-risk-acceptors` | not written | not written | `2` |
 | `[change] invariants` | not written | not written | `true` |
+| `[budgets.area]` | not written | `soft = 60000`, `hard = 120000` | `soft = 40000`, `hard = 80000` |
 
+- `[budgets.area]` scales with the budget level of question 9. The level `relaxed` doubles the 2 values, the level `tight` halves them, and the level `off` writes no table. This applies to a new project only. `--reconfigure` keeps the table of the file at each budget level, and writes none for a file that has none ([config.md](config.md#area-budget)).
 - The profile also sets the default of `[change] acceptance-for` at run time: `all` in `strict`, and `higher-risk` in `standard` and `lite` ([config.md](config.md#the-acceptance-record)). `init` writes nothing, so a change of `profile` moves the default. In `standard`, only a `higher-risk` change needs an acceptance record. In `strict`, each change that has a plan needs one. In `lite` the codes are off, so the key has an effect only with a rule for the group `acceptance`. A key in the file replaces the default.
 - `init` detects no test runner, so it writes `reports = []`. The key turns the test reports on when the project lists the globs of its report files ([config.md](config.md#test-reports)). `--reconfigure` keeps the list.
 - `strict` writes `reliable-for` as a comment under `reports`, because the key needs `reports` ([config.md](config.md#proof-levels-and-the-proof-debt)). An active key with an empty `reports` is an error (exit code 3). `--reconfigure` keeps `reliable-for` and `reliable-runs` when the file sets them.

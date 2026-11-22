@@ -1469,6 +1469,233 @@ fn hard_budget(config: &Config, base: Option<&Corpus>, head: &Corpus) -> Vec<(Di
     out
 }
 
+/// The size of one area (design 0.8.0, D55).
+struct AreaSize {
+    /// The folders of the area under the folder of the layer `requirements`.
+    /// The root area has none.
+    area: Vec<String>,
+    /// The sum of the body characters.
+    chars: u64,
+    /// The root of the first document of the area.
+    root: usize,
+    /// The summary of the area, if it has one: the finding is on it.
+    summary: Option<u32>,
+}
+
+/// The folders of a path, without the file name.
+fn path_folders(rel: &str) -> Vec<String> {
+    let mut parts: Vec<&str> = rel.split('/').collect();
+    parts.pop();
+    parts.into_iter().map(str::to_string).collect()
+}
+
+/// The size of each area that has a document (D55). An area is a folder of any
+/// depth under the folder of the layer `requirements`, and that folder is the
+/// root area. Its size is the sum of the body characters of the documents of
+/// the layer under it that are not inactive. A stub, a generated index and a
+/// document with no valid type do not count. For each sub-area that has a
+/// summary, the sum counts the summary in place of the documents of the
+/// sub-area: only the highest summary of a branch counts. The own summary of
+/// an area is no part of its size. The areas come in the order of their
+/// folders.
+fn area_sizes(config: &Config, c: &Corpus) -> Vec<AreaSize> {
+    let Some(layer) = config.layers.layer_of_type(DocType::Requirements) else {
+        return Vec::new();
+    };
+    let dir = config.layers.layers()[layer].dir();
+    // A document of the layer that is not under the folder is in the root area.
+    let area_of = |d: &Doc| -> Vec<String> {
+        let rel = rel_in_root(config, d);
+        dir.and_then(|dir| rel.strip_prefix(dir)?.strip_prefix('/'))
+            .map_or_else(Vec::new, path_folders)
+    };
+    // The documents: the area, the characters, the root.
+    let mut docs: Vec<(Vec<String>, u64, usize)> = Vec::new();
+    // The summaries of an area that has a folder: the document, the area, the
+    // characters.
+    let mut summaries: Vec<(u32, Vec<String>, u64)> = Vec::new();
+    for (i, d) in c.docs.iter().enumerate() {
+        if d.is_inactive() || d.is_exempt_from_budgets() {
+            continue;
+        }
+        let chars = u64::from(d.parsed.body_chars);
+        if d.ty == DocType::Summary {
+            if let Some(a) = crate::rollup::summary_area(config, d)
+                && crate::rollup::area_exists(config, c, &a)
+            {
+                summaries.push((i as u32, a, chars));
+            }
+        } else if doc_layer(config, d) == Some(layer) {
+            docs.push((area_of(d), chars, d.root));
+        }
+    }
+    let mut candidates: Vec<&[String]> = docs
+        .iter()
+        .flat_map(|(a, _, _)| (0..=a.len()).map(|n| &a[..n]))
+        .collect();
+    candidates.sort();
+    candidates.dedup();
+    let mut out = Vec::new();
+    for area in candidates {
+        // The summaries of the sub-areas that stand for their documents: the
+        // highest one of each branch.
+        let below: Vec<&(u32, Vec<String>, u64)> = summaries
+            .iter()
+            .filter(|(_, b, _)| b.len() > area.len() && b.starts_with(area))
+            .collect();
+        let top: Vec<&&(u32, Vec<String>, u64)> = below
+            .iter()
+            .filter(|(_, b, _)| {
+                !below
+                    .iter()
+                    .any(|(_, x, _)| x.len() < b.len() && b.starts_with(x))
+            })
+            .collect();
+        let mut chars: u64 = top.iter().map(|s| s.2).sum();
+        let mut root = None;
+        for (a, n, r) in &docs {
+            if a.starts_with(area) && !top.iter().any(|s| a.starts_with(&s.1)) {
+                chars += n;
+                root.get_or_insert(*r);
+            }
+        }
+        let Some(root) = root.or_else(|| top.first().map(|s| c.docs[s.0 as usize].root)) else {
+            continue;
+        };
+        out.push(AreaSize {
+            area: area.to_vec(),
+            chars,
+            root,
+            summary: summaries
+                .iter()
+                .find(|(_, a, _)| a == area)
+                .map(|(i, _, _)| *i),
+        });
+    }
+    out
+}
+
+/// The budget of an area against the base (design 0.8.0, D55). It mirrors
+/// SD701 to SD704, and it counts an area as `area_sizes` does, with the
+/// configuration of the head for both trees. An area of the head is the area of
+/// the base that has the same folders, so a folder that moved is a new area.
+///
+/// An area over the hard budget is SD706 in one of these cases: it is new, it
+/// was under the budget in the base, or it grew by more than `[budgets]
+/// growth` characters. An area over it in the base that grew by at most that
+/// allowance is SD707, and it is new. An area that did not grow is SD707, and
+/// it is not new. An area over the soft budget and not over the hard budget is
+/// SD705, and it is new if it was not over the soft budget in the base. A
+/// table with no `[budgets.area]` gives nothing, and a field that is 0 turns
+/// its budget off. The finding is on the summary of the area, or on its folder
+/// if it has none. The severity is the one of the root of the area. Returns each
+/// diagnostic with its "new" flag.
+fn area_budget(config: &Config, base: Option<&Corpus>, head: &Corpus) -> Vec<(Diag, bool)> {
+    let Some((soft, hard)) = config.area_budget else {
+        return Vec::new();
+    };
+    if soft == 0 && hard == 0 {
+        return Vec::new();
+    }
+    let before: HashMap<Vec<String>, u64> = base
+        .map(|b| {
+            area_sizes(config, b)
+                .into_iter()
+                .map(|s| (s.area, s.chars))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut out = Vec::new();
+    for s in area_sizes(config, head) {
+        let (soft, hard) = (u64::from(soft), u64::from(hard));
+        let before = before.get(&s.area).copied();
+        let chars = s.chars;
+        let (code, new, text) = if hard > 0 && chars > hard {
+            let (code, new, why) = match before {
+                None => (Code::AreaBudgetHard, true, "a new area".to_string()),
+                Some(b) if b <= hard => (
+                    Code::AreaBudgetHard,
+                    true,
+                    format!("{b} characters in the base"),
+                ),
+                Some(b) if chars > b && chars - b <= u64::from(config.growth) => (
+                    Code::AreaBudgetHardKept,
+                    true,
+                    format!(
+                        "grew by {} characters, at most {} in one change",
+                        chars - b,
+                        config.growth
+                    ),
+                ),
+                Some(b) if chars > b => (
+                    Code::AreaBudgetHard,
+                    true,
+                    format!("grew from {b} characters in the base"),
+                ),
+                Some(_) => (
+                    Code::AreaBudgetHardKept,
+                    false,
+                    "no growth against the base".to_string(),
+                ),
+            };
+            (code, new, format!("over the hard budget of {hard} ({why})"))
+        } else if soft > 0 && chars > soft {
+            (
+                Code::AreaBudgetSoft,
+                before.is_none_or(|b| b <= soft),
+                format!("over the soft budget of {soft}"),
+            )
+        } else {
+            continue;
+        };
+        let Some(severity) = config.severity(code, Some(s.root)) else {
+            continue;
+        };
+        let target = if s.area.is_empty() {
+            ".".to_string()
+        } else {
+            s.area.join("/")
+        };
+        let message = format!("area `{target}` has {chars} characters, {text}");
+        let (path, doc) = match s.summary {
+            Some(i) => {
+                let d = &head.docs[i as usize];
+                (d.path.clone(), d.id.clone())
+            }
+            None => {
+                let dir = config
+                    .layers
+                    .layer_of_type(DocType::Requirements)
+                    .and_then(|l| config.layers.layers()[l].dir());
+                let parts = std::iter::once(config.roots[s.root].path.as_str())
+                    .chain(dir)
+                    .chain(s.area.iter().map(String::as_str))
+                    .filter(|p| !p.is_empty())
+                    .collect::<Vec<_>>();
+                let folder = if parts.is_empty() {
+                    ".".to_string()
+                } else {
+                    parts.join("/")
+                };
+                (folder.clone(), folder)
+            }
+        };
+        out.push((
+            Diag {
+                path,
+                line: 1,
+                code,
+                doc,
+                target,
+                message,
+                severity,
+            },
+            new,
+        ));
+    }
+    out
+}
+
 /// The base document that the first section alias of `h` names: the source
 /// of a split.
 fn split_source<'a>(base: &'a Corpus, h: &Doc) -> Option<&'a Doc> {
@@ -1790,13 +2017,15 @@ pub fn gate(
     head: &Corpus,
 ) -> Outcome {
     let mut head_diags = diagnose_against(config, head, lifecycle.or(base));
-    let budget: Vec<(Diag, bool)> = hard_budget(config, base, head)
+    let mut budget: Vec<(Diag, bool)> = hard_budget(config, base, head)
         .into_iter()
         .filter_map(|(mut d, n)| {
             d.severity = config.severity(d.code, Some(c_root(head, &d)))?;
             Some((d, n))
         })
         .collect();
+    // The budget of an area has its severity already: its folder is no file.
+    budget.extend(area_budget(config, base, head));
     let Some(base) = base else {
         let mut new = vec![true; head_diags.len()];
         for (d, n) in budget {

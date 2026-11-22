@@ -951,6 +951,95 @@ fn an_old_excess_of_a_budget_is_not_an_error_of_the_report() {
     assert_counts_equal("budget-decision", &repo);
 }
 
+/// A project of the fixture `v070` with an area that is over `[budgets.area]
+/// hard = 300` before the upgrade: 2 requirement documents of about 200
+/// characters each, in the folder `docs/requirements/valves`. The rules make SD706
+/// and SD707 errors, so the report counts them (D55).
+fn area_over_hard() -> Repo {
+    let repo = Repo::from_fixture("v070", &[]);
+    let toml = repo.read("spec-dna.toml");
+    repo.write(
+        "spec-dna.toml",
+        &format!(
+            "{toml}\n[budgets.area]\nsoft = 100\nhard = 300\n\n[rules]\nSD706 = \"error\"\nSD707 = \"error\"\n"
+        ),
+    );
+    for key in ["a", "b"] {
+        repo.write(
+            &format!("docs/requirements/valves/{key}.md"),
+            &format!(
+                "---\ntype: requirements\nstatus: active\n---\n# {key}\n\n## Requirements\n\n- **{key}**: The valve SHALL close after 30 seconds.\n\n{}\n",
+                "x".repeat(150)
+            ),
+        );
+    }
+    repo.commit("area over its hard budget");
+    repo
+}
+
+/// The finding lines of SD705 to SD707 in the text output of `check --all`.
+fn area_findings(out: &str) -> Vec<&str> {
+    out.lines()
+        .filter(|l| ["SD705", "SD706", "SD707"].iter().any(|c| l.contains(c)))
+        .filter(|l| !l.contains(" fix: "))
+        .collect()
+}
+
+/// An area over `[budgets.area] hard` before the upgrade is SD707 in the
+/// in-memory check of `upgrade`, as it is in `check --all` after the commit of
+/// the upgrade (D65, D55). It is not SD706, which is for a new excess. The
+/// upgrade writes no `[budgets.area]` table of its own, and a second run
+/// changes nothing.
+#[test]
+fn an_old_excess_of_an_area_is_sd707_in_the_report_and_in_check_all() {
+    let repo = area_over_hard();
+    // `check` refuses a project with an old pin, so the report is the first
+    // check of the excess.
+    let (code, plan, err) = upgrade(&repo, &["--dry-run", "--json"]);
+    assert_eq!(code, 0, "{plan}{err}");
+    let report = errors_of_report(&plan);
+    assert!(report.get("SD707").is_some_and(|n| *n >= 1), "{plan}");
+    assert!(!report.contains_key("SD706"), "{plan}");
+    let (code, out, err) = upgrade(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let toml = repo.read("spec-dna.toml");
+    assert_eq!(toml.matches("[budgets.area]").count(), 1, "{toml}");
+    assert!(toml.contains("hard = 300"), "{toml}");
+    repo.commit("upgrade");
+    let (_, check, _) = repo.run(&["check", "--all", "--json"]);
+    let checked = errors_of_check(&check);
+    assert!(!checked.contains_key("SD706"), "{check}");
+    assert_eq!(report, checked, "the report and check --all agree");
+    let (_, text, _) = repo.run(&["check", "--all"]);
+    assert!(
+        area_findings(&text)
+            .iter()
+            .any(|l| l.contains("error SD707 area-budget-hard-kept: area `valves` has ")),
+        "{text}"
+    );
+    // A second upgrade changes nothing.
+    let tree = tree_bytes(&repo.dir);
+    let (code, out, err) = upgrade(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(status(&repo), "", "a second upgrade writes nothing: {out}");
+    assert_eq!(tree_bytes(&repo.dir), tree);
+}
+
+/// A project of the profile `standard` with no `[budgets.area]` table gets none
+/// from `upgrade`, although `init` writes one for a new project (D55). So the
+/// area budget stays off for it, and no SD705 to SD707 appears.
+#[test]
+fn upgrade_writes_no_area_budget_table() {
+    let repo = Repo::from_fixture("v070", &[]);
+    assert!(!repo.read("spec-dna.toml").contains("[budgets.area]"));
+    let (code, out, err) = upgrade(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!repo.read("spec-dna.toml").contains("[budgets.area]"));
+    repo.commit("upgrade");
+    let (_, check, _) = repo.run(&["check", "--all"]);
+    assert!(area_findings(&check).is_empty(), "{check}");
+}
+
 // --- the harness (D147) ---
 
 #[test]

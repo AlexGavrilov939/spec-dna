@@ -603,3 +603,930 @@ fn a_group_that_holds_back_every_document_says_so_and_does_not_say_none_cites() 
         "the output must not say that no document cites the file: {out}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// The tier `summary` (design 0.8.0, D56)
+// ---------------------------------------------------------------------------
+
+/// The layers of a project with a roll-up: the layer `summaries` is explicit,
+/// because the implied graph has no such layer. `rules/style` is the
+/// convention of the requirements documents.
+const ROLL_HEAD: &str = "[conventions]\nrequirements = [\"rules/style\"]\n\n[layers.foundation]\ntypes = [\"product\", \"system\", \"terms\"]\nfiles = [\"product.md\", \"system.md\", \"terms.md\"]\n\n[layers.rules]\ntypes = [\"rule\"]\n\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.summaries]\ntypes = [\"summary\"]\n\n";
+
+const ROLL_ROOTS: &str = "[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n";
+
+fn requirements(title: &str, key: &str, text: &str) -> String {
+    format!("---\nstatus: active\n---\n# {title}\n\n## Requirements\n\n- **{key}**: {text}\n")
+}
+
+/// The ids of the sections of the output, without the anchor, in order and
+/// with each document once.
+fn docs_of(ids: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for i in ids {
+        let d = i.split('#').next().unwrap().to_string();
+        if out.last() != Some(&d) {
+            out.push(d);
+        }
+    }
+    out
+}
+
+/// The header line of the first section of a document in the output.
+fn header_of<'a>(out: &'a str, doc: &str) -> &'a str {
+    out.lines()
+        .find(|l| l.starts_with(&format!("<!-- {doc}#")) || l.starts_with(&format!("<!-- {doc} ")))
+        .unwrap_or_else(|| panic!("no header of {doc}: {out}"))
+}
+
+/// The full sections of the output: the header line, and the characters that
+/// the section costs (the header with its line end, and the text).
+fn sections(out: &str) -> Vec<(String, usize)> {
+    let mut found: Vec<(String, String)> = Vec::new();
+    // The first line is the head of the output.
+    for line in out.lines().skip(1) {
+        if line.starts_with("<!-- ") && line.contains(" h:") {
+            found.push((line.to_string(), String::new()));
+        } else if line.starts_with("<!--") || line.starts_with("- `") {
+            // A note or the list of stubs ends the last section.
+            break;
+        } else if let Some(last) = found.last_mut() {
+            last.1.push_str(line);
+            last.1.push('\n');
+        }
+    }
+    found
+        .into_iter()
+        .map(|(h, t)| {
+            let cost = h.chars().count() + 1 + t.trim_end().chars().count();
+            (h, cost)
+        })
+        .collect()
+}
+
+/// The characters of the full sections of one tier.
+fn tier_chars(out: &str, tier: &str) -> usize {
+    sections(out)
+        .iter()
+        .filter(|(h, _)| {
+            h.ends_with(&format!(" {tier} -->")) || h.ends_with(&format!(" {tier} stale -->"))
+        })
+        .map(|(_, n)| n)
+        .sum()
+}
+
+/// Writes the summary of `area` with `new summary` and gives it `body` under
+/// the title, so the pins are the pins of the tree now.
+fn summary(r: &Repo, area: &str, body: &str) {
+    let (code, out, err) = r.run(&["new", "summary", area]);
+    assert_eq!(code, 0, "{out}{err}");
+    let path = format!("docs/summaries/{area}.md");
+    let text = fs::read_to_string(r.dir.join(&path)).unwrap();
+    let at = text.find("\n---\n").expect("front matter") + "\n---\n".len();
+    let title = area.rsplit('/').next().unwrap();
+    r.write(&path, &format!("{}\n# {title}\n\n{body}\n", &text[..at]));
+}
+
+/// A roll-up document at the top: `rests-on: []` and then `refresh --holds`.
+/// The plain `refresh` refuses a text that is the text of the base.
+fn top(r: &Repo, path: &str, id: &str, title: &str, body: &str) {
+    r.write(
+        path,
+        &format!("---\nrests-on: []\n---\n# {title}\n\n{body}\n"),
+    );
+    let (code, out, err) = r.run(&["refresh", id, "--holds"]);
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+/// A valve project with a full chain: `product`, `system`, `summaries/valves`
+/// and `summaries/valves/drives`, all with current pins. The areas are
+/// `valves`, `valves/drives` and `sensors` (the last one has no summary). A
+/// requirements document at the root has no area. 2 rules: `rules/style` is a
+/// convention, `rules/watering` applies to the whole project.
+fn rollup_with(valves_body: &str) -> Repo {
+    rollup_bodies(valves_body, "The product waters garden beds.")
+}
+
+/// The same, with the body of `product` too.
+fn rollup_bodies(valves_body: &str, product_body: &str) -> Repo {
+    let r = Repo::with(ROLL_HEAD, ROLL_ROOTS);
+    r.write("src/irrigation/valve.py", VALVE);
+    r.write(
+        "docs/rules/style.md",
+        &rule("", "short-lines").replace("Watering", "Style"),
+    );
+    r.write("docs/rules/watering.md", &rule("", "valve-timeout"));
+    r.write(
+        "docs/requirements/valves/closing.md",
+        &requirements(
+            "Closing",
+            "close-on-timeout",
+            "The valve SHALL close after 30 seconds. See `src/irrigation/valve.py`.",
+        ),
+    );
+    r.write(
+        "docs/requirements/valves/drives/motor.md",
+        &requirements(
+            "Motor",
+            "spin-up",
+            "The motor SHALL reach full speed in 2 seconds.",
+        ),
+    );
+    r.write(
+        "docs/requirements/sensors/probes.md",
+        &requirements(
+            "Probes",
+            "probe-count",
+            "The controller SHALL read 4 probes.",
+        ),
+    );
+    r.write(
+        "docs/requirements/zones.md",
+        &requirements(
+            "Zones",
+            "zone-count",
+            "The controller SHALL support 8 zones.",
+        ),
+    );
+    summary(&r, "valves/drives", "A drive spins up in 2 seconds.");
+    summary(&r, "valves", valves_body);
+    top(
+        &r,
+        "docs/system.md",
+        "system",
+        "Irrigation system",
+        "The system waters beds in zones.",
+    );
+    top(
+        &r,
+        "docs/product.md",
+        "product",
+        "Irrigation product",
+        product_body,
+    );
+    r
+}
+
+fn rollup() -> Repo {
+    rollup_with("A valve closes after 30 seconds.")
+}
+
+/// A chain whose summary of `valves` has a body of `words` times 16
+/// characters.
+fn large_summary(words: usize) -> Repo {
+    rollup_with(&"A valve closes. ".repeat(words))
+}
+
+/// Edits the requirement `valves/closing`, so that `summaries/valves` is stale.
+fn make_valves_stale(r: &Repo) {
+    let text = fs::read_to_string(r.dir.join("docs/requirements/valves/closing.md")).unwrap();
+    r.write(
+        "docs/requirements/valves/closing.md",
+        &text.replace("30 seconds", "20 seconds"),
+    );
+}
+
+#[test]
+fn the_summary_tier_is_after_the_conventions_and_before_the_rules_top_down() {
+    let r = rollup();
+    let (code, out, err) = r.run(&["context", "requirements/valves/closing"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let docs = docs_of(&full_ids(&out));
+    assert_eq!(
+        docs[..6],
+        [
+            "rules/style",
+            "product",
+            "system",
+            "summaries/valves",
+            "rules/watering",
+            "requirements/valves/closing"
+        ],
+        "{docs:?}\n{out}"
+    );
+    // The area of the entry is `valves`: the deeper summary is not served.
+    assert!(!out.contains("summaries/valves/drives"), "{out}");
+    // The header keeps the form of 0.7.1: the type, then the tier.
+    assert!(
+        header_of(&out, "product").ends_with(" product summary -->"),
+        "{out}"
+    );
+    assert!(
+        header_of(&out, "system").ends_with(" system summary -->"),
+        "{out}"
+    );
+    assert!(
+        header_of(&out, "summaries/valves").ends_with(" summary summary -->"),
+        "{out}"
+    );
+    assert!(
+        header_of(&out, "rules/style").ends_with(" convention -->"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_deeper_area_adds_its_summary_after_the_shallow_one() {
+    let r = rollup();
+    let docs = docs_of(&r.served(&["context", "requirements/valves/drives/motor"]));
+    assert_eq!(
+        docs[..6],
+        [
+            "rules/style",
+            "product",
+            "system",
+            "summaries/valves",
+            "summaries/valves/drives",
+            "rules/watering"
+        ],
+        "{docs:?}"
+    );
+}
+
+#[test]
+fn a_document_of_the_root_area_reaches_only_the_top_documents() {
+    let r = rollup();
+    let docs = docs_of(&r.served(&["context", "requirements/zones"]));
+    assert_eq!(
+        docs[..4],
+        ["rules/style", "product", "system", "rules/watering"],
+        "{docs:?}"
+    );
+    assert!(
+        !docs.iter().any(|d| d.starts_with("summaries/")),
+        "{docs:?}"
+    );
+}
+
+#[test]
+fn an_area_with_no_summary_adds_the_top_documents_only() {
+    // `sensors` has no summary, so the chain is `product` and `system`.
+    let r = rollup();
+    let docs = docs_of(&r.served(&["context", "requirements/sensors/probes"]));
+    assert_eq!(
+        docs[..4],
+        ["rules/style", "product", "system", "rules/watering"],
+        "{docs:?}"
+    );
+    assert!(
+        !docs.iter().any(|d| d.starts_with("summaries/")),
+        "{docs:?}"
+    );
+}
+
+#[test]
+fn the_planned_documents_reach_the_areas_also_for_a_code_path() {
+    // Only `valves/closing` cites the path.
+    let r = rollup();
+    let docs = docs_of(&r.served(&["context", "src/irrigation/valve.py"]));
+    let at = |d: &str| {
+        docs.iter()
+            .position(|x| x == d)
+            .unwrap_or_else(|| panic!("{d}: {docs:?}"))
+    };
+    assert!(at("system") < at("summaries/valves"), "{docs:?}");
+    assert!(
+        at("summaries/valves") < at("requirements/valves/closing"),
+        "{docs:?}"
+    );
+}
+
+#[test]
+fn a_request_that_reaches_no_requirement_gets_no_summary() {
+    // A rule is no requirement of an area.
+    let r = rollup();
+    let docs = docs_of(&r.served(&["context", "rules/watering"]));
+    assert!(
+        !docs
+            .iter()
+            .any(|d| d == "product" || d == "system" || d.starts_with("summaries/")),
+        "{docs:?}"
+    );
+}
+
+#[test]
+fn a_top_document_with_no_rests_on_is_not_in_the_chain() {
+    // `system` has no field `rests-on`: it is no roll-up document. `product`
+    // still is one.
+    let r = rollup();
+    r.write(
+        "docs/system.md",
+        "# Irrigation system\n\nThe system waters beds in zones.\n",
+    );
+    let docs = docs_of(&r.served(&["context", "requirements/valves/closing"]));
+    assert_eq!(
+        docs[..5],
+        [
+            "rules/style",
+            "product",
+            "summaries/valves",
+            "rules/watering",
+            "requirements/valves/closing"
+        ],
+        "{docs:?}"
+    );
+}
+
+#[test]
+fn the_title_section_of_a_summary_comes_first() {
+    // The text before the title is a section of level 0. It comes after the
+    // title section.
+    let r = rollup();
+    let text = fs::read_to_string(r.dir.join("docs/summaries/valves.md")).unwrap();
+    let at = text.find("\n---\n").unwrap() + "\n---\n".len();
+    r.write(
+        "docs/summaries/valves.md",
+        &format!(
+            "{}\nA note before the title.\n\n# Valves\n\nA valve closes after 30 seconds.\n\n## Limits\n\nNo more than 80 degrees.\n",
+            &text[..at]
+        ),
+    );
+    let (_, out, _) = r.run(&["context", "requirements/valves/closing"]);
+    let ids: Vec<String> = full_ids(&out)
+        .into_iter()
+        .filter(|i| i.starts_with("summaries/valves"))
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            "summaries/valves#valves",
+            "summaries/valves",
+            "summaries/valves#limits"
+        ],
+        "{out}"
+    );
+}
+
+#[test]
+fn a_stale_summary_has_the_word_stale_in_its_header_and_in_json() {
+    let r = rollup();
+    let (_, out, _) = r.run(&["context", "requirements/valves/closing"]);
+    assert!(!out.contains("stale"), "{out}");
+    let (_, json, _) = r.run(&["context", "requirements/valves/closing", "--json"]);
+    assert!(!json.contains("stale"), "{json}");
+    // The requirement changes: `summaries/valves` is stale. `system` pins the
+    // text of the summary, which did not change, so it is current.
+    make_valves_stale(&r);
+    let (code, out, err) = r.run(&["context", "requirements/valves/closing"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let h = header_of(&out, "summaries/valves");
+    assert!(h.ends_with(" summary summary stale -->"), "{h}");
+    assert_eq!(out.matches(" stale -->").count(), 1, "{out}");
+    let (_, json, _) = r.run(&["context", "requirements/valves/closing", "--json"]);
+    let unit = |id: &str| -> String {
+        let at = json
+            .find(&format!("{{\"id\":\"{id}"))
+            .unwrap_or_else(|| panic!("{id}: {json}"));
+        let end = json[at + 1..]
+            .find("{\"id\":")
+            .map_or(json.len(), |e| at + 1 + e);
+        json[at..end].to_string()
+    };
+    let valves = unit("summaries/valves#");
+    assert!(
+        valves.contains("\"tier\":\"summary\"") && valves.contains("\"stale\":true"),
+        "{valves}"
+    );
+    // A current document has no field.
+    assert!(!unit("system#").contains("stale"), "{json}");
+    assert_eq!(json.matches("\"stale\"").count(), 1, "{json}");
+}
+
+#[test]
+fn a_summary_with_a_missing_pin_is_stale_too() {
+    // A new requirement of the area has no pin: SD642.
+    let r = rollup();
+    r.write(
+        "docs/requirements/valves/opening.md",
+        &requirements(
+            "Opening",
+            "open-on-start",
+            "The valve SHALL open when a zone starts.",
+        ),
+    );
+    let (_, out, _) = r.run(&["context", "requirements/valves/closing"]);
+    assert!(
+        header_of(&out, "summaries/valves").ends_with(" summary summary stale -->"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_stale_summary_that_is_only_listed_keeps_its_marker() {
+    // The summary of `valves` has 3,200 characters: a stub.
+    let r = large_summary(200);
+    make_valves_stale(&r);
+    let (code, out, err) = r.run(&["context", "requirements/valves/closing"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let line = out
+        .lines()
+        .find(|l| l.starts_with("- `summaries/valves"))
+        .unwrap_or_else(|| panic!("{out}"));
+    assert!(
+        line.contains("(summary)") && line.ends_with("[stale]"),
+        "{line}"
+    );
+    // A current document in the list has no marker.
+    let (_, out, _) = r.run(&["context", "requirements/valves/closing", "--budget", "900"]);
+    let line = out
+        .lines()
+        .find(|l| l.starts_with("- `system"))
+        .unwrap_or("");
+    assert!(!line.contains("stale"), "{out}");
+}
+
+#[test]
+fn the_summary_tier_uses_at_most_a_quarter_of_the_budget() {
+    // The summary of `valves` has 3,200 characters. It does not fit in 2,000
+    // of 8,000 characters (the default): it is a stub, and the section of the
+    // entry stays in full.
+    let r = large_summary(200);
+    let (code, out, err) = r.run(&["context", "requirements/valves/closing", "--budget", "8000"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(tier_chars(&out, "summary") <= 2000, "{out}");
+    assert!(
+        out.lines()
+            .any(|l| l.starts_with("- `summaries/valves#valves`") && l.contains("(summary)")),
+        "the large section is a stub: {out}"
+    );
+    assert!(!out.contains("A valve closes. A valve"), "{out}");
+    // The other tiers keep their share: the entry is in full.
+    assert!(
+        full_ids(&out)
+            .iter()
+            .any(|i| i.starts_with("requirements/valves/closing")),
+        "{out}"
+    );
+    // The same summary fits in a quarter of 20,000 characters.
+    let (_, out, _) = r.run(&[
+        "context",
+        "requirements/valves/closing",
+        "--budget",
+        "20000",
+    ]);
+    assert!(out.contains("A valve closes. A valve"), "{out}");
+    assert!(tier_chars(&out, "summary") <= 5000, "{out}");
+}
+
+#[test]
+fn the_share_is_a_quarter_of_the_budget_and_not_a_fixed_number() {
+    // The summary of `valves` has 1,600 characters. It fits in 2,000 (the
+    // quarter of 8,000) with the 2 top documents, and not in 1,000 (the
+    // quarter of 4,000).
+    let r = large_summary(100);
+    let (_, out, _) = r.run(&["context", "requirements/valves/closing", "--budget", "8000"]);
+    assert!(out.contains("A valve closes. A valve"), "{out}");
+    let (_, out, _) = r.run(&["context", "requirements/valves/closing", "--budget", "4000"]);
+    assert!(!out.contains("A valve closes. A valve"), "{out}");
+    assert!(tier_chars(&out, "summary") <= 1000, "{out}");
+}
+
+#[test]
+fn once_a_section_of_the_tier_is_a_stub_each_later_one_is_a_stub() {
+    // The big section of `valves` is a stub. The small summary of `drives`
+    // comes after it in the order, so it is a stub too: the tier is filled
+    // in order, and the last sections are the ones that it cuts.
+    let r = large_summary(200);
+    let (_, json, _) = r.run(&[
+        "context",
+        "requirements/valves/drives/motor",
+        "--budget",
+        "8000",
+        "--json",
+    ]);
+    let modes = tier_modes(&json);
+    assert_eq!(
+        modes,
+        [
+            ("product".to_string(), true),
+            ("system".to_string(), true),
+            ("summaries/valves".to_string(), false),
+            ("summaries/valves/drives".to_string(), false)
+        ],
+        "{json}"
+    );
+    // The same at a small budget: no full section after a stub.
+    let r = rollup();
+    for budget in ["400", "600", "1000", "2000"] {
+        let (_, json, _) = r.run(&[
+            "context",
+            "requirements/valves/drives/motor",
+            "--budget",
+            budget,
+            "--json",
+        ]);
+        let modes = tier_modes(&json);
+        let first_stub = modes.iter().position(|m| !m.1).unwrap_or(modes.len());
+        assert!(
+            modes[first_stub..].iter().all(|m| !m.1),
+            "{budget}: {modes:?}"
+        );
+    }
+}
+
+#[test]
+fn the_tier_is_a_prefix_of_its_order_at_each_budget() {
+    // The product has a long text, and the others are short. When the room
+    // is small, the product is a stub or is cut, and no later section is in
+    // full or listed before it: the sections that the output has are the
+    // first ones of the tier, and each full section comes before each stub.
+    let r = rollup_bodies(
+        "A valve closes after 30 seconds.",
+        &"The product waters. ".repeat(30),
+    );
+    let args = |b: &str| {
+        vec![
+            "context".to_string(),
+            "requirements/valves/drives/motor".to_string(),
+            "--budget".to_string(),
+            b.to_string(),
+            "--json".to_string(),
+        ]
+    };
+    let run = |b: &str| {
+        let a = args(b);
+        let a: Vec<&str> = a.iter().map(String::as_str).collect();
+        tier_modes(&r.run(&a).1)
+    };
+    let all: Vec<String> = run("100000").into_iter().map(|m| m.0).collect();
+    assert_eq!(
+        all,
+        [
+            "product",
+            "system",
+            "summaries/valves",
+            "summaries/valves/drives"
+        ]
+    );
+    // A rule before the tier takes room, and its size moves the point where
+    // the room is gone: each size and each budget is a case.
+    for rule_chars in [0, 800, 1200, 1600, 2000, 2400] {
+        r.write(
+            "docs/rules/watering.md",
+            &format!(
+                "---\ntype: rule\nstatus: active\n---\n# Watering\n\n## Rules\n\n- **valve-timeout**: The controller SHALL close each valve. {}\n",
+                "The rule is long. ".repeat(rule_chars / 18)
+            ),
+        );
+        for budget in (600..4600).step_by(100) {
+            let modes = run(&budget.to_string());
+            let got: Vec<String> = modes.iter().map(|m| m.0.clone()).collect();
+            assert_eq!(
+                got[..],
+                all[..got.len()],
+                "{rule_chars} {budget}: {modes:?}"
+            );
+            let first_stub = modes.iter().position(|m| !m.1).unwrap_or(modes.len());
+            assert!(
+                modes[first_stub..].iter().all(|m| !m.1),
+                "{rule_chars} {budget}: {modes:?}"
+            );
+        }
+    }
+}
+
+/// The documents of the tier `summary` in the `--json` output, in order, with
+/// true for a section in full. A document with 2 sections gives 2 items.
+fn tier_modes(json: &str) -> Vec<(String, bool)> {
+    parse_units(json)
+        .into_iter()
+        .filter(|(_, tier, _)| tier == "summary")
+        .map(|(id, _, full)| (id.split('#').next().unwrap().to_string(), full))
+        .collect()
+}
+
+/// The units of a `--json` output: id, tier and true if in full.
+fn parse_units(json: &str) -> Vec<(String, String, bool)> {
+    let field = |u: &str, key: &str| -> String {
+        let at = u.find(&format!("\"{key}\":\"")).unwrap() + key.len() + 4;
+        u[at..].split('"').next().unwrap().to_string()
+    };
+    json.split("{\"id\":\"")
+        .skip(1)
+        .map(|u| {
+            let u = format!("{{\"id\":\"{u}");
+            (
+                field(&u, "id"),
+                field(&u, "tier"),
+                field(&u, "mode") == "full",
+            )
+        })
+        .collect()
+}
+
+/// The characters that the tier `summary` takes: its full sections, and its
+/// stub lines.
+fn tier_total(out: &str) -> usize {
+    tier_chars(out, "summary")
+        + out
+            .lines()
+            .filter(|l| l.starts_with("- `") && l.contains(" chars (summary)"))
+            .map(|l| l.chars().count() + 1)
+            .sum::<usize>()
+}
+
+/// The number of characters that the head of the output reports as used.
+fn used_of(out: &str) -> usize {
+    out.lines()
+        .next()
+        .unwrap()
+        .split("; ")
+        .find_map(|p| {
+            p.strip_suffix(" characters")
+                .and_then(|p| p.split(" of ").next())
+        })
+        .unwrap()
+        .parse()
+        .unwrap()
+}
+
+#[test]
+fn the_used_characters_count_the_stale_word_of_the_header() {
+    // The edit keeps the length of the text, so the only difference between
+    // the 2 outputs is the word ` stale` in one header: 6 characters.
+    let args = [
+        "context",
+        "requirements/valves/closing",
+        "--budget",
+        "100000",
+    ];
+    let r = rollup();
+    let (_, fresh, _) = r.run(&args);
+    make_valves_stale(&r);
+    let (_, stale, _) = r.run(&args);
+    assert!(!stale.contains("not loaded"), "{stale}");
+    assert!(stale.contains(" summary summary stale -->"), "{stale}");
+    assert_eq!(used_of(&stale), used_of(&fresh) + " stale".len(), "{stale}");
+}
+
+#[test]
+fn a_named_summary_is_an_entry_and_the_tier_skips_it() {
+    // The second target reaches the area `valves`, so the chain holds the
+    // summary that the first target names.
+    let r = rollup();
+    let (_, out, _) = r.run(&["context", "summaries/valves", "requirements/valves/closing"]);
+    assert!(
+        header_of(&out, "summaries/valves").ends_with(" summary entry -->"),
+        "{out}"
+    );
+    // The document is in one tier only.
+    assert_eq!(out.matches("<!-- summaries/valves").count(), 1, "{out}");
+    assert!(out.contains(" system summary -->"), "{out}");
+}
+
+#[test]
+fn a_summary_that_other_tiers_reach_is_in_the_summary_tier_only() {
+    // The `applies-to` of `system` matches the entry: it is in the tier
+    // `summary`, not in the tier `applies`.
+    let r = rollup();
+    let text = fs::read_to_string(r.dir.join("docs/system.md")).unwrap();
+    r.write(
+        "docs/system.md",
+        &text.replacen(
+            "rests-on:",
+            "applies-to: [\"requirements/**\"]\nrests-on:",
+            1,
+        ),
+    );
+    let (_, out, _) = r.run(&["context", "requirements/valves/closing"]);
+    assert!(
+        header_of(&out, "system").ends_with(" system summary -->"),
+        "{out}"
+    );
+    assert!(!out.contains("system applies"), "{out}");
+    let ids = full_ids(&out);
+    assert_eq!(
+        ids.iter().filter(|i| i.starts_with("system")).count(),
+        1,
+        "{ids:?}"
+    );
+}
+
+#[test]
+fn a_planned_document_that_is_not_active_reaches_no_area() {
+    let r = rollup();
+    let retired = |title: &str, key: &str, text: &str| {
+        requirements(title, key, text).replace("status: active", "status: retired")
+    };
+    r.write(
+        "docs/requirements/valves/closing.md",
+        &retired(
+            "Closing",
+            "close-on-timeout",
+            "The valve SHALL close after 30 seconds. See `src/irrigation/valve.py`.",
+        ),
+    );
+    let docs = docs_of(&r.served(&["context", "src/irrigation/valve.py"]));
+    assert!(
+        !docs
+            .iter()
+            .any(|d| d == "system" || d.starts_with("summaries/")),
+        "{docs:?}"
+    );
+}
+
+#[test]
+fn under_a_query_the_tier_follows_the_entry_and_keeps_its_order() {
+    // The rule `watering` has 1,500 characters and the words of the query.
+    // The entry matches too. The tier never takes the room of the entry: the
+    // sections of the entry are in full, and the tier has at most a quarter
+    // of 4,000 characters.
+    let r = rollup();
+    let big = "The motor spin full speed rule. ".repeat(45);
+    r.write(
+        "docs/rules/watering.md",
+        &format!(
+            "---\ntype: rule\nstatus: active\n---\n# Watering\n\n## Rules\n\n- **valve-timeout**: The controller SHALL close each valve. {big}\n"
+        ),
+    );
+    let (code, out, err) = r.run(&[
+        "context",
+        "requirements/valves/drives/motor",
+        "--query",
+        "motor spin full speed",
+        "--budget",
+        "4000",
+    ]);
+    assert_eq!(code, 0, "{out}{err}");
+    let ids = full_ids(&out);
+    assert!(
+        ids.iter()
+            .any(|i| i.starts_with("requirements/valves/drives/motor#requirements")),
+        "{out}"
+    );
+    assert!(tier_total(&out) <= 1000, "{out}");
+    let docs = docs_of(&ids);
+    let at = |d: &str| docs.iter().position(|x| x == d);
+    assert!(at("product").is_some(), "{docs:?}");
+    assert!(
+        at("product") < at("system") && at("system") < at("summaries/valves"),
+        "{docs:?}"
+    );
+}
+
+/// A project whose `system` document has 80 short sections and has pins, and
+/// whose requirement `pumps/drive` has a section of about 4,900 characters
+/// that cites `src/drive.py`.
+fn crowded() -> Repo {
+    let r = Repo::with(ROLL_HEAD, ROLL_ROOTS);
+    r.write("src/drive.py", "def spin():\n    return 1\n");
+    r.write(
+        "docs/requirements/pumps/drive.md",
+        &requirements(
+            "Drive",
+            "spin",
+            &format!(
+                "The drive SHALL keep the speed. See `src/drive.py`. {}",
+                "The drive SHALL keep the speed. ".repeat(150)
+            ),
+        ),
+    );
+    let sections: String = (1..=80)
+        .map(|n| format!("## Section {n}\n\nText of section {n}.\n\n"))
+        .collect();
+    top(
+        &r,
+        "docs/system.md",
+        "system",
+        "Irrigation system",
+        &sections,
+    );
+    r.write(
+        "docs/product.md",
+        "---\nrests-on: []\n---\n# Product\n\n## Goal\n\nThe product waters beds.\n",
+    );
+    r
+}
+
+#[test]
+fn the_tier_never_takes_the_room_of_the_entry_or_of_a_citing_section() {
+    let r = crowded();
+    for args in [
+        vec!["context", "requirements/pumps/drive"],
+        vec!["context", "src/drive.py"],
+    ] {
+        for budget in ["8000", "4000", "2000", "1000", "300"] {
+            let mut a = args.clone();
+            a.extend(["--budget", budget]);
+            let (code, out, err) = r.run(&a);
+            assert_eq!(code, 0, "{out}{err}");
+            let b: usize = budget.parse().unwrap();
+            // The long section is in full or listed: the tier does not push
+            // it out. At 8,000 characters, it is in full.
+            assert!(
+                out.contains("requirements/pumps/drive#requirements"),
+                "{a:?}: {out}"
+            );
+            if b == 8000 {
+                assert!(
+                    full_ids(&out)
+                        .iter()
+                        .any(|i| i == "requirements/pumps/drive#requirements"),
+                    "{a:?}: {out}"
+                );
+            }
+            // The tier, in full and in stubs, has at most a quarter.
+            assert!(
+                tier_total(&out) <= b / 4,
+                "{a:?} {budget}: {}",
+                tier_total(&out)
+            );
+        }
+    }
+}
+
+#[test]
+fn a_corpus_with_no_summary_keeps_the_old_output() {
+    // The same documents with the layer and with no layer for the summary:
+    // `system` and `product` have no `rests-on`, and no document is a summary.
+    let docs = |r: &Repo| {
+        r.write("src/irrigation/valve.py", VALVE);
+        r.write(
+            "docs/rules/style.md",
+            &rule("", "short-lines").replace("Watering", "Style"),
+        );
+        r.write(
+            "docs/rules/watering.md",
+            &rule("applies-to: [\"requirements/**\"]\n", "valve-timeout"),
+        );
+        r.write(
+            "docs/requirements/valves/closing.md",
+            &requirements(
+                "Closing",
+                "close-on-timeout",
+                "The valve SHALL close. See `src/irrigation/valve.py`.",
+            ),
+        );
+        r.write("docs/system.md", "# System\n\nThe system waters beds.\n");
+        r.write(
+            "docs/product.md",
+            &product("applies-to: [\"requirements/**\"]\n"),
+        );
+    };
+    let with_layer = Repo::with(ROLL_HEAD, ROLL_ROOTS);
+    docs(&with_layer);
+    let without = Repo::with(
+        &ROLL_HEAD.replace("[layers.summaries]\ntypes = [\"summary\"]\n\n", ""),
+        ROLL_ROOTS,
+    );
+    docs(&without);
+    for args in [
+        vec!["context", "requirements/valves/closing"],
+        vec!["context", "requirements/valves/closing", "--json"],
+        vec!["context", "src/irrigation/valve.py", "--budget", "900"],
+        vec![
+            "context",
+            "requirements/valves/closing",
+            "--query",
+            "valve close",
+        ],
+    ] {
+        let (_, a, _) = with_layer.run(&args);
+        let (_, b, _) = without.run(&args);
+        assert!(!a.contains("summary"), "{args:?}: {a}");
+        assert_eq!(a, b, "{args:?}");
+    }
+}
+
+#[test]
+fn a_summary_in_a_project_with_no_layer_for_it_is_not_served() {
+    // `lite` has no layer `summaries`. A file of the type `summary` has no
+    // place then (SD303), and `context` does not serve it.
+    let r = Repo::with(
+        &ROLL_HEAD.replace("[layers.summaries]\ntypes = [\"summary\"]\n\n", ""),
+        ROLL_ROOTS,
+    );
+    r.write(
+        "docs/requirements/valves/closing.md",
+        &requirements("Closing", "close-on-timeout", "The valve SHALL close."),
+    );
+    r.write(
+        "docs/summaries/valves.md",
+        "---\ntype: summary\nrests-on: []\n---\n# Valves\n\nA valve closes.\n",
+    );
+    let (code, out, err) = r.run(&["context", "requirements/valves/closing"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!out.contains("summaries/valves"), "{out}");
+}
+
+#[test]
+fn an_on_request_layer_of_summaries_is_counted_and_not_served() {
+    let r = Repo::with(
+        &ROLL_HEAD.replace(
+            "[layers.summaries]\ntypes = [\"summary\"]\n",
+            "[layers.summaries]\ntypes = [\"summary\"]\ncontext = \"on-request\"\n",
+        ),
+        ROLL_ROOTS,
+    );
+    r.write(
+        "docs/requirements/valves/closing.md",
+        &requirements("Closing", "close-on-timeout", "The valve SHALL close."),
+    );
+    summary(&r, "valves", "A valve closes.");
+    let (_, out, _) = r.run(&["context", "requirements/valves/closing"]);
+    assert!(!out.contains("<!-- summaries/valves"), "{out}");
+    assert!(
+        out.contains("on-request, not served: summaries 1;"),
+        "{out}"
+    );
+}

@@ -28,8 +28,9 @@ use crate::model::{Class, Corpus, Doc, DocType, LinkRes, Res, join};
 use crate::mv::parent;
 use crate::parse::{ItemSection, ParsedDoc, RefKind, parse};
 use crate::registry;
+use crate::rollup::{self, Pin, Rollup};
 use crate::split;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 /// The input of `plan`.
@@ -64,6 +65,14 @@ pub struct Ctx<'a> {
     /// head or the base has SD927 on). Then a task that names `spec-dna accept
     /// <slug>` closes with `finish` (design 0.8.0, D75 item 6).
     pub accept_on: bool,
+    /// The ids of `--holds <id>` (design 0.8.0, D54): the roll-up documents whose
+    /// pins `finish` writes as a claim that their text still holds.
+    pub holds: &'a [String],
+    /// The tree before the commit that added the plan of the change (the lookup
+    /// of P5, [`pre_plan_rev`]). `None`: no such commit, so the roll-up compares
+    /// with `base`. `main` reads it only for a project that has a roll-up
+    /// document.
+    pub pre_plan: Option<&'a Corpus>,
 }
 
 /// A file that `finish` writes.
@@ -109,6 +118,31 @@ pub struct Plan {
     /// `none`. `finish` prints them. In 0.8.0 the merge of the
     /// pull request acknowledges them.
     pub deviations: Vec<Deviation>,
+    /// The roll-up (design 0.8.0, D54). `None` for a project that has no roll-up
+    /// document: the output is the output of 0.8.0 part A.
+    pub rollup: Option<RollupReport>,
+}
+
+/// What `finish::rollup` did with the roll-up documents that the delta made
+/// due, by document id.
+#[derive(Debug, Default, PartialEq)]
+pub struct RollupReport {
+    /// Pins written, because the change edited the text of the document.
+    pub repinned: Vec<String>,
+    /// Pins written, because `--holds` names the document.
+    pub held: Vec<String>,
+    /// Documents that stay stale: `finish` left them as they were.
+    pub stale: Vec<StaleDoc>,
+}
+
+/// A due roll-up document that `finish` leaves stale.
+#[derive(Debug, PartialEq)]
+pub struct StaleDoc {
+    pub id: String,
+    /// The pins that are stale, or the items that have no pin.
+    pub pins: Vec<String>,
+    /// The pins with the reason, for the text of the line.
+    pub detail: String,
 }
 
 /// True if `finish --json` has the key `deviations` (design 0.8.0, D7): the plan
@@ -288,6 +322,9 @@ pub enum Failure {
     NoBase,
     /// A read failed, or a file is not valid UTF-8.
     Io(String),
+    /// An option names no document that it can name: an id of `--holds` that is
+    /// no due roll-up document. It is exit code 2, and nothing changed.
+    Usage(String),
 }
 
 fn stop<T>(step: u8, reason: impl Into<String>, diags: Vec<Diag>) -> Result<T, Failure> {
@@ -418,10 +455,15 @@ pub fn plan(cx: &Ctx) -> Result<Plan, Failure> {
         ..Plan::default()
     };
     if ch.intent_status() == "closed" {
+        // A closed change has no delta, so no roll-up document is due, and a
+        // claim names none.
+        if let Some(id) = cx.holds.first() {
+            return Err(Failure::Usage(not_due(id, &[])));
+        }
         // A closed change does not proceed: only the folder goes away.
         let rebuilt = finish_indexes(cx, &removed, &mut out.writes)?;
         paths_problem(cx, &out, 1)?;
-        no_new_errors(cx, &rebuilt, None, &HashSet::new())?;
+        no_new_errors(cx, &rebuilt, None, &HashSet::new(), &HashSet::new())?;
         return Ok(out);
     }
     let why = status_problems(ch, head);
@@ -646,9 +688,13 @@ pub fn plan(cx: &Ctx) -> Result<Plan, Failure> {
             missing,
         );
     }
+    // The roll-up (design 0.8.0, D54): it re-pins the due summaries. It has no
+    // step number, because it never stops, and it comes before the archive and
+    // the check of the result.
+    let (rebuilt, stale) = rollup(cx, &lines, &removed, &mut out, rebuilt)?;
     // Step 5.5: the record moves to the archive folder.
     archive(cx, record, &mut out)?;
-    no_new_errors(cx, &rebuilt, Some(base), &created)?;
+    no_new_errors(cx, &rebuilt, Some(base), &created, &stale)?;
     Ok(out)
 }
 
@@ -1789,6 +1835,213 @@ fn new_document(
     out
 }
 
+/// The message of a usage error for an id of `--holds` that names no due
+/// roll-up document. `due` holds the ids of the documents that are due.
+fn not_due(id: &str, due: &[String]) -> String {
+    format!(
+        "`--holds {id}`: `{id}` is no roll-up document that the delta of this change makes due (due now: {}); name a summary, or a `system` or `product` document with `rests-on`, whose requirements the delta changes, adds or removes",
+        if due.is_empty() {
+            "none".to_string()
+        } else {
+            due.join(", ")
+        }
+    )
+}
+
+/// The roll-up of `finish` (design 0.8.0, D54). A roll-up document is due when
+/// its frontier holds a requirement of a document that a line of the delta
+/// names. For each due document that is stale in the result:
+///
+/// 1. If the change edited its text (its `frozen_hash` differs from the tree
+///    before the plan, or from the base if there is no such tree), `finish`
+///    writes its pins.
+/// 2. Else, if `--holds` names it, `finish` writes its pins as the claim that
+///    the text still holds. Each id of `--holds` holds its own document only.
+/// 3. Else the document stays as it is, and the report lists it as stale.
+///
+/// The function never stops, but an id of `--holds` that names no due document
+/// is a usage error: nothing changed, as the plan writes nothing. It returns
+/// the corpus with the new pins, and the ids of the documents that stay stale,
+/// which `no_new_errors` does not count. A project with no roll-up document
+/// has nothing to do, and `plan.rollup` stays `None`.
+fn rollup(
+    cx: &Ctx,
+    lines: &[DeltaLine],
+    removed: &HashSet<String>,
+    out: &mut Plan,
+    rebuilt: Corpus,
+) -> Result<(Corpus, HashSet<String>), Failure> {
+    let has = |c: &Corpus| c.docs.iter().any(rollup::is_rollup);
+    if !has(cx.head) && !has(&rebuilt) {
+        return match cx.holds.first() {
+            Some(id) => Err(Failure::Usage(not_due(id, &[]))),
+            None => Ok((rebuilt, HashSet::new())),
+        };
+    }
+    let targets: Vec<String> = lines
+        .iter()
+        .filter_map(|l| l.parsed.as_ref().ok())
+        .map(|d| d.id.clone())
+        .collect();
+    // The due documents by path, in the result. A `REMOVE` line leaves its
+    // document in the tree, so the area of the document decides for each verb.
+    let new = Rollup::build(cx.config, &rebuilt);
+    let due: BTreeSet<String> = new
+        .due(&targets)
+        .into_iter()
+        .map(|i| rebuilt.docs[i as usize].path.clone())
+        .collect();
+    let due_ids: Vec<String> = due
+        .iter()
+        .map(|p| rebuilt.docs[rebuilt.by_path[p] as usize].id.clone())
+        .collect();
+    // Each id of the claim names one due document, and no other document is held.
+    let mut held: HashSet<String> = HashSet::new();
+    for id in cx.holds {
+        let path = match rebuilt.resolve(id) {
+            Res::Found(d, None, _) => Some(rebuilt.docs[d as usize].path.clone()),
+            _ => None,
+        };
+        match path.filter(|p| due.contains(p)) {
+            Some(p) => {
+                held.insert(p);
+            }
+            None => return Err(Failure::Usage(not_due(id, &due_ids))),
+        }
+    }
+    let before = cx.pre_plan.or(cx.base);
+    let mut report = RollupReport::default();
+    for path in &due {
+        let di = rebuilt.by_path[path];
+        let d = &rebuilt.docs[di as usize];
+        let findings = new.stale(di);
+        if findings.is_empty() {
+            continue;
+        }
+        let edited = before.is_some_and(|b| {
+            check::head_to_base(b, d).is_none_or(|b| b.frozen_hash != d.frozen_hash)
+        });
+        let text = (cx.read)(path).map_err(Failure::Io)?;
+        // The tool does not read the front matter of a file with a byte order
+        // mark, so it cannot write the field there. `finish` writes no path that
+        // has a symbolic link, and none outside the repository. In both cases
+        // the document stays stale.
+        let writable = !text.starts_with('\u{feff}') && (cx.path_problem)(path).is_none();
+        if writable && (edited || held.contains(path)) {
+            let level = new.level(d).expect("a due document has an area");
+            let pins: Vec<String> = new.pins_for(&level).iter().map(Pin::text).collect();
+            out.writes.push(Write {
+                path: path.clone(),
+                old: Some(text.clone()),
+                new: rollup::set_rests_on(&text, &pins),
+            });
+            if edited {
+                report.repinned.push(d.id.clone());
+            } else {
+                report.held.push(d.id.clone());
+            }
+            continue;
+        }
+        let mut pins: Vec<String> = findings.iter().map(|f| f.target.clone()).collect();
+        pins.dedup();
+        let detail: Vec<String> = findings
+            .iter()
+            .map(|f| match f.kind {
+                rollup::Kind::Incomplete => format!("{} has no pin", f.target),
+                _ => format!("{} changed", f.target),
+            })
+            .collect();
+        report.stale.push(StaleDoc {
+            id: d.id.clone(),
+            pins,
+            detail: detail.join(", "),
+        });
+    }
+    out.rollup = Some(report);
+    out.writes.sort_by(|a, b| a.path.cmp(&b.path));
+    let stale: HashSet<String> = out
+        .rollup
+        .iter()
+        .flat_map(|r| r.stale.iter().map(|s| s.id.clone()))
+        .collect();
+    Ok((rebuild(cx, &out.writes, removed), stale))
+}
+
+/// The commit before the one that added the plan: the tree that the roll-up
+/// compares with (design 0.8.0, D54, step 2). The commit is the newest one that
+/// added the plan in the history of the base if the base has the plan, else in
+/// the history of `HEAD`, as `acceptance::section_is_read` picks it. `None` if
+/// no commit added the plan (a shallow clone, a plan that is not committed), or
+/// if it is the first commit of the repository: the caller compares with the
+/// base.
+pub fn pre_plan_rev(
+    git: &crate::git::Git,
+    plan_path: &str,
+    base_rev: Option<&str>,
+    base_has_plan: bool,
+) -> Option<String> {
+    let rev = match base_rev {
+        Some(r) if base_has_plan => r,
+        _ => "HEAD",
+    };
+    let added = git.added_at(rev, plan_path).ok()??;
+    git.commit(&format!("{added}^"))
+}
+
+/// The roll-up documents of `head` whose text a change that the diff finished
+/// edited, by id (design 0.8.0, D52 and D54). A change is finished in the diff
+/// if the lifecycle tree `life` has its folder and the head has not. A document
+/// counts if the delta of that change made it due ([`Rollup::due`]) and its
+/// `frozen_hash` differs from its hash in the tree before the
+/// commit that added the plan of that change ([`pre_plan_rev`]). `finish` made
+/// the new pins of such a document: they are no claim, so SD645 does not report
+/// it. A change with no such commit excuses nothing. A tree with no roll-up
+/// document reads no other tree.
+pub fn finished_edits(
+    repo: &crate::repo::Repo,
+    cfg: &Config,
+    head: &Corpus,
+    life: &Corpus,
+    life_rev: &str,
+    use_cache: bool,
+) -> Result<HashSet<String>, crate::repo::Fatal> {
+    let mut out: HashSet<String> = HashSet::new();
+    if !head.docs.iter().any(rollup::is_rollup) {
+        return Ok(out);
+    }
+    let now: HashSet<String> = change::collect(head).into_iter().map(|c| c.dir).collect();
+    for ch in change::collect(life) {
+        let Some(plan) = &ch.plan else { continue };
+        if now.contains(&ch.dir) {
+            continue;
+        }
+        let path = &life.docs[plan.doc as usize].path;
+        let Some(rev) = pre_plan_rev(&repo.git, path, Some(life_rev), true) else {
+            continue;
+        };
+        // Only a document that the delta of that change made due: a claim of
+        // `refresh --holds` on another summary stays a claim.
+        let targets: Vec<String> = ch
+            .delta(life)
+            .iter()
+            .filter_map(|l| l.parsed.as_ref().ok())
+            .map(|d| d.id.clone())
+            .collect();
+        let due: HashSet<u32> = Rollup::build(cfg, head).due(&targets).into_iter().collect();
+        let snap = crate::repo::Snapshot::at(repo, &rev)?;
+        let mut loaded = crate::repo::load(repo, cfg, &[&snap], use_cache, false)?;
+        let pre = loaded.corpora.remove(0);
+        for (i, d) in head.docs.iter().enumerate() {
+            if due.contains(&(i as u32))
+                && check::head_to_base(&pre, d).is_none_or(|b| b.frozen_hash != d.frozen_hash)
+            {
+                out.insert(d.id.clone());
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// The corpus after the writes, with the files of the folder removed.
 fn rebuild(cx: &Ctx, writes: &[Write], removed: &HashSet<String>) -> Corpus {
     let by_path: HashMap<&str, &Write> = writes.iter().map(|w| (w.path.as_str(), w)).collect();
@@ -1859,13 +2112,18 @@ fn finish_indexes(
     Ok(rebuild(cx, writes, removed))
 }
 
-/// The rebuilt corpus may add no error. The only exception is SD305 on a new
+/// The rebuilt corpus may add no error. One exception is SD305 on a new
 /// document: the author adds the sections that the root requires.
+///
+/// The other exception is SD641 and SD642 on a due roll-up document that
+/// `finish` leaves stale (`stale` holds the ids, design 0.8.0, D54): its own
+/// delta made it stale, and `finish` prints it instead of stopping.
 fn no_new_errors(
     cx: &Ctx,
     rebuilt: &Corpus,
     base: Option<&Corpus>,
     created: &HashSet<String>,
+    stale: &HashSet<String>,
 ) -> Result<(), Failure> {
     type Key = (Code, String, String);
     // SD937 is an error only for a spec that the diff touches, as `check` reads it
@@ -1893,6 +2151,10 @@ fn no_new_errors(
     let mut new: Vec<Diag> = Vec::new();
     for d in errors(rebuilt) {
         if d.code == Code::SectionMissing && created.contains(&d.path) {
+            continue;
+        }
+        if matches!(d.code, Code::SummaryStale | Code::SummaryIncomplete) && stale.contains(&d.doc)
+        {
             continue;
         }
         let key = (d.code, d.doc.clone(), d.target.clone());
@@ -2142,6 +2404,8 @@ mod tests {
             reports: None,
             acceptance: None,
             accept_on: !cfg.is_off(Code::AcceptanceMissing),
+            holds: &[],
+            pre_plan: None,
         })
     }
 

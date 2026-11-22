@@ -208,6 +208,8 @@ The line is not a diagnostic. It has no code, no severity and no rule, it is not
 
 The JSON output lists each diagnostic. It also lists each document with its number of recognized requirements. The field `locked_links` is always in the output, with or without `--all`. It is a list of the locked links, in the order of path and line. Each entry has `path`, `line`, `target`, `pointer` (the text after "points to" in the info line) and `commit` (the full id of the commit that the pointer names, or `null`). The list is empty if there is no locked link. The field `approvals` is always in the output too, after `locked_links`. It lists the approval commits that cleared a gate of SD910, in the order of the walk. Each entry has `commit` (the full id), `path` (the artifact that the commit approved) and `author` (the author e-mail). The list is empty with `[change] approval = "base"`, and also when no gate needed an approval commit ([diagnostics.md](diagnostics.md#checks-of-the-change-lifecycle)). The profile sets the severity of each code ([profiles.md](profiles.md)). [diagnostics.md](diagnostics.md) gives each code.
 
+In the JSON output, the `path` of SD705 to SD707 is a folder, not a file, for an area that has no summary.
+
 ## evidence
 
 ```text
@@ -235,13 +237,28 @@ spec-dna context <target>... [--path <file>]... [--budget <chars>] [--query <tex
 `context` prints the sections that an agent needs, in this order:
 
 1. The sections that `[conventions]` names for the type of each target ([show](#show)).
-2. The first tier: each rule whose `applies-to` matches an entry or a path, and each rule with no `applies-to` (it applies to the whole project). Also each top file (`product`, `system` or `terms`) whose `applies-to` matches. A top file with no `applies-to` is not in a task context, but a target can name it.
-3. The entry documents or sections.
-4. For a code path: the sections that cite the file by its path, or by an identifier that is in the file ([diagnostics.md](diagnostics.md#code-citations)). A code path is a target or a `--path`, and it can be an untracked file. The documents do not need `applies-to`.
-5. The requirement sections and the summary of the best documents that cite the file.
-6. The other normative documents whose `applies-to` matches an entry or a path, and the sections that cite only a directory of the path.
-7. The `depends-on` targets at depth 1, and the linked accepted decisions as summaries.
-8. The other sections.
+2. The summaries of the areas that the request reaches, and the top documents above them (the tier `summary`, below).
+3. The first tier: each rule whose `applies-to` matches an entry or a path, and each rule with no `applies-to` (it applies to the whole project). Also each top file (`product`, `system` or `terms`) whose `applies-to` matches. A top file with no `applies-to` is not in a task context, but a target can name it.
+4. The entry documents or sections.
+5. For a code path: the sections that cite the file by its path, or by an identifier that is in the file ([diagnostics.md](diagnostics.md#code-citations)). A code path is a target or a `--path`, and it can be an untracked file. The documents do not need `applies-to`.
+6. The requirement sections and the summary of the best documents that cite the file.
+7. The other normative documents whose `applies-to` matches an entry or a path, and the sections that cite only a directory of the path.
+8. The `depends-on` targets at depth 1, and the linked accepted decisions as summaries.
+9. The other sections.
+
+The tier `summary` ([design](design/0.8.0.md#d56-context-the-tier-summary)) exists only in a project that has a roll-up document: a `summary`, or a `system` or `product` document with `rests-on` ([refresh](#refresh)). It serves the chain of the request:
+
+- Each `product` document with `rests-on`, then each `system` document with `rests-on`.
+- The summary of the area of each active `requirements` document that the plan serves, and the summaries of the areas above it. A document that the plan only links does not count. A requirements document outside the folder of an area is in the root area: it reaches only the `product` and `system` documents.
+- The order is top down: `product`, `system`, then the summaries from the shallow folder to the deep one. For each document, the title section comes first, then the other sections in heading order.
+
+The tier, in full text and in stubs together, uses at most a quarter of the budget: 2,000 of the 8,000 characters of the default. It is filled in order. The first sections are in full, the next ones are stubs, and the last ones are not listed. The tier comes after the sections of the entry and of the citing documents in the packing order, so it never takes their room.
+
+A document of the tier is in no other tier. A target that names the document makes it an entry, and `[conventions]` can name a section of it. If the layer of the summaries has `context = "on-request"`, `context` counts the summaries and does not serve them.
+
+A document of the tier is stale when it has a finding of SD641 or SD642 ([diagnostics.md](diagnostics.md#roll-up-sd641-to-sd645)). The profile does not change this: a document is stale also where `check` turns those codes off. Its header has the word `stale` after the tier, for example `<!-- summaries/valves h:5d0e7c2a91b3f4e8 summary summary stale -->`. The header gives the type `summary`, then the tier `summary`. The stub line of a stale document ends with `[stale]`.
+
+With `--json`, a stale unit has `"stale":true`, and the other units have no such field. The tier has the new value `summary` in the field `tier`. The word `stale` does not prove that a current summary is true. A tree with no roll-up document has no tier, and the output is the same as before.
 
 The order of the layers sets the order of the first tier. It also orders the documents of one citation class (cite the file, cite an identifier, or cite a directory). The layers come by level, from 0 up. The layers of one level keep the order of the `[layers.*]` tables in `spec-dna.toml`, or the order of the default graph. In the default graph, `foundation` comes before `rules`. `spec-dna layer list` shows the level of each layer ([The table `layers`](config.md#the-table-layers)).
 
@@ -487,7 +504,7 @@ Exit codes: 0 written or printed; 1 a refusal (an edit that `HEAD` does not have
 spec-dna next <slug> [--base <rev>]
 ```
 
-`next` prints the checklist to the next gate of the change `<slug>`, the folder `<intent folder>/<slug>/`. The first 2 lines give the change, its class, its stage and its base. An intent with no valid class (the field is absent, empty or invalid) has no class: the first line then says `(class not set)`. The other lines are the checklist, at most 10. Each line says done (`[x]`) or open (`[ ]`), and ends with `[skill: <name>]`. The last line is the edit or the command that ends the stage, for example ``set `status: accepted` in docs/intent/dose-limit/intent.md``. The output has at most 12 lines.
+`next` prints the checklist to the next gate of the change `<slug>`, the folder `<intent folder>/<slug>/`. The first 2 lines give the change, its class, its stage and its base. An intent with no valid class (the field is absent, empty or invalid) has no class: the first line then says `(class not set)`. The other lines are the checklist, at most 10. Each line says done (`[x]`) or open (`[ ]`), and ends with `[skill: <name>]`. The last line is the edit or the command that ends the stage, for example ``set `status: accepted` in docs/intent/dose-limit/intent.md``. The output has at most 12 lines, and the note of the roll-up (below) is one more.
 
 ```text
 change dose-limit (routine), stage build
@@ -579,6 +596,8 @@ With `--json`, the output is one object:
 {"slug":"dose-limit","class":"routine","stage":"build","base":"3f2a9c1b7e0d4a11...","items":[{"done":true,"text":"the intent is accepted","skill":"brainstorm"}],"next_task":{"id":"t2","text":"Close the valve","files":["src/valve.py"],"verify":"`pytest`"},"next":"change a file that `Files` of ...","notes":[]}
 ```
 
+When the delta makes a roll-up document due ([finish](#finish)), `next` prints one note after the checklist. The note reads ``note: the delta makes summaries/valves due at finish; edit the text of a summary whose meaning changes, and name each other one in `spec-dna finish <slug> --holds <id>` ``. It names each due document, and `<slug>` is the slug of the change. It has no done state, asks for no edit and changes no stage. With `--json`, it is the last entry of `notes`. A closed change, a change with no delta and a project with no roll-up document have no note.
+
 `base` is a SHA, or `null`. `class` is `null` if the intent has no valid class, and with the policy `none`. `next_task` is `null` outside the `build` stage, and it is `null` if the plan has no open task. A draft plan can have one. `next` is the text of the last item. An item of a person has `"person":true`; the other items have no such field. `notes` lists the notes, for example the note for no base. `next` warns on a pin mismatch, as `status` does.
 
 Exit codes: 0 done; 2 usage; 3 configuration, or a `--base` that is not a commit; 4 git; 5 no folder for the slug.
@@ -621,7 +640,7 @@ Exit codes: 0 done; 2 usage or an unknown name; 3 configuration.
 ## finish
 
 ```text
-spec-dna finish <slug> [--dry-run] [--base <rev>]
+spec-dna finish <slug> [--holds <id>]... [--dry-run] [--base <rev>]
 ```
 
 `finish` ends a change ([Finish](design/0.6.0.md#finish)). It applies the delta of the spec of `<intent folder>/<slug>/` to the requirements, checks the evidence, and deletes the folder. The author runs it in the pull request of the code. The review then sees the code and the new current truth in one diff. It stops at the first step that fails. A stop writes nothing.
@@ -641,7 +660,7 @@ spec-dna finish <slug> [--dry-run] [--base <rev>]
     - A relative link of a delta line moves to the path of the target document.
     - The result keeps CRLF, a BOM and the final newline of each file.
     - A line that the tree applies already is skipped, so a second run changes nothing.
-6. Step 5: each requirement that the delta adds or changes has evidence (SD916). A partial `covers:` tag alone is not evidence. For a change with no delta, each requirement whose hash differs from the base has it. The result may add no error. The only exception is SD305 for a new document. With `[evidence] reports`, step 5 has 2 more parts, and the numbers of the steps stay. Step 5.1 runs first: each test report must be present, readable and fresh (SD613 to SD615). Step 5.4 is the check of the evidence: a requirement that has a tag also needs a bound test case that passed in the reports (SD617). With `[evidence] reliable-for`, a requirement of a covered change that passed fewer times than `[evidence] reliable-runs` stops step 5.4 with SD620 ([Proof levels and the proof debt](config.md#proof-levels-and-the-proof-debt)). A proof debt (`proof-owed`) is no evidence for SD916, SD617 and SD620. Run the tests and `spec-dna evidence stamp` before `finish`, in the same checkout ([Test reports](config.md#test-reports)). The steps are off in `lite`.
+6. Step 5: each requirement that the delta adds or changes has evidence (SD916). A partial `covers:` tag alone is not evidence. For a change with no delta, each requirement whose hash differs from the base has it. The result may add no error. The only exceptions are SD305 for a new document, and SD641 and SD642 for a roll-up document that `finish` leaves stale (see the roll-up, below). With `[evidence] reports`, step 5 has 2 more parts, and the numbers of the steps stay. Step 5.1 runs first: each test report must be present, readable and fresh (SD613 to SD615). Step 5.4 is the check of the evidence: a requirement that has a tag also needs a bound test case that passed in the reports (SD617). With `[evidence] reliable-for`, a requirement of a covered change that passed fewer times than `[evidence] reliable-runs` stops step 5.4 with SD620 ([Proof levels and the proof debt](config.md#proof-levels-and-the-proof-debt)). A proof debt (`proof-owed`) is no evidence for SD916, SD617 and SD620. Run the tests and `spec-dna evidence stamp` before `finish`, in the same checkout ([Test reports](config.md#test-reports)). The steps are off in `lite`.
 7. Steps 5.2 and 5.5: the acceptance record ([accept](#accept)). They run in `standard` and `strict`, and in `lite` only with a rule that turns the group `acceptance` on. A change needs a record when `[change] acceptance-for` asks for it, or a role of [`[owners]`](config.md#the-table-owners) matches a role path of the change, and its plan is new: the branch added it, or the commit that added it on the base pinned 0.8.0 or later ([diagnostics.md](diagnostics.md#the-acceptance-record-sd927-to-sd935)). A closed change and a change with no plan need none. For a plan of an older pin, `finish` prints on stderr ``note: `<plan>` was added when spec-dna.toml pinned <pin>, before 0.8.0, so `finish` needs no acceptance record; `finish` does not compare the brief of a record in the folder, and `check` does``, and it runs no step 5.2.
 
     Step 5.2 comes after step 5.1 and before the evidence (step 5.4). It reads `<folder>/acceptance.toml` of `HEAD`. It stops at the first code that is not off, in this order:
@@ -668,6 +687,22 @@ spec-dna finish <slug> [--dry-run] [--base <rev>]
     Step 5.5 comes last. It moves each record that the folder has, also in `lite` and for a plan of an older pin, where no rule needs it. With no record and no need, it writes nothing. It moves the record to `.spec-dna/accepted/<slug>.toml`, or to `<slug>-2.toml`, `<slug>-3.toml` and so on if the file exists. The archive file is one of the files that `finish` writes, so `--dry-run` lists it, and `finish` stages it.
 
     If git ignores the path, step 5 stops before it writes, and the message names the rule (`git check-ignore -v`). The numbers of the steps and the value 6 of `--json` on success stay as they are.
+
+The roll-up ([design](design/0.8.0.md#d54-finish-next-and-mv-with-summaries)) runs after the evidence, and before step 5.5 and the check of the result. It has no step number, because it never stops. A roll-up document ([refresh](#refresh)) is due when its frontier holds a requirement of a document that a line of the delta names. This holds for the verbs `CHANGE`, `REMOVE` and `ADD`. For each due document that is stale in the result, `finish` does one of these:
+
+- If the change edited the text of the document, `finish` writes its pins. The change edited the text when it differs from the text in the tree before the commit that added the plan. With no such commit, the compare uses the base. Thus an edit that merged in an earlier pull request counts, and `check` gives no SD645 for it.
+- Else, if `--holds <id>` names the document, `finish` writes its pins. This is the claim that the text still holds, and `check` gives SD645 for it.
+- Else `finish` leaves the file as it is and prints the document as stale. Step 5 does not count SD641 and SD642 of that document, and `finish` exits with code 0. `check` then gives SD641 (an error in `standard` and `strict`) until the author edits the summary and runs `refresh`, or runs `refresh --holds`.
+
+`--holds` takes one id, and it can come more than once, for example `--holds summaries/valves --holds system`. Each id holds its own document only. An id that names no due roll-up document gives exit code 2, and `finish` changes nothing. A closed change and a project with no roll-up document have no due document, so `--holds` gives exit code 2 there too. A file with a byte order mark and a path with a symbolic link stay stale, because `finish` writes no pin there.
+
+The roll-up also runs with `--dry-run`, and it writes nothing then. It prints these lines before the line `Hours:`:
+
+- ``roll-up: re-pinned <id> (the change edited its text)``
+- ``roll-up: held <id> (--holds)``
+- ``roll-up: stale <id> (<reason>); edit it and run spec-dna refresh <id>, or run spec-dna refresh <id> --holds``
+
+With `--dry-run`, the first 2 lines say `would re-pin` and `would hold`. The `<reason>` lists each stale pin as `<pin> changed`, and each item with no pin as `<item> has no pin`. A project with no roll-up document has none of these lines.
 
 If no step stops, `finish` writes all the files in one pass. Then it deletes the tracked files of the folder and stages each path with `git add -A`. It makes no commit: the author reads the diff and commits it with the code.
 
@@ -704,6 +739,8 @@ The base is the merge base of `--base` (default: `origin/HEAD`, then `[change] b
 ```
 
 `deviations` is the list of the `[[deviation]]` entries of the record as `{"id","kind","text","verdict"}`, with the extra key `"record":"unread"` when the record did not read. The output has the key only if the record has a deviation and the change needs a record, or if the pin of `spec-dna.toml` is 0.8.0 or later. A project of 0.7.1 with no deviation sees the output of 0.7.1. `hours` is the total of the `Hours:` labels of the tasks as `{"low","high"}` (equal for a number), or `null`. `actual` is the total of the `Actual:` labels as a number, or `null`. A stop has `"ok":false`, the `step` that failed, a `reason`, and the `diagnostics` of the stop. `files` is then empty, and the output has no `deviations`, no `hours` and no `actual`. [diagnostics.md](diagnostics.md#stops-of-finish) lists the stops.
+
+`rollup` is `{"repinned":["<id>",...],"held":["<id>",...],"stale":[{"id":"<id>","pins":["<pin>",...]}]}`. The output has the key only if the tree has a roll-up document. A stop has no `rollup`.
 
 `finish` is the one command that deletes documents. It deletes only the files of the intent folder, and only after the steps. Git is the archive.
 
@@ -1007,6 +1044,10 @@ Before `mv` changes a file, a preservation check compares the result with the cu
 - there is no new error.
 
 If a check fails, `mv` changes nothing. It names each requirement that the move changes, and it exits with code 1.
+
+The check does not count SD641 and SD642, because a move can change what a summary must pin. `mv` writes no pin. It prints one line that names each roll-up document that the move makes stale, for example ``roll-up: the move changes the frontier of summaries/a, summaries/b``. The line also says what to do next. `--json` has the list `summaries`, only if the list is not empty.
+
+A move inside one area makes no summary stale, because each pin resolves through the alias and the hash stays. A move to another area makes stale the summary of each area that the move leaves or enters. Edit each such summary, then run `refresh` ([refresh](#refresh)).
 
 ## refresh
 
@@ -1457,7 +1498,7 @@ An unknown layout stops with exit code 3 and writes nothing: `.specify/` or `spe
 | --- | --- |
 | 0 | Success. For `check`: no new error (with `--all`: no error). For `eval run`: the pass rate is at least `min-pass-rate`. `hook` always exits with 0 |
 | 1 | `check` found a new error (with `--all`: any error), `evidence stamp` found an unreadable report or no report, the preservation check of `mv`, `history` or `index` refused the change, the guard of `refresh` refused a document, a step of `finish` stopped, `approve` refused (steps 3 to 7), `accept` refused (an edit that `HEAD` does not have, a change with no plan or no intent, or a changed code), `upgrade` or `import` refused or its proof failed, or the pass rate of `eval run` is below `min-pass-rate` |
-| 2 | Usage error. Also a refusal of `layer add` (it changes nothing), an unknown `--group` of `status`, `stats` or `context`, `stats` without `--sdlc`, an unknown id or an unknown harness arm of `eval run`, `--arms` with 1 arm or more than 3, `--arms` with `--ab`, `--no-isolate` with `--arms` or `--harness`, a `--compare` that is not 2 arms of its file, an `index` of a place that gives no type, a `refresh` with `--all` and `--holds`, with no id, or with an id that is not a roll-up document, a `new summary` of an area that has no folder, a `new` or `mv` into an area that differs from a name of `areas` only in case, and an `import` with a missing layer for a type that it writes or for `--keep research` |
+| 2 | Usage error. Also a refusal of `layer add` (it changes nothing), an unknown `--group` of `status`, `stats` or `context`, `stats` without `--sdlc`, an unknown id or an unknown harness arm of `eval run`, `--arms` with 1 arm or more than 3, `--arms` with `--ab`, `--no-isolate` with `--arms` or `--harness`, a `--compare` that is not 2 arms of its file, an `index` of a place that gives no type, a `refresh` with `--all` and `--holds`, with no id, or with an id that is not a roll-up document, a `finish` with a `--holds` id that is no due roll-up document, a `new summary` of an area that has no folder, a `new` or `mv` into an area that differs from a name of `areas` only in case, and an `import` with a missing layer for a type that it writes or for `--keep research` |
 | 3 | Configuration error: no valid `spec-dna.toml` (also 2 names in `areas` that differ only in case, `evidence stamp` with no `[evidence] reports`, a glob of `[evidence] reports` that is absolute or has `..`, or `[evidence] reliable-for` other than `none` with no `reports`), a different version pin, an unknown base revision (for `log`: an unknown `--since`), or no git repository. For `check`: also a base that pins a version before 0.4.0, or that `upgrade` cannot plan. For `upgrade`: also a form that it cannot edit, or a bad `--pin-file`. For `finish`: also an `accepted` change with no base. For `import`: no project, an unknown layout or a bad file of `--areas`. For `eval run`: also an invalid eval, an estimate above the cap, a stop by the cap, or a `claude` that is absent. For `eval verdict --compare`: a file that is no result of `eval run --arms` |
 | 4 | Git or file system error. For `finish`: a write failed, and the message lists the files. For `approve`: the commit failed, and the file has its old text. For `import`: a failed `git mv` or write, and the message gives the commands that restore the tree. For `eval run`: the temporary folder, the copy, the base commit or the result file. For `evidence stamp` and `check --reports`: a folder of reports that exists and cannot be read |
 | 5 | A target names no document, section or requirement. For `refresh`: an id names no document. For `finish`, `next`, `approve` and `accept`: no folder for the slug, and for `approve` also no file of the artifact |
