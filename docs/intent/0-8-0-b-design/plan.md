@@ -15,7 +15,7 @@ status: approved
 
 - [x] t1: Write section 15 of the design page and ADR 0032 with `architect`. Files: `docs/design/0.8.0.md`, `docs/adr/0032-acceptance-in-one-pass.md`, `docs/adr/0017-profiles.md`, `docs/adr/0025-independent-acceptance.md`, `docs/adr/0027-owners-invariants-and-write-back.md`, `docs/design/0.8.1-note.md`. Verify: `spec-dna check --base master` gives no error.
 - [x] t2: Check the design with `checker`, and apply the fixes. Files: `docs/design/0.8.0.md`, `docs/adr/0032-acceptance-in-one-pass.md`. Verify: the report of `checker` has no open blocker.
-- [ ] t3: Check the language with `docs-editor`. Files: `docs/design/0.8.0.md`, `docs/adr/0032-acceptance-in-one-pass.md`. Verify: `pre-commit run --all-files` passes.
+- [x] t3: Check the language with `docs-editor`. Files: `docs/design/0.8.0.md`, `docs/adr/0032-acceptance-in-one-pass.md`. Verify: `pre-commit run --all-files` passes.
 
 ## Risks
 
