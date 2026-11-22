@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Records how the fixtures of the upgrade were made (step 5, slice 1).
 #
-# The fixtures are projects that pin 0.4.2, 0.5.0, 0.6.1 or 0.7.0. Only the real
+# The fixtures are projects that pin 0.4.2, 0.5.0, 0.6.1, 0.7.0 or 0.7.1. Only the real
 # binaries of those versions give the exact bytes and markers of the files that
 # `init` writes, so the generated files are committed. CI does not run this
 # script. The tests read what it records.
@@ -67,6 +67,18 @@
 #                             machine. The tests of `upgrade_v070.rs` read it.
 #                             0.7.0 prints no note about `typos`: that note
 #                             is a feature of `upgrade` of 0.7.1.
+#   v071/, v071-lite/,        A project of 0.7.1 in each profile: `standard`,
+#   v071-strict/              `lite` and `strict`, all with the harness `lean`.
+#                             `v071/` has the same hand-written documents,
+#                             script and test as `v070/`, with the change
+#                             `drip-schedule` (an approved spec and an approved
+#                             plan) on the base. The other 2 folders copy the
+#                             hand-written files of `v071/`, so the 3 projects
+#                             differ only in what `init` of 0.7.1 writes. The
+#                             script runs `init --answers` of 0.7.1 on them.
+#                             `v071-strict/` has `approval = "base"`, because
+#                             `strict` reads the approvals of the base only.
+#                             `upgrade_fixtures.rs` and `upgrade_cli.rs` read them.
 #   recorded/<case>.txt       The result of the real binary on the composed
 #                             tree of each case: the exit code of
 #                             `check --all`, each document that it loaded, each
@@ -76,19 +88,19 @@
 #
 # Use:
 #
-#   tests/fixtures/upgrade/make.sh [old|v061|v070]
+#   tests/fixtures/upgrade/make.sh [old|v061|v070|v071]
 #
 # With no argument, the script makes each fixture. `old` makes the fixtures of
 # 0.4.2 and 0.5.0, `v061` makes the fixture of 0.6.1, and `v070` makes the
-# fixture of 0.7.0.
+# fixture of 0.7.0. `v071` makes the 3 fixtures of 0.7.1.
 #
 # The script needs `git`, `cargo` and `python3`. It builds the tags `v0.4.2`,
-# `v0.5.0`, `v0.6.1` and `v0.7.0` of this repository in a temporary `git worktree`, with
+# `v0.5.0`, `v0.6.1`, `v0.7.0` and `v0.7.1` of this repository in a temporary `git worktree`, with
 # `cargo install --locked --root`. It deletes the worktrees and their build
 # folders at the end. The disk needs about 1 GB. It never uses the binary of
 # `~/.cargo/bin` unless you give its path in a variable.
 # To use binaries that exist already, set `SPEC_DNA_042`, `SPEC_DNA_050`,
-# `SPEC_DNA_061` and `SPEC_DNA_070` to their paths.
+# `SPEC_DNA_061`, `SPEC_DNA_070` and `SPEC_DNA_071` to their paths.
 #
 # The script changes only files in this folder. Run it twice: the second run
 # must give no diff (`git status --short tests/fixtures/upgrade`).
@@ -100,7 +112,7 @@ repo="$(cd "$here/../../.." && pwd)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/spec-dna-fixtures.XXXXXX")"
 
 cleanup() {
-  for tag in 0.4.2 0.5.0 0.6.1 0.7.0; do
+  for tag in 0.4.2 0.5.0 0.6.1 0.7.0 0.7.1; do
     if [ -d "$work/wt-$tag" ]; then
       git -C "$repo" worktree remove --force "$work/wt-$tag" || true
     fi
@@ -147,6 +159,9 @@ if selected v061 "$@"; then
 fi
 if selected v070 "$@"; then
   bin070="$(binary 0.7.0 SPEC_DNA_070)"
+fi
+if selected v071 "$@"; then
+  bin071="$(binary 0.7.1 SPEC_DNA_071)"
 fi
 
 # No file of the person or of the machine reaches the result.
@@ -333,6 +348,44 @@ ANSWERS
     done
 }
 
+# The fixture of 0.7.1 in one profile. `v071` keeps its own hand-written files.
+# The other folders copy them from `v071`. `init` of 0.7.1 writes the rest. The
+# answers set the graph and the approver, because `init` reads `user.email` of
+# git otherwise.
+make_v071() {
+  local bin="$1" name="$2" profile="$3" tmp="$work/gen-$2" out="$here/$2"
+  rm -rf "$tmp"
+  mkdir -p "$tmp" "$out"
+  local item
+  for item in docs src tests .pre-commit-config.yaml; do
+    if [ "$name" != v071 ]; then
+      rm -rf "$out/$item"
+      cp -R "$here/v071/$item" "$out/$item"
+    fi
+    cp -R "$out/$item" "$tmp/$item"
+  done
+  seed_agents "$tmp"
+  commit_tree "$tmp"
+  cat >"$work/answers-$name.toml" <<ANSWERS
+profile = "$profile"
+graph = "default"
+approvers = ["owner@example.test"]
+harness = "lean"
+ci = "none"
+evals = "skeleton"
+hook = "none"
+ANSWERS
+  (cd "$tmp" && "$bin" init --answers "$work/answers-$name.toml" >/dev/null)
+  find "$out" -mindepth 1 -maxdepth 1 ! -name docs ! -name src ! -name tests \
+    ! -name .pre-commit-config.yaml -exec rm -rf {} +
+  # Each file that `init` added or changed.
+  (cd "$tmp" && git status --porcelain -uall | cut -c4- | sort) |
+    while IFS= read -r file; do
+      mkdir -p "$out/$(dirname "$file")"
+      cp "$tmp/$file" "$out/$file"
+    done
+}
+
 if selected old "$@"; then
   make_adapters v04 "$bin042"
   make_adapters v05 "$bin050"
@@ -361,4 +414,13 @@ fi
 if selected v070 "$@"; then
   make_v070 "$bin070"
   record v070 "$bin070" v070
+fi
+
+if selected v071 "$@"; then
+  make_v071 "$bin071" v071 standard
+  make_v071 "$bin071" v071-lite lite
+  make_v071 "$bin071" v071-strict strict
+  record v071 "$bin071" v071
+  record v071-lite "$bin071" v071-lite
+  record v071-strict "$bin071" v071-strict
 fi

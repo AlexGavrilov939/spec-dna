@@ -101,7 +101,7 @@ impl Fx<'_> {
             SPEC,
             &format!("---\nstatus: approved\n---\n# Spec\n\n{body}"),
         );
-        r.commit("base");
+        r.commit_base_of_0_7_1("base");
         origin_head(&r.dir, "main");
         r.git(&["checkout", "-q", "-b", "feature"]);
         r

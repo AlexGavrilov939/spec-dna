@@ -2356,11 +2356,13 @@ fn a_file_that_the_branch_adds_reads_the_pin_of_its_adding_commit_for_both_pin_r
     // (pin of the adding commit, later pin, SD923 findings, SD939 findings).
     // SD923 skips a plan before 0.7.0, and SD939 skips a plan before 0.8.0. Both
     // read the pin of the adding commit, with a base and with none.
+    // The head pins the version of the binary, so a pin before 0.8.0 comes in the
+    // adding commit and a later commit sets the pin of the binary.
     let cases = [
-        ("0.6.9", None, 0, 0),
-        ("0.7.1", None, 1, 0),
-        ("0.8.0", Some(VERSION), 1, 1),
         ("0.6.9", Some(VERSION), 0, 0),
+        ("0.7.1", Some(VERSION), 1, 0),
+        ("0.8.0", None, 1, 1),
+        ("0.8.0", Some(VERSION), 1, 1),
         ("0.7.5", Some(VERSION), 1, 0),
     ];
     for (first, later, sd923, sd939) in cases {
@@ -2421,7 +2423,7 @@ fn a_plan_at_pin_0_7_1_and_a_spec_at_pin_0_8_0_in_one_change_each_read_their_own
 #[test]
 fn a_shallow_clone_reads_the_sections_as_0_8_0_does() {
     // No adding commit is known in a shallow clone: the stricter result holds.
-    let r = branch_added("0.7.1", None);
+    let r = branch_added("0.7.1", Some(VERSION));
     let dst = r.dir.with_extension("shallow");
     let _ = std::fs::remove_dir_all(&dst);
     shallow_clone(&r.dir, &dst, 1);

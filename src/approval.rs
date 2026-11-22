@@ -628,9 +628,30 @@ pub struct AckWalk {
     /// it is no later change. The entries of the record in the base tree count: the
     /// pull request that added them walked them.
     pub counted: Vec<String>,
-    /// The commits that change the record and another path, each with the first
-    /// other path. The commit is empty for the staged changes of `check --staged`.
+    /// The commits of the current life of the record that change the record and
+    /// another path, each with the first other path. The commit is empty for the
+    /// staged changes of `check --staged`. A life ends at a commit that deletes the
+    /// record with no move to the archive, so an earlier commit gives no finding (D80
+    /// item 1).
     pub mixed: Vec<(String, String)>,
+}
+
+/// True if the commit with these `paths` takes away the record of the change in
+/// `record` for good: it deletes the record, or the archive file of the change, and
+/// moves it nowhere. The commit of `finish` (the record out, the archive in) moves
+/// the record, and the revert of that commit moves it back, so each continues the life
+/// (D80 item 1).
+fn ends_life(paths: &[(String, PathChange)], record: &str) -> bool {
+    let slug = record.rsplit('/').nth(1).unwrap_or_default();
+    let archive = |p: &str| crate::acceptance::archive_number(p, slug).is_some();
+    let has = |k: PathChange, f: &dyn Fn(&str) -> bool| paths.iter().any(|(p, c)| *c == k && f(p));
+    let record_out = has(PathChange::Deleted, &|p| p == record);
+    let archive_out = has(PathChange::Deleted, &archive);
+    let record_in = has(PathChange::Added, &|p| p == record);
+    let archive_in = has(PathChange::Added, &|p| {
+        crate::acceptance::is_archive_path(p)
+    });
+    (record_out && !archive_in) || (archive_out && !record_in && !record_out)
 }
 
 fn lower(list: Vec<String>) -> Vec<String> {
@@ -727,6 +748,11 @@ pub fn ack_walk(git: &Git, base_rev: &str, record: &str) -> Result<AckWalk, Stri
         .collect();
     for c in &walk.commits {
         let Some((_, kind)) = c.paths.iter().find(|(p, _)| p == record) else {
+            // A commit that takes the archive file away and holds no record ends
+            // the life too: the revert of `finish` with the record deleted (D80 item 2).
+            if c.parents.len() <= 1 && ends_life(&c.paths, record) {
+                out.mixed.clear();
+            }
             continue;
         };
         if c.parents.len() > 1 {
@@ -734,7 +760,11 @@ pub fn ack_walk(git: &Git, base_rev: &str, record: &str) -> Result<AckWalk, Stri
             // a conflict). The paths of a merge are the paths that differ from each
             // parent, so a path that the merge only takes from the base is not here.
             // The record with another path in one commit is SD932, as in any commit.
-            if let Some((p, _)) = c.paths.iter().find(|(p, _)| p != record) {
+            if *kind == PathChange::Deleted {
+                if ends_life(&c.paths, record) {
+                    out.mixed.clear();
+                }
+            } else if let Some((p, _)) = c.paths.iter().find(|(p, _)| p != record) {
                 out.mixed.push((c.commit.clone(), p.clone()));
             }
             counted.clear();
@@ -742,13 +772,16 @@ pub fn ack_walk(git: &Git, base_rev: &str, record: &str) -> Result<AckWalk, Stri
         }
         if *kind == PathChange::Deleted {
             // The commit of `finish` deletes the folder and adds the archive file
-            // with the same bytes. Any other deletion ends the record.
+            // with the same bytes. Any other deletion ends the record, and its life.
             let moved = c
                 .paths
                 .iter()
                 .any(|(p, k)| *k == PathChange::Added && crate::acceptance::is_archive_path(p));
             if !moved {
                 counted.clear();
+            }
+            if ends_life(&c.paths, record) {
+                out.mixed.clear();
             }
             continue;
         }
@@ -777,6 +810,9 @@ pub fn ack_walk(git: &Git, base_rev: &str, record: &str) -> Result<AckWalk, Stri
     // commit of `finish` keeps the entries that count.
     if git.is_staged() {
         let paths = git.diff_paths("HEAD", false)?;
+        if !paths.iter().any(|(p, _)| p == record) && ends_life(&paths, record) {
+            out.mixed.clear();
+        }
         if let Some((_, kind)) = paths.iter().find(|(p, _)| p == record) {
             if *kind == PathChange::Deleted {
                 let moved = paths
@@ -784,6 +820,9 @@ pub fn ack_walk(git: &Git, base_rev: &str, record: &str) -> Result<AckWalk, Stri
                     .any(|(p, k)| *k == PathChange::Added && crate::acceptance::is_archive_path(p));
                 if !moved {
                     counted.clear();
+                }
+                if ends_life(&paths, record) {
+                    out.mixed.clear();
                 }
             } else if let Some(new) = git.head_file(record)? {
                 let other = paths

@@ -534,3 +534,93 @@ fn the_v070_fixture_is_the_tree_that_the_real_binary_wrote() {
         assert!(!repo.dir.join(name).exists(), "{name}");
     }
 }
+
+/// The 3 fixtures of 0.7.1 are the trees that the real binary 0.7.1 wrote, one
+/// for each profile. They share the hand-written documents, script and test, and
+/// they differ in the files that `init` writes.
+#[test]
+fn the_v071_fixtures_are_the_trees_that_the_real_binary_wrote() {
+    // The fixture, its profile, the approval and the skills of its list.
+    let cases: [(&str, &str, &str, &[&str]); 3] = [
+        (
+            "v071",
+            "standard",
+            "approval = \"branch\"",
+            &[
+                "brainstorm",
+                "specify",
+                "clarify",
+                "write-plan",
+                "tdd",
+                "review",
+                "finish",
+                "post-mortem",
+            ],
+        ),
+        (
+            "v071-lite",
+            "lite",
+            "approval = \"branch\"",
+            &["brainstorm", "write-plan", "finish"],
+        ),
+        (
+            "v071-strict",
+            "strict",
+            "approval = \"base\"",
+            &[
+                "brainstorm",
+                "specify",
+                "clarify",
+                "write-plan",
+                "tdd",
+                "review",
+                "finish",
+                "post-mortem",
+            ],
+        ),
+    ];
+    let standard = Repo::from_fixture("v071", &[]);
+    for (name, profile, approval, skills) in cases {
+        let repo = Repo::from_fixture(name, &[]);
+        let rec = recorded(name);
+        assert_eq!(rec.version, "0.7.1", "{name}");
+        assert_eq!(rec.exit, 0, "{name}");
+        assert!(rec.findings.is_empty(), "{name}: {:?}", rec.findings);
+        assert_eq!(
+            rec.files,
+            blobs(&repo),
+            "{name}: run tests/fixtures/upgrade/make.sh v071 again"
+        );
+        let config = repo.read("spec-dna.toml");
+        for needle in [
+            "spec-dna = \"0.7.1\"\n".to_string(),
+            format!("profile = \"{profile}\""),
+            approval.to_string(),
+            "level = \"lean\"".to_string(),
+            format!(
+                "skills = [{}]",
+                skills
+                    .iter()
+                    .map(|s| format!("\"{s}\""))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        ] {
+            assert!(config.contains(&needle), "{name} configuration: {needle}");
+        }
+        assert!(repo.read("AGENTS.md").contains("<!-- spec-dna v0.7.1 h:"));
+        // The 0.7.1 files only: no agent of 0.8.0, and no skill `accept`.
+        assert!(!repo.dir.join(".claude/agents/acceptor.md").exists());
+        assert!(!repo.dir.join(".claude/skills/spec-dna-accept").exists());
+        // The hand-written files are the files of `v071`.
+        for path in [
+            "docs/intent/drip-schedule/plan.md",
+            "docs/requirements/valves.md",
+            "src/schedule.sh",
+            "tests/schedule_test.sh",
+            ".pre-commit-config.yaml",
+        ] {
+            assert_eq!(repo.read(path), standard.read(path), "{name}: {path}");
+        }
+    }
+}

@@ -400,6 +400,30 @@ fn a_record_with_no_open_note_a_rejected_record_and_a_bad_record_are_refused() {
 }
 
 #[test]
+fn a_follow_up_with_no_record_says_that_the_change_has_no_record() {
+    // D80 item 5: the file does not exist, so the message does not ask to delete it.
+    let r = built();
+    let want = format!(
+        "the change `{SLUG}` has no record; run `spec-dna accept {SLUG} --brief` for a full run"
+    );
+    for extra in [
+        &["--follow-up", "--brief"][..],
+        &["--follow-up"][..],
+        &["--follow-up", "--brief", "--json"][..],
+        &["--follow-up", "--json"][..],
+    ] {
+        let (code, out, err) = accept(&r, extra);
+        assert_eq!(code, 1, "{extra:?}: {out}{err}");
+        assert!(err.contains(&want), "{extra:?}: {out}{err}");
+        assert!(
+            !err.contains("does not exist") && !err.contains("delete"),
+            "{extra:?}: {err}"
+        );
+    }
+    assert!(!r.dir.join(RECORD).exists());
+}
+
+#[test]
 fn an_empty_diff_of_the_fix_and_a_fix_of_no_path_of_a_note_are_refused() {
     let r = built();
     commit_record(&r, &[(CODE, "note", NOTE_TEXT)]);

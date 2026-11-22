@@ -1,6 +1,6 @@
 # The spec-dna configuration of this repository (docs/config.md).
 # docs/design/0.6.0.md, section "Step 5 self-adoption", gives the reasons.
-spec-dna = "0.7.1"
+spec-dna = "0.8.0"
 
 [[roots]]
 path = "docs"

@@ -1009,13 +1009,24 @@ pub fn ack_facts(
         ));
     }
     for (commit, other) in &walk.mixed {
-        let who = if commit.is_empty() {
-            "the staged changes change".to_string()
+        // A commit of the walk is in the current life of the record (D80 item 1), and
+        // history stays as it is: the fix is a new life. The staged changes are no
+        // commit yet, so they only need to change the record alone.
+        let (who, fix) = if commit.is_empty() {
+            (
+                "the staged changes change".to_string(),
+                format!("unstage `{other}`, and commit the record alone"),
+            )
         } else {
-            format!("the commit {} changes", &commit[..commit.len().min(12)])
+            (
+                format!("the commit {} changes", &commit[..commit.len().min(12)]),
+                format!(
+                    "delete the record in a commit of its own, then accept again (`spec-dna accept {slug}`)"
+                ),
+            )
         };
         facts.invalid.push(format!(
-            "{who} `{path}` and `{other}`; a commit that adds or edits the record changes the record alone, so split it into 2 commits"
+            "{who} `{path}` and `{other}`; a commit that adds or edits the record changes the record alone: {fix}"
         ));
     }
     let head: Vec<String> = entries.iter().map(|e| e.to_lowercase()).collect();
@@ -1274,7 +1285,7 @@ pub fn rejected(rec: &Record) -> Option<String> {
 }
 
 /// The start of the fix in a SD929 message after `finish` (an archive file).
-pub const STALE_AFTER_FINISH: &str = "revert the commit of `finish`";
+pub const STALE_AFTER_FINISH: &str = "`git revert --no-commit` the commit of `finish`";
 
 /// The start of the fix in a SD929 message before `finish` (a folder record).
 pub const STALE_BEFORE_FINISH: &str = "delete the record";
@@ -1515,7 +1526,7 @@ pub fn stale(
     // `Diag::fix` reads the mark to choose the fix of the same place.
     let fix = if after_finish {
         format!(
-            "{STALE_AFTER_FINISH}, merge the base, run `spec-dna accept {slug}` again from a new brief, and run `spec-dna finish {slug}` again"
+            "{STALE_AFTER_FINISH}, delete `acceptance.toml` of the folder of the change, commit, merge the base, run `spec-dna accept {slug}` again from a new brief, and run `spec-dna finish {slug}` again"
         )
     } else {
         format!(
@@ -2049,6 +2060,14 @@ impl Runs {
     }
 }
 
+/// The steps to the word of the owner with `approval = "branch"` (D80 item 3). The
+/// message of SD941 and the item of `next` use this text, so they say the same.
+fn owner_word_steps(slug: &str) -> String {
+    format!(
+        "commit `status: draft` of plan.md on its own, skipping the commit hook for that commit only and naming the skip in the body of the commit (the draft commit gives SD401 and SD910 reason 9), then the approver runs `spec-dna approve {slug} plan`"
+    )
+}
+
 /// The text of SD941 (D74 item 6): the record comes after 2 rejected records, and
 /// no approval commit of `plan.md` comes after the second. `since` is
 /// [`Runs::rejected_since`]; the record of the head is the last life, which the 2
@@ -2062,9 +2081,10 @@ pub fn rerun_message(slug: &str, runs: &Runs, since: &[(usize, String)]) -> Opti
         .collect();
     (earlier.len() >= 2).then(|| {
         format!(
-            "the record of the change `{slug}` comes after {} rejected records ({}), and no approval commit of `plan.md` comes after the second; a third run needs the word of the owner: set `status: draft` in plan.md, then the approver runs `spec-dna approve {slug} plan`",
+            "the record of the change `{slug}` comes after {} rejected records ({}), and no approval commit of `plan.md` comes after the second; a third run needs the word of the owner: {} (both codes are gone)",
             earlier.len(),
-            earlier.join(", ")
+            earlier.join(", "),
+            owner_word_steps(slug)
         )
     })
 }
@@ -2088,9 +2108,7 @@ pub fn wait_text(slug: &str, since: &[(usize, String)], branch: bool) -> String 
         ids.join(", ")
     );
     if branch {
-        t.push_str(&format!(
-            ": set `status: draft` in plan.md, then the approver runs `spec-dna approve {slug} plan`"
-        ));
+        t.push_str(&format!(": {}", owner_word_steps(slug)));
     }
     t
 }
@@ -3162,9 +3180,12 @@ mod tests {
             wait_text("demo", &since, false),
             "wait for the owner: 2 acceptance records of demo say `rejected` (3f2a9c1, 9c1b7e0); a third run needs the word of the owner"
         );
-        assert!(wait_text("demo", &since, true).ends_with(
-            ": set `status: draft` in plan.md, then the approver runs `spec-dna approve demo plan`"
-        ));
+        let branch = wait_text("demo", &since, true);
+        assert!(
+            branch.contains("the word of the owner: commit `status: draft` of plan.md on its own, skipping the commit hook for that commit only and naming the skip in the body of the commit (the draft commit gives SD401 and SD910 reason 9), then the approver runs `spec-dna approve demo plan`"),
+            "{branch}"
+        );
+        assert!(branch.ends_with("`spec-dna approve demo plan`"), "{branch}");
         let runs = Runs {
             base_rev: "b".repeat(40),
             commits: vec![],

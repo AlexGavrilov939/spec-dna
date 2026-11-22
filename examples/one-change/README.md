@@ -66,20 +66,49 @@ change sensor-timeout (higher-risk), stage test
 [ ] add `covers: requirements/valves#sensor-timeout` in a test file [skill: tdd]
 ```
 
-`finish` refuses the change and writes nothing:
+The agent adds `# covers: requirements/valves#sensor-timeout` to the test and commits it. The change is `higher-risk`, so `finish` needs an acceptance record before it applies the delta. Without the record, it refuses the change and writes nothing:
 
 ```console
 $ spec-dna finish sensor-timeout
-docs/requirements/valves.md:9: error SD916 delta-evidence-missing: the change `sensor-timeout` adds or changes the requirement `requirements/valves#sensor-timeout`, and it has no `covers:` tag and no `verified-by`
+docs/intent/sensor-timeout/acceptance.toml:1: error SD927 acceptance-missing: the change `sensor-timeout` needs an acceptance record, and `docs/intent/sensor-timeout/acceptance.toml` is absent; start an agent `acceptor` with the prompt that `spec-dna next` prints, `cd '<root>' && spec-dna accept sensor-timeout --brief`, and commit the record that it writes
 ...
-spec-dna: finish `sensor-timeout` stopped at step 5: a requirement that the change adds or changes has no evidence (the lines are lines of the result of `finish`); nothing changed
+spec-dna: finish `sensor-timeout` stopped at step 5: the change needs an acceptance record, and the folder has none; nothing changed
 ```
 
-The agent adds `# covers: requirements/valves#sensor-timeout` to the test. Now `finish` applies the delta to the requirements and deletes the folder of the change:
+A second agent, the acceptor, did not write the code. It runs the brief command and reads the brief. Then it writes the skeleton of the record:
+
+```console
+$ spec-dna accept sensor-timeout --brief | sed -n 1p
+spec-dna-brief 2 sensor-timeout acceptor
+
+$ spec-dna accept sensor-timeout --session s1
+wrote docs/intent/sensor-timeout/acceptance.toml
+acceptor: 1
+next: copy the hash of the last line of your brief into `brief` of your entry, replace each `pending` value, then commit the record alone
+```
+
+The acceptor copies the hash of the last line of the brief into `brief`, and it replaces each `pending` value. It tries to break the change, and it adds what it tried and what it found. The script stands in for the acceptor and writes this part of the record:
+
+```toml
+[[attempt]]
+acceptor = 1
+text = "Read `on_sensor_timeout` in `src/valves.py`: it calls `close_valve` for the bed, and `close_valve` sets `valve_open` to false, as the requirement says."
+outcome = "held"
+
+[[finding]]
+acceptor = 1
+severity = "note"
+path = "tests/test_valves.py"
+text = "The test has no body yet."
+```
+
+The acceptor commits the record alone. [The change guide](../../docs/guides/change.md#4-write-the-code-and-the-tests) gives the rules of the record. Now `finish` applies the delta to the requirements, moves the record to `.spec-dna/accepted/`, and deletes the folder of the change:
 
 ```console
 $ spec-dna finish sensor-timeout
+wrote .spec-dna/accepted/sensor-timeout.toml
 wrote docs/requirements/valves.md
+removed docs/intent/sensor-timeout/acceptance.toml
 removed docs/intent/sensor-timeout/intent.md
 removed docs/intent/sensor-timeout/plan.md
 removed docs/intent/sensor-timeout/spec.md
@@ -97,7 +126,7 @@ The reviewer sees the code and the new requirement in one diff. The proposal doe
 
 ```console
 $ spec-dna log
-2026-11-16 finished sensor-timeout higher-risk add 1 change 0 remove 0 hours - actual - 9e72abc626e6 Sensor timeout
+2026-11-16 finished sensor-timeout higher-risk add 1 change 0 remove 0 hours - actual - 8c96d1b11e0d Sensor timeout
 ```
 
 A `routine` change has no spec and no delta: it edits the requirements together with the code. [The change guide](../../docs/guides/change.md) gives each class and each step.
@@ -108,5 +137,6 @@ A `routine` change has no spec and no delta: it edits the requirements together 
 | --- | --- | --- |
 | `note: no base for the change checks` | The repository has no `origin/HEAD` | Run `git remote set-head origin <branch>`, give `--base <rev>`, or set `[change] base` |
 | `SD916 delta-evidence-missing` | A requirement of the delta has no test | Add `covers: <requirement id>` in a test file |
+| `SD927 acceptance-missing` | A `higher-risk` change has no acceptance record | Start an agent `acceptor` with the prompt that `next` prints, and commit the record that it writes |
 | `SD913` for a file | The pull request changes a file that the plan does not list | Add the file to `Files` of the plan in the same pull request |
 | The output differs from this page | Your binary has another version (`spec-dna --version`) | Install the current release |

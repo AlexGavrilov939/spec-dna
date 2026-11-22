@@ -571,14 +571,14 @@ fn a_record_with_an_older_tree_after_a_code_edit_stops_with_sd929() {
     assert!(!has(&out, "SD928"), "{out}");
     assert!(out.contains("accept"), "the message gives the fix: {out}");
     // A record in the folder, before any `finish`: the fix is the one of the
-    // message, not "revert the commit of `finish`".
+    // message, not the steps after `finish`.
     let fix = out
         .lines()
         .find(|l| l.starts_with("SD929 fix:"))
         .unwrap_or("");
     assert!(fix.contains("Delete the record"), "{out}");
     assert!(!fix.contains("Revert"), "{out}");
-    assert!(!out.contains("revert the commit"), "{out}");
+    assert!(!out.contains("git revert"), "{out}");
     let (_, out, err) = run(&r, &["finish", SLUG, "--dry-run"]);
     let fix = out
         .lines()
@@ -957,13 +957,20 @@ fn the_archive_file_of_a_finish_in_the_diff_is_read_for_sd929_sd930_and_sd933() 
     let (code, out, err) = run(&r, &["check"]);
     assert_eq!(code, 1, "{out}{err}");
     assert!(has(&out, "SD929"), "{out}");
-    assert!(out.contains("revert the commit of `finish`"), "{out}");
-    // An archive file, after `finish`: the fix says to revert the commit.
+    assert!(
+        out.contains("`git revert --no-commit` the commit of `finish`"),
+        "{out}"
+    );
+    // An archive file, after `finish`: the fix has the steps of `git revert --no-commit`.
     let fix = out
         .lines()
         .find(|l| l.starts_with("SD929 fix:"))
         .unwrap_or("");
-    assert!(fix.contains("Revert the commit of `finish`"), "{out}");
+    assert!(
+        fix.contains("`git revert --no-commit` on the commit of `finish`")
+            && fix.contains("delete `<folder>/acceptance.toml`"),
+        "{out}"
+    );
     assert!(!fix.contains("Delete the record"), "{out}");
     // SD930: the result is `rejected`.
     let r = base_flow();
@@ -1010,7 +1017,10 @@ fn a_base_commit_that_edits_a_listed_path_makes_the_record_stale_after_main_merg
     r.git(&["merge", "-q", "-m", "test merge", "main"]);
     let (_, out, err) = run(&r, &["check"]);
     assert!(has(&out, "SD929"), "{out}{err}");
-    assert!(out.contains("revert the commit of `finish`"), "{out}");
+    assert!(
+        out.contains("`git revert --no-commit` the commit of `finish`"),
+        "{out}"
+    );
 }
 
 #[test]

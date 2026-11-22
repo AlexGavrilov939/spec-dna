@@ -538,6 +538,65 @@ fn lean_in_lite_writes_neither_the_acceptor_nor_the_skill_nor_a_key() {
     assert!(!page.contains("acceptor"), "{page}");
 }
 
+/// D76: `lite` writes the agent files of 0.7.1, byte for byte, at each level.
+/// `tests/golden/harness/agents-0.7.1/` holds the files of the tag `v0.7.1`. The
+/// pass of 0.8.0 that put the body of `code-simplifier` in Simplified Technical
+/// English must not reach `lite`. `standard` and `strict` have the new text.
+#[test]
+fn lite_writes_the_agent_files_of_0_7_1_at_each_level() {
+    const LEAN: [&str; 3] = ["fallback-advisor", "verifier", "Explore"];
+    const FULL: [&str; 5] = [
+        "fallback-advisor",
+        "verifier",
+        "Explore",
+        "implementer",
+        "code-simplifier",
+    ];
+    for (level, want) in [("none", &[][..]), ("lean", &LEAN[..]), ("full", &FULL[..])] {
+        let r = Repo::new();
+        let answers = format!("profile = \"lite\"\nharness = \"{level}\"\n");
+        let (code, out, err) = init_with(&r, &answers, &[]);
+        assert_eq!(code, 0, "{level}: {out}{err}");
+        for name in FULL {
+            let path = format!(".claude/agents/{name}.md");
+            if !want.contains(&name) {
+                assert!(!r.dir.join(&path).exists(), "{level}: {path}");
+                continue;
+            }
+            assert_eq!(
+                normalize_marker(&r.read(&path)),
+                golden(&format!("agents-0.7.1/{name}.md")),
+                "{level}: {path} is not the file of 0.7.1"
+            );
+        }
+        // The hash of the file of 0.7.1 is in the marker, so the file is the
+        // same bytes, not only the same text.
+        if level == "full" {
+            assert!(
+                r.read(".claude/agents/code-simplifier.md")
+                    .contains(" h:56a34fb2d62bc033 -->"),
+            );
+        }
+        let (code, out, err) = r.run(&["check"]);
+        assert_eq!(code, 0, "{level}: {out}{err}");
+    }
+    // The other profiles keep the text of this release.
+    for profile in ["standard", "strict"] {
+        let r = Repo::new();
+        let answers = format!("profile = \"{profile}\"\nharness = \"full\"\n");
+        let (code, out, err) = init_with(&r, &answers, &[]);
+        assert_eq!(code, 0, "{profile}: {out}{err}");
+        for name in FULL {
+            let path = format!(".claude/agents/{name}.md");
+            assert_eq!(
+                normalize_marker(&r.read(&path)),
+                golden(&format!("{name}.md")),
+                "{profile}: {path}"
+            );
+        }
+    }
+}
+
 #[test]
 fn the_acceptor_goes_with_the_skill_not_with_the_level() {
     // A skill list with no `review` writes no agent file, also at `lean`.

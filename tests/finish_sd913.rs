@@ -65,7 +65,7 @@ fn finished_with(plan: &str, routine: bool, extra: &[(&str, &str)]) -> Repo {
             ),
         );
     }
-    r.commit("base");
+    r.commit_base_of_0_7_1("base");
     origin_head(&r.dir, "main");
     r.git(&["checkout", "-q", "-b", "feature"]);
     // The implementation.
@@ -188,7 +188,7 @@ fn next_says_that_the_items_of_files_are_not_paths() {
     r.write("docs/intent/dose/spec.md", "---\nstatus: approved\n---\n# Spec\n\n## Delta\n\n- ADD requirements/valves#flush: The controller SHALL flush the line.\n");
     r.write("docs/requirements/valves.md", VALVES);
     r.write("docs/intent/dose/plan.md", PLAN_PROSE);
-    r.commit("base");
+    r.commit_base_of_0_7_1("base");
     origin_head(&r.dir, "main");
     r.git(&["checkout", "-q", "-b", "feature"]);
     r.write("src/dose.py", "x = 2\n");
@@ -233,7 +233,7 @@ fn sd915_names_the_items_of_files_that_are_not_paths() {
         &INTENT.replace("higher-risk", "routine"),
     );
     r.write("docs/intent/dose/plan.md", PLAN_PROSE);
-    r.commit("base");
+    r.commit_base_of_0_7_1("base");
     origin_head(&r.dir, "main");
     r.git(&["checkout", "-q", "-b", "feature"]);
     // The pull request deletes the folder and changes no file of the plan.
@@ -283,7 +283,7 @@ fn finished_on_branch(base_plan: Option<&str>, branch_plan: &str, routine: bool)
     if let Some(p) = base_plan {
         r.write("docs/intent/dose/plan.md", p);
     }
-    r.commit("base");
+    r.commit_base_of_0_7_1("base");
     origin_head(&r.dir, "main");
     r.git(&["checkout", "-q", "-b", "feature"]);
     r.write("docs/intent/dose/plan.md", branch_plan);
@@ -332,7 +332,7 @@ fn a_file_in_no_version_of_files_still_gives_sd913() {
         if let Some(p) = base_plan {
             r.write("docs/intent/dose/plan.md", p);
         }
-        r.commit("base");
+        r.commit_base_of_0_7_1("base");
         origin_head(&r.dir, "main");
         r.git(&["checkout", "-q", "-b", "feature"]);
         r.write("docs/intent/dose/plan.md", PLAN);
@@ -408,7 +408,7 @@ fn a_path_in_a_task_line_only_gives_no_sd913_and_no_sd915_after_finish() {
             );
         }
         r.write("docs/intent/dose/plan.md", PLAN_TASK_ONLY);
-        r.commit("base");
+        r.commit_base_of_0_7_1("base");
         origin_head(&r.dir, "main");
         r.git(&["checkout", "-q", "-b", "feature"]);
         r.write("src/dose.py", "x = 2\n");
@@ -442,7 +442,7 @@ fn next_reads_the_paths_of_the_task_lines() {
     r.write("docs/intent/dose/spec.md", "---\nstatus: approved\n---\n# Spec\n\n## Delta\n\n- ADD requirements/valves#flush: The controller SHALL flush the line.\n");
     r.write("docs/requirements/valves.md", VALVES);
     r.write("docs/intent/dose/plan.md", PLAN_TASK_ONLY);
-    r.commit("base");
+    r.commit_base_of_0_7_1("base");
     origin_head(&r.dir, "main");
     r.git(&["checkout", "-q", "-b", "feature"]);
     r.write("src/dose.py", "x = 2\n");

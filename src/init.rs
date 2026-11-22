@@ -271,6 +271,11 @@ pub struct Plan {
     /// `[change] max-task-files`. No question asks for it. `--reconfigure`
     /// keeps the value if the current file sets the key. `None`: no key.
     pub max_task_files: Option<u32>,
+    /// `[change] acceptance-for` (design 0.8.0, D70). No question asks for it.
+    /// `--reconfigure` keeps the value if the current file sets the key, also
+    /// when it is the default of the profile. `None`: no key, and the profile
+    /// gives the value at run time.
+    pub acceptance_for: Option<config::AcceptanceFor>,
     /// `[change] higher-risk-acceptors` (design 0.8.0, D3 item 7). `--reconfigure`
     /// keeps the value if the current file sets the key. `None`: no key, and the
     /// profile `strict` writes 2.
@@ -516,6 +521,14 @@ impl Plan {
         if let Some(n) = self.max_task_files {
             out.push_str(&format!(
                 "max-task-files = {n}  # tasks of an approved plan: paths in `Files:` before SD924\n"
+            ));
+        }
+        // Which changes need an acceptance record (design 0.8.0, D70): `init`
+        // writes the key only for a file that sets it.
+        if let Some(a) = self.acceptance_for {
+            out.push_str(&format!(
+                "acceptance-for = {}  # the changes that need an acceptance record: \"none\", \"higher-risk\" or \"all\"\n",
+                toml_str(a.name())
             ));
         }
         // The acceptance record (design 0.8.0, D3): a `higher-risk` change needs
@@ -922,6 +935,7 @@ fn defaults(facts: &Facts, root: Option<&str>) -> Plan {
         detected_shared: facts.shared.clone(),
         max_fanout: config::DEFAULT_MAX_FANOUT,
         max_task_files: None,
+        acceptance_for: None,
         higher_risk_acceptors: None,
         invariants: None,
         change_base: None,
@@ -1045,6 +1059,8 @@ fn current(cfg: &Config, text: &str, facts: &Facts) -> Plan {
         })
         .unwrap_or(false)
         .then_some(cfg.max_task_files);
+    // `Config::change_acceptance_for` is `None` for a file with no key.
+    p.acceptance_for = cfg.change_acceptance_for;
     p.higher_risk_acceptors = text
         .parse::<toml::Table>()
         .ok()

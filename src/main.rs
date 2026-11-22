@@ -260,7 +260,7 @@ the move changed.",
     ),
     (
         "refresh",
-        "refresh <id>... [--holds] [--base <rev>] [--dry-run]\nrefresh --all [--base <rev>] [--dry-run]",
+        "refresh <id>... [--holds] [--base <rev>] [--dry-run] [--json]\nrefresh --all [--base <rev>] [--dry-run] [--json]",
         "Writes the pins of roll-up documents: a summary, and a system or product
 document with the field rests-on. For each document it writes rests-on as the
 frontier (each active requirement of the area, or the summary of a sub-area
@@ -293,7 +293,7 @@ reports a stale index (SD610).",
     ),
     (
         "finish",
-        "finish <slug> [--holds <id>]... [--dry-run] [--base <rev>]",
+        "finish <slug> [--holds <id>]... [--dry-run] [--base <rev>] [--json]",
         "Finishes the change <slug>: it applies the delta of its spec to the
 requirements, checks the evidence of each requirement that it adds or
 changes, and deletes the folder of the change. It stops at the first failed
@@ -348,7 +348,7 @@ pin or configuration, 4 git or write error, 5 no folder or no file.",
     ),
     (
         "accept",
-        "accept <slug> [--role <name>]... [--session <id>] [--base <rev>]\naccept <slug> --brief [--role <name>]... [--base <rev>]\naccept <slug> --follow-up [--session <id>] [--base <rev>]\naccept <slug> --follow-up --brief [--base <rev>]",
+        "accept <slug> [--role <name>]... [--session <id>] [--base <rev>] [--json]\naccept <slug> --brief [--role <name>]... [--base <rev>] [--json]\naccept <slug> --follow-up [--session <id>] [--base <rev>] [--json]\naccept <slug> --follow-up --brief [--base <rev>] [--json]",
         "Writes the acceptance record of the change <slug>, or prints its brief. The
 acceptor is an agent that did not write the code. The first form writes the
 skeleton `acceptance.toml` in the folder of the change (format 2): the scope of
