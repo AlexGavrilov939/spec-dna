@@ -69,6 +69,7 @@ mod registry;
 mod release;
 mod repo;
 mod report;
+mod rollup;
 mod sdlc;
 mod skeleton;
 mod split;
@@ -254,6 +255,25 @@ moved requirements move with them. Each moved section leaves its heading
 with a one-line pointer. A decision keeps its locked text: only its amendment
 and history sections move, into a research document. A preservation
 check runs first; if it fails, nothing changes.",
+    ),
+    (
+        "refresh",
+        "refresh <id>... [--holds] [--base <rev>] [--dry-run]\nrefresh --all [--base <rev>] [--dry-run]",
+        "Writes the pins of roll-up documents: a summary, and a system or product
+document with the field rests-on. For each document it writes rests-on as the
+frontier (each active requirement of the area, or the summary of a sub-area
+that stands for it), with the current hashes and the canonical ids, sorted. It
+changes the front matter only. The guard: a document that has a stale pin
+(SD641) or a missing pin (SD642), and whose text is the text of the base, is
+refused (exit code 1) and the command names the stale pins. The base is the
+base of the change checks, or HEAD. A document that the base does not have has
+no guard. --holds writes the pins of a refused document: the claim that the
+text still holds, which the diff and SD645 show. --all takes each roll-up
+document that has a finding, with the guard, and it lists each refused
+document. --all with --holds is a usage error. --dry-run writes nothing. Exit
+codes: 0 done, 1 the guard refused a document, 2 usage (also an id that is not
+a roll-up document), 3 configuration or a different version pin, 4 git or
+file error, 5 an id names no document.",
     ),
     (
         "history",
@@ -651,6 +671,8 @@ struct Args {
     roles: Vec<String>,
     /// `--session <id>` of `accept` (D3).
     session: Option<String>,
+    /// `--holds` of `refresh` (D53).
+    holds: bool,
 }
 
 /// The options of `layer add`.
@@ -743,6 +765,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
         follow_up: false,
         roles: Vec::new(),
         session: None,
+        holds: false,
     };
     let mut it = raw.into_iter();
     while let Some(arg) = it.next() {
@@ -766,6 +789,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Fatal> {
             "--reports" => a.reports = true,
             "--brief" => a.brief = true,
             "--follow-up" => a.follow_up = true,
+            "--holds" => a.holds = true,
             "--role" => {
                 let v = value("--role")?;
                 a.roles.push(v);
@@ -973,6 +997,9 @@ fn run(a: Args) -> Result<u8, Fatal> {
             }
         }
     }
+    if a.holds && a.command != "refresh" {
+        return Err(Fatal::Usage("--holds is an option of `refresh`".into()));
+    }
     if a.skip_open && a.command != "import" {
         return Err(Fatal::Usage("--skip-open is an option of `import`".into()));
     }
@@ -1026,6 +1053,7 @@ fn run(a: Args) -> Result<u8, Fatal> {
         "new" => new_doc(&Repo::discover(&cwd)?, &a),
         "layer" => layer_cmd(&Repo::discover(&cwd)?, &a),
         "mv" => mv(&Repo::discover(&cwd)?, &a),
+        "refresh" => refresh(&Repo::discover(&cwd)?, &a),
         "history" => history(&Repo::discover(&cwd)?, &a),
         "index" => index(&Repo::discover(&cwd)?, &a),
         "finish" => finish(&Repo::discover(&cwd)?, &a),
@@ -2549,8 +2577,14 @@ fn new_doc(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
             .layer_of_type(ty)
             .map(|i| &cfg.layers.layers()[i])
             .ok_or_else(|| {
+                // The layer of the summaries has a command with no options.
+                let add = if ty == DocType::Summary {
+                    "layer add summaries".to_string()
+                } else {
+                    format!("layer add <name> --types {}", ty.name())
+                };
                 Fatal::Usage(format!(
-                    "no layer of spec-dna.toml has type `{0}`; run `spec-dna layer add <name> --types {0}` to add one",
+                    "no layer of spec-dna.toml has type `{}`; run `spec-dna {add}` to add one",
                     ty.name()
                 ))
             })?;
@@ -2623,6 +2657,16 @@ fn new_doc(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     if file.exists() {
         return Err(Fatal::Usage(format!("`{path}` exists")));
     }
+    // A summary has the pins of its area (design 0.8.0, D50). The area must
+    // be a folder of the layer `requirements`, so the check comes before any
+    // write.
+    let pins = if ty == DocType::Summary {
+        let area = rollup::parse_area(need_id()?).map_err(Fatal::Usage)?;
+        let (_, c) = load_head(repo, a)?;
+        Some(rollup::new_summary_pins(&cfg, &c, &area).map_err(Fatal::Usage)?)
+    } else {
+        None
+    };
     if let Some(dir) = file.parent() {
         std::fs::create_dir_all(dir).map_err(|e| Fatal::Io(e.to_string()))?;
     }
@@ -2634,6 +2678,10 @@ fn new_doc(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         template_text
     };
     let text = templates::instantiate(&template_text, ty, &title, !place_gives_type);
+    let text = match &pins {
+        Some(pins) => rollup::set_rests_on(&text, pins),
+        None => text,
+    };
     mv::write(&file, &text)?;
     if a.json {
         println!(
@@ -2679,6 +2727,11 @@ fn layer_add(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         )));
     }
     let mut new = Layer::new(name);
+    // `layer add summaries` with no content option adds the layer of the type
+    // `summary` (design 0.8.0, D50).
+    if name == "summaries" && f.types.is_empty() && f.files.is_empty() && f.paths.is_empty() {
+        new.types.push(DocType::Summary);
+    }
     for t in &f.types {
         let ty = DocType::from_name(t)
             .ok_or_else(|| Fatal::Usage(config::unknown_type("`--types`", t)))?;
@@ -3032,6 +3085,167 @@ fn mv(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     )?;
     report_move(&m, a.json);
     Ok(0)
+}
+
+/// The tree of the guard of `refresh` (design 0.8.0, D53): the base of the
+/// change checks, which is the merge base of the policy, or the merge base of
+/// `--base` and HEAD, or HEAD. `None` if the repository has no commit.
+fn refresh_base(
+    repo: &Repo,
+    cfg: &config::Config,
+    a: &Args,
+) -> Result<Option<model::Corpus>, Fatal> {
+    let Some(head) = repo.head_commit() else {
+        return Ok(None);
+    };
+    let tip = match &a.base {
+        Some(rev) => {
+            let c = repo.git.commit(rev).ok_or_else(|| {
+                Fatal::Config(format!(
+                    "base `{rev}` is not a commit here; fetch it first (a depth-1 fetch of the base commit is enough)"
+                ))
+            })?;
+            repo.git.merge_base(&c, &head).unwrap_or(c)
+        }
+        None => head,
+    };
+    let change =
+        lifecycle::change_base(cfg, &repo.git, a.base.as_deref()).map_err(Fatal::Config)?;
+    let snap = Snapshot::at(repo, &change.unwrap_or(tip))?;
+    let mut loaded = repo::load(repo, cfg, &[&snap], !a.no_cache, false)?;
+    Ok(Some(loaded.corpora.remove(0)))
+}
+
+/// `refresh`: writes the pins of roll-up documents, with the guard (design
+/// 0.8.0, D53). It checks each id before it writes a file.
+fn refresh(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
+    use rollup::{SelectError, Verdict};
+    if a.all {
+        if a.holds {
+            return Err(Fatal::Usage(
+                "`refresh --all` takes no --holds: a claim names each document, so run `refresh <id> --holds`"
+                    .into(),
+            ));
+        }
+        if !a.positional.is_empty() {
+            return Err(Fatal::Usage("`refresh --all` takes no id".into()));
+        }
+    } else if a.positional.is_empty() {
+        return Err(Fatal::Usage(
+            "`refresh` needs an id of a roll-up document, or --all".into(),
+        ));
+    }
+    let cfg = repo.load_config()?;
+    if cfg.pin != VERSION {
+        return Err(pin_mismatch(&cfg));
+    }
+    let snap = Snapshot::worktree(repo, &repo::root_paths(&cfg), true)?;
+    let mut loaded = repo::load(repo, &cfg, &[&snap], !a.no_cache, false)?;
+    let c = loaded.corpora.remove(0);
+    let roll = rollup::Rollup::full(&cfg, &c);
+    let docs = if a.all {
+        rollup::select_all(&roll)
+    } else {
+        rollup::select(&cfg, &c, &a.positional).map_err(|e| match e {
+            SelectError::NotFound(m) => Fatal::NotFound(m),
+            SelectError::Usage(m) => Fatal::Usage(m),
+        })?
+    };
+    let base = refresh_base(repo, &cfg, a)?;
+    // Read each file and plan each document before the first write.
+    let mut plans = Vec::new();
+    for &d in &docs {
+        let path = &c.docs[d as usize].path;
+        let text = std::fs::read_to_string(repo.root.join(path))
+            .map_err(|e| Fatal::Io(format!("{path}: {e}")))?;
+        // The tool does not read the front matter of a file with a byte order
+        // mark, so it cannot write the field there.
+        if text.starts_with('\u{feff}') {
+            return Err(Fatal::Io(format!(
+                "{path}: the file starts with a byte order mark, so its front matter is not read; remove the mark, then run `spec-dna refresh` again"
+            )));
+        }
+        let planned = rollup::plan(&roll, base.as_ref(), d, a.holds, &text);
+        let changed = planned.text != text;
+        plans.push((planned, changed));
+    }
+    // With `--dry-run`, the lines say what the command would do.
+    let verb = |done: &'static str, plan: &'static str| if a.dry_run { plan } else { done };
+    let (mut refreshed, mut held, mut refused) = (Vec::new(), Vec::new(), Vec::new());
+    for (p, changed) in &plans {
+        if *changed && !a.dry_run {
+            mv::write(&repo.root.join(&p.path), &p.text)?;
+        }
+        match p.verdict {
+            Verdict::Refreshed => {
+                if !a.json {
+                    println!(
+                        "{} {}: {} pins ({} added, {} changed, {} removed)",
+                        verb("refreshed", "would refresh"),
+                        p.id,
+                        p.pins,
+                        p.added,
+                        p.changed,
+                        p.removed
+                    );
+                }
+                refreshed.push(p.id.clone());
+            }
+            Verdict::Held => {
+                if !a.json {
+                    println!(
+                        "{} {}: the text did not change (SD645 shows it)",
+                        verb("held", "would hold"),
+                        p.id
+                    );
+                }
+                held.push(p.id.clone());
+            }
+            Verdict::Refused => {
+                if !a.json {
+                    let pins: Vec<String> = p.stale.iter().map(|t| format!("`{t}`")).collect();
+                    println!(
+                        "refused {0}: its text is the text of the base, and these pins are stale: {1}; read them and edit the text so that it states the new meaning, then run `spec-dna refresh {0}`; if the text still holds, run `spec-dna refresh {0} --holds`",
+                        p.id,
+                        pins.join(", ")
+                    );
+                }
+                refused.push((p.id.clone(), p.stale.clone()));
+            }
+        }
+    }
+    if a.json {
+        println!(
+            "{}",
+            Obj::new()
+                .raw(
+                    "refreshed",
+                    &json::array(refreshed.iter().map(|id| {
+                        let mut s = String::new();
+                        json::string(&mut s, id);
+                        s
+                    }))
+                )
+                .raw(
+                    "held",
+                    &json::array(held.iter().map(|id| {
+                        let mut s = String::new();
+                        json::string(&mut s, id);
+                        s
+                    }))
+                )
+                .raw(
+                    "refused",
+                    &json::array(
+                        refused
+                            .iter()
+                            .map(|(id, pins)| Obj::new().str("id", id).strs("pins", pins).end())
+                    )
+                )
+                .end()
+        );
+    }
+    Ok(u8::from(!refused.is_empty()))
 }
 
 /// Moves the history sections of a document into a research document.

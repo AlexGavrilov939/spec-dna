@@ -9,7 +9,7 @@ use std::path::Path;
 /// The embedded templates: the name, the type and the body, after the front
 /// matter and the title (design 0.6.0, "Templates"). The default template of a
 /// type has a name from `default_name`.
-const EMBEDDED: [(&str, DocType, &str); 18] = [
+const EMBEDDED: [(&str, DocType, &str); 19] = [
     (
         "product",
         DocType::Product,
@@ -303,6 +303,11 @@ Chosen option: {{option}}, because {{reason}}.
 ",
     ),
     (
+        "summary",
+        DocType::Summary,
+        "{{What the area asks for, in a few short paragraphs, as one text. The pins in the front matter name the requirements that the text rests on.}}\n",
+    ),
+    (
         "research",
         DocType::Research,
         "{{Research, data or other cold material. spec-dna context does not serve this document unless a target names it.}}\n",
@@ -585,13 +590,20 @@ mod tests {
             DocType::Procedure => "docs/procedures/x.md".into(),
             DocType::Incident => "docs/incidents/x.md".into(),
             DocType::Research => "docs/research/x.md".into(),
+            DocType::Summary => "docs/summaries/x.md".into(),
             t => format!("docs/{}.md", t.name()),
         }
     }
 
     #[test]
     fn every_embedded_template_parses_as_its_type_with_its_required_sections() {
-        let cfg = Config::parse("spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\n").unwrap();
+        // The implied graph has no layer `summaries` (design 0.8.0, D50), so
+        // this file declares the default graph, which has one for each type.
+        let cfg = Config::parse(&format!(
+            "spec-dna = \"0.1.0\"\n\n{}\n[[roots]]\npath = \"docs\"\n",
+            crate::layer::render_graph(&crate::layer::Graph::default_graph())
+        ))
+        .unwrap();
         for (name, ty) in embedded_names() {
             for with_type in [true, false] {
                 let (_, raw) = embedded(name).unwrap();

@@ -14,6 +14,7 @@ This page gives each command of spec-dna, its options, its behavior and the exit
 | `context` | Print the sections that an agent needs | [context](#context) |
 | `show` | Print a document, a section or a requirement | [show](#show) |
 | `new` | Write a document from a template, also the 3 documents of a change | [new](#new) |
+| `refresh` | Write the pins of the roll-up documents (summaries, and `system` or `product` with `rests-on`), with a guard | [refresh](#refresh) |
 | `next` | Print the checklist to the next gate of a change | [next](#next) |
 | `approve` | Set the status of one artifact of a change and commit that file alone (for a person) | [approve](#approve) |
 | `accept` | Write the acceptance record of a change, or print its brief | [accept](#accept) |
@@ -65,6 +66,10 @@ spec-dna evidence stamp             # after the tests: write <report>.stamp for 
 spec-dna context requirements/valves/closing --path src/valves.rs
 spec-dna context requirements/valves/closing --query "close a valve after a sensor timeout"
 spec-dna show requirements/valves/closing#sensor-timeout
+spec-dna new summary valves                # the summary of requirements/valves/, with the pins of its requirements
+spec-dna refresh summaries/valves            # write the pins again, after the text of the summary changed
+spec-dna refresh summaries/valves --holds    # the same, with the claim that the text still holds
+spec-dna refresh --all                       # each roll-up document that has a finding
 spec-dna mv requirements/valves/closing requirements/valves/shutoff   # the old id becomes an alias
 spec-dna mv requirements/valves/closing#sensor-timeout requirements/sensors/timeouts
 spec-dna mv requirements/valves/closing#flush requirements/valves/closing#sensor-timeout requirements/sensors/timeouts   # several keys
@@ -295,6 +300,7 @@ spec-dna new <type> [<id>] [--root <dir>] [--template <name>]
 - Another type writes `<root>/<dir>/<id>.md` in a mixed root. `<dir>` is the folder of the layer of the type, and the id is relative to it. For example, `new requirements valves/closing` writes `<root>/requirements/valves/closing.md`.
 - In a root of one type, the file is `<root>/<id>.md`.
 - A type that no layer has gives exit code 2. The message says to run `spec-dna layer add`.
+- `new summary <area>` writes `<root>/summaries/<area>.md`, where `<area>` is a folder of the layer `requirements`, such as `valves` or `valves/drives`. It writes the front matter `rests-on` with the pins of the area: one pin for each item of the frontier, sorted by id ([Summary](types.md#summary)). The pins use the tree as it is now, with the files that git does not track yet. An area with no folder gives exit code 2 and writes nothing. The message names the folder that is missing. A project with no layer that has the type `summary` gives exit code 2, and the message says to run `spec-dna layer add summaries`. A project template of the type gets the pins too.
 - The area of a new path is its first folder under the folder of the layer of `requirements`. If it equals a name of `areas` in lowercase ASCII and differs from it in bytes, `new` stops with exit code 2 and writes nothing. The message names the area and the name of `areas`. With an empty `areas`, `new` checks no area.
 
 `--template <name>` selects a template. `new` reads `<dir>/<name>.md` first, where `<dir>` is `[templates] dir` ([config.md](config.md#the-table-templates)). Then it reads the embedded template of that name. For example, `new intent <slug> --template prd` writes a PRD, and `new procedure <slug> --template runbook` writes a runbook. A file in `<dir>` with the name of an embedded template replaces it, including the default template. For example, a file `madr.md` replaces the default template of `decision`.
@@ -902,6 +908,8 @@ A layer is a named set of documents ([The table `layers`](config.md#the-table-la
 
 `layer add` writes `[layers.<name>]` at the end of `spec-dna.toml`, so the new layer is last in the file order. The options give the keys of the table ([config.md](config.md#the-table-layers)): `--types`, `--paths`, `--files`, `--dir`, `--moves-to`, `--linked-from`, `--keep`, `--context`, `--max-docs`, `--max-chars`, `--max-started` and `--stale-days`. A list option takes names or globs that a comma separates. The table has only the keys that the command line gives.
 
+`layer add summaries` with no `--types`, `--files` and `--paths` adds the layer of the type `summary`: it writes `[layers.summaries]` with `types = ["summary"]`. The other options still apply to it. In a file with no `[layers]` table, the command first writes the default graph without this layer, then the new layer ([config.md](config.md#default-graph)).
+
 `layer add` writes the line ending of the file: a file with CRLF line endings keeps them. An entry of `--files` follows the same rule as the key `files`: a relative path inside the root, which no other layer has.
 
 `--moved-from a,b` adds the new layer to the `moves-to` list of the layers `a` and `b`. The command edits that list in place. It inserts the new name and changes no other byte of the file, so each comment stays.
@@ -999,6 +1007,35 @@ Before `mv` changes a file, a preservation check compares the result with the cu
 - there is no new error.
 
 If a check fails, `mv` changes nothing. It names each requirement that the move changes, and it exits with code 1.
+
+## refresh
+
+```text
+spec-dna refresh <id>... [--holds] [--base <rev>] [--dry-run] [--json]
+spec-dna refresh --all [--base <rev>] [--dry-run] [--json]
+```
+
+`refresh` writes the field `rests-on` of a roll-up document: a `summary`, or a `system` or `product` document that has the field ([Summary](types.md#summary)). It writes the frontier of the document with the current hashes and the canonical ids, sorted by id. It changes the front matter only: the other fields, the body and the line endings stay. A summary that has no `rests-on` gets the field. An `<id>` can be an alias. A summary whose path names no area (SD644), also one outside the folder of its layer, gives exit code 2: no pin can fix its path.
+
+The guard: a document that has a stale pin (SD641) or a pin that is missing (SD642), and whose text is the text of the base, is refused. `refresh` writes nothing for it, it names the stale pins, and the exit code is 1. The text is the text without link destinations and without the front matter, so a change of white space does not count. The base is the base of the change checks: the merge base of `--base` and `HEAD`, or `HEAD`. A document that the base does not have has no guard, and neither has a `system` or `product` document that gets its first `rests-on`: the base copy has no pins. So the guard turns a refresh with no text change into a named claim, and an edit of the text is the way to refresh.
+
+- `--holds` writes the pins of a refused document. The person or the agent says that the text still holds, for example after the fix of a typo in a requirement. The diff then shows a changed front matter and an unchanged body, and `check` gives SD645. `--holds` on a document that the guard does not refuse changes nothing: the document is refreshed.
+- `--all` takes each roll-up document that has a finding, with the guard, and it lists each refused document. Thus its output is also the list of the work. A document with no finding is not listed and not changed. A summary of no area (SD644) is not in the list. `--all` with `--holds` is a usage error, so that a claim names each document.
+- `--dry-run` writes nothing. The output says `would refresh` and `would hold` in place of `refreshed` and `held`.
+
+The guard stops a silent refresh. It does not check that a new text is true, or that it is about the changed requirement: a one-word edit passes the guard. After one edit against the base, each later refresh of that document in the same branch passes the guard. Only a reader can check the meaning: the acceptor or the owner. A summary is no artifact of a change, so it has no status and no approval commit. The merge of the pull request covers the edit and the claim, and SD645 shows each claim.
+
+`refresh` checks all ids before it writes a file. A refusal is for one document: the command refreshes the other documents, lists the refused ones, and exits with 1. The output has one line for each document:
+
+```text
+refreshed summaries/valves: 3 pins (1 added, 0 changed, 0 removed)
+held summaries/sensors: the text did not change (SD645 shows it)
+refused system: its text is the text of the base, and these pins are stale: `summaries/valves`; ...
+```
+
+A document that is current is `refreshed` with 0 added, 0 changed and 0 removed, and its file stays as it is. With `--json`, the output is `{"refreshed":["<id>",...],"held":["<id>",...],"refused":[{"id":"<id>","pins":["<pin>",...]}]}`. A `pins` entry is a pin without its hash.
+
+Exit codes: 0 done; 1 the guard refused a document; 2 usage (also `--all` with `--holds`, no id and no `--all`, and an id that is not a roll-up document); 3 configuration, or a different version pin, or a `--base` that is not a commit; 4 git or file error; 5 an id names no document.
 
 ## history
 
@@ -1419,11 +1456,11 @@ An unknown layout stops with exit code 3 and writes nothing: `.specify/` or `spe
 | Code | Meaning |
 | --- | --- |
 | 0 | Success. For `check`: no new error (with `--all`: no error). For `eval run`: the pass rate is at least `min-pass-rate`. `hook` always exits with 0 |
-| 1 | `check` found a new error (with `--all`: any error), `evidence stamp` found an unreadable report or no report, the preservation check of `mv`, `history` or `index` refused the change, a step of `finish` stopped, `approve` refused (steps 3 to 7), `accept` refused (an edit that `HEAD` does not have, a change with no plan or no intent, or a changed code), `upgrade` or `import` refused or its proof failed, or the pass rate of `eval run` is below `min-pass-rate` |
-| 2 | Usage error. Also a refusal of `layer add` (it changes nothing), an unknown `--group` of `status`, `stats` or `context`, `stats` without `--sdlc`, an unknown id or an unknown harness arm of `eval run`, `--arms` with 1 arm or more than 3, `--arms` with `--ab`, `--no-isolate` with `--arms` or `--harness`, a `--compare` that is not 2 arms of its file, an `index` of a place that gives no type, a `new` or `mv` into an area that differs from a name of `areas` only in case, and an `import` with a missing layer for a type that it writes or for `--keep research` |
+| 1 | `check` found a new error (with `--all`: any error), `evidence stamp` found an unreadable report or no report, the preservation check of `mv`, `history` or `index` refused the change, the guard of `refresh` refused a document, a step of `finish` stopped, `approve` refused (steps 3 to 7), `accept` refused (an edit that `HEAD` does not have, a change with no plan or no intent, or a changed code), `upgrade` or `import` refused or its proof failed, or the pass rate of `eval run` is below `min-pass-rate` |
+| 2 | Usage error. Also a refusal of `layer add` (it changes nothing), an unknown `--group` of `status`, `stats` or `context`, `stats` without `--sdlc`, an unknown id or an unknown harness arm of `eval run`, `--arms` with 1 arm or more than 3, `--arms` with `--ab`, `--no-isolate` with `--arms` or `--harness`, a `--compare` that is not 2 arms of its file, an `index` of a place that gives no type, a `refresh` with `--all` and `--holds`, with no id, or with an id that is not a roll-up document, a `new summary` of an area that has no folder, a `new` or `mv` into an area that differs from a name of `areas` only in case, and an `import` with a missing layer for a type that it writes or for `--keep research` |
 | 3 | Configuration error: no valid `spec-dna.toml` (also 2 names in `areas` that differ only in case, `evidence stamp` with no `[evidence] reports`, a glob of `[evidence] reports` that is absolute or has `..`, or `[evidence] reliable-for` other than `none` with no `reports`), a different version pin, an unknown base revision (for `log`: an unknown `--since`), or no git repository. For `check`: also a base that pins a version before 0.4.0, or that `upgrade` cannot plan. For `upgrade`: also a form that it cannot edit, or a bad `--pin-file`. For `finish`: also an `accepted` change with no base. For `import`: no project, an unknown layout or a bad file of `--areas`. For `eval run`: also an invalid eval, an estimate above the cap, a stop by the cap, or a `claude` that is absent. For `eval verdict --compare`: a file that is no result of `eval run --arms` |
 | 4 | Git or file system error. For `finish`: a write failed, and the message lists the files. For `approve`: the commit failed, and the file has its old text. For `import`: a failed `git mv` or write, and the message gives the commands that restore the tree. For `eval run`: the temporary folder, the copy, the base commit or the result file. For `evidence stamp` and `check --reports`: a folder of reports that exists and cannot be read |
-| 5 | A target names no document, section or requirement. For `finish`, `next`, `approve` and `accept`: no folder for the slug, and for `approve` also no file of the artifact |
+| 5 | A target names no document, section or requirement. For `refresh`: an id names no document. For `finish`, `next`, `approve` and `accept`: no folder for the slug, and for `approve` also no file of the artifact |
 
 A command that writes to a closed pipe, such as `spec-dna check --json | head -1`, ignores the write error. It ends with its own exit code, and it prints no error. This applies to every command.
 

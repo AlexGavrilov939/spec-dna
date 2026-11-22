@@ -128,7 +128,26 @@ const SMALL: [&str; 7] = [
     "incidents",
 ];
 
-const DEFAULT: [&str; 10] = [
+/// The default graph of `init` in `standard` and `strict`: the layer
+/// `summaries` comes last (design 0.8.0, D50). Slice S8a changed this list
+/// on purpose: it had 10 layers before.
+const DEFAULT: [&str; 11] = [
+    "foundation",
+    "rules",
+    "requirements",
+    "interfaces",
+    "decisions",
+    "procedures",
+    "research",
+    "intent",
+    "incidents",
+    "pending",
+    "summaries",
+];
+
+/// The default graph of `init` in `lite`: the roll-up is off there, so the
+/// graph has no layer `summaries`.
+const DEFAULT_LITE: [&str; 10] = [
     "foundation",
     "rules",
     "requirements",
@@ -238,6 +257,41 @@ fn the_default_graph_is_written_in_the_order_of_the_design() {
     let (code, out, _) = r.run(&["layer", "list"]);
     assert_eq!(code, 0, "{out}");
     assert!(out.contains("procedures"), "{out}");
+}
+
+#[test]
+fn init_writes_the_layer_summaries_in_standard_and_strict_and_not_in_lite() {
+    for profile in ["standard", "strict"] {
+        let r = Repo::empty();
+        specs(&r, "", 30);
+        r.commit("docs");
+        let (code, out, err) = r.init_with(&format!("profile = \"{profile}\"\n"), &[]);
+        assert_eq!(code, 0, "{profile}: {out}{err}");
+        assert_eq!(r.layers(), DEFAULT, "{profile}");
+        let cfg = r.read("spec-dna.toml");
+        assert!(
+            cfg.contains("[layers.summaries]\ntypes = [\"summary\"]\n"),
+            "{profile}: {cfg}"
+        );
+    }
+    // `lite` has the roll-up off, so the graph has no such layer.
+    let r = Repo::empty();
+    specs(&r, "", 30);
+    r.commit("docs");
+    let (code, out, err) = r.init_with("profile = \"lite\"\n", &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(r.layers(), DEFAULT_LITE);
+    assert!(!r.read("spec-dna.toml").contains("summaries"));
+    // A project of fewer than 30 documents gets the small graph in each
+    // profile, with no such layer.
+    for profile in ["lite", "standard", "strict"] {
+        let r = Repo::empty();
+        specs(&r, "", 3);
+        r.commit("docs");
+        let (code, out, err) = r.init_with(&format!("profile = \"{profile}\"\n"), &[]);
+        assert_eq!(code, 0, "{profile}: {out}{err}");
+        assert_eq!(r.layers(), SMALL, "{profile}");
+    }
 }
 
 #[test]

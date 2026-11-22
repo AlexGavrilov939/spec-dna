@@ -162,7 +162,7 @@
       }
     },
     "layers": {
-      "description": "The layer graph: one table for each layer. A project with no `[layers]` table gets the default graph for its types. The `moves-to` edges must have no cycle, and a type is in one layer at most.",
+      "description": "The layer graph: one table for each layer. A project with no `[layers]` table gets the default graph for its types, without the layer `summaries` (`spec-dna layer add summaries` adds it). The `moves-to` edges must have no cycle, and a type is in one layer at most.",
       "type": "object",
       "propertyNames": {
         "pattern": "^[A-Za-z0-9_-]+$"
@@ -359,6 +359,9 @@
           "$ref": "#/$defs/budget"
         },
         "plan": {
+          "$ref": "#/$defs/budget"
+        },
+        "summary": {
           "$ref": "#/$defs/budget"
         },
         "growth": {
@@ -678,7 +681,8 @@
         "research",
         "intent",
         "spec",
-        "plan"
+        "plan",
+        "summary"
       ]
     },
     "rootType": {
@@ -695,7 +699,8 @@
         "decision",
         "procedure",
         "incident",
-        "research"
+        "research",
+        "summary"
       ]
     },
     "layer": {
@@ -1001,10 +1006,10 @@
       ]
     },
     "rules": {
-      "description": "Severity overrides. Each key is a rule group (references, ids, budgets, drift, evidence, reports, proof, acceptance, lint, layers, changes) or a diagnostic code such as `SD702`. A code rule has priority over a group rule. See docs/profiles.md.",
+      "description": "Severity overrides. Each key is a rule group (references, ids, budgets, drift, evidence, reports, proof, acceptance, rollup, lint, layers, changes) or a diagnostic code such as `SD702`. A code rule has priority over a group rule. See docs/profiles.md.",
       "type": "object",
       "propertyNames": {
-        "pattern": "^(references|ids|budgets|drift|evidence|reports|proof|acceptance|lint|layers|changes|SD[0-9]{3})$"
+        "pattern": "^(references|ids|budgets|drift|evidence|reports|proof|acceptance|rollup|lint|layers|changes|SD[0-9]{3})$"
       },
       "additionalProperties": {
         "$ref": "#/$defs/severity"

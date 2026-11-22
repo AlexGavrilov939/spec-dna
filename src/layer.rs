@@ -467,11 +467,16 @@ impl Graph {
             if !slug.is_empty() && file == format!("{}.md", ty.name()))
     }
 
-    /// The graph of a project that has no `[layers]` table: the default
-    /// graph. A non-empty `types` list keeps only the layers that hold one of
-    /// these types, and drops the edges to the other layers.
+    /// The graph of a project that has no `[layers]` table: the default graph
+    /// without the layer `summaries` (design 0.8.0, D50): a folder `summaries/`
+    /// of a 0.7.1 project can hold documents of another type, and a new place
+    /// type would change their type. A non-empty `types` list keeps only the
+    /// layers that hold one of these types, and drops the edges to the other
+    /// layers.
     pub fn implied(types: &[DocType]) -> Graph {
-        let keep = |d: &LayerDef| types.is_empty() || d.types.iter().any(|t| types.contains(t));
+        let keep = |d: &LayerDef| {
+            d.implied && (types.is_empty() || d.types.iter().any(|t| types.contains(t)))
+        };
         let names: Vec<&str> = DEFAULT_GRAPH
             .iter()
             .filter(|d| keep(d))
@@ -490,6 +495,13 @@ impl Graph {
     pub fn default_graph() -> Graph {
         let names: Vec<&str> = DEFAULT_GRAPH.iter().map(|d| d.name).collect();
         build(DEFAULT_GRAPH.iter(), &names)
+    }
+
+    /// The graph that `init` writes for a project of 30 documents or more in
+    /// the profile `lite`: the default graph without the layer `summaries`.
+    /// The roll-up is off in `lite` (design 0.8.0, D50).
+    pub fn default_graph_without_summaries() -> Graph {
+        Graph::implied(&[])
     }
 
     /// The graph of a size name: `small` or `default`.
@@ -549,6 +561,9 @@ struct LayerDef {
     max_chars: Option<u32>,
     max_started: Option<u32>,
     stale_days: Option<u32>,
+    /// False for a layer that the implied graph of a project with no
+    /// `[layers]` table does not have.
+    implied: bool,
 }
 
 /// A definition with the defaults. The constants below override keys.
@@ -564,6 +579,7 @@ const BASE: LayerDef = LayerDef {
     max_chars: None,
     max_started: None,
     stale_days: None,
+    implied: true,
 };
 
 const FOUNDATION: LayerDef = LayerDef {
@@ -659,8 +675,18 @@ const PENDING: LayerDef = LayerDef {
     ..BASE
 };
 
-/// The default graph (design "Default graph"), in the order of its table.
-const DEFAULT_GRAPH: [LayerDef; 10] = [
+/// The layer of the area summaries (design 0.8.0, D50). It has no edge and it
+/// is not in the implied graph.
+const SUMMARIES: LayerDef = LayerDef {
+    name: "summaries",
+    types: &[DocType::Summary],
+    implied: false,
+    ..BASE
+};
+
+/// The default graph (design "Default graph"), in the order of its table. The
+/// layer `summaries` comes last (design 0.8.0, D50).
+const DEFAULT_GRAPH: [LayerDef; 11] = [
     FOUNDATION,
     RULES,
     REQUIREMENTS,
@@ -671,6 +697,7 @@ const DEFAULT_GRAPH: [LayerDef; 10] = [
     INTENT,
     INCIDENTS,
     PENDING,
+    SUMMARIES,
 ];
 
 /// The small graph (design, table "Size"), in the order of its text. It
@@ -1079,6 +1106,7 @@ mod tests {
                 "interfaces",
                 "decisions",
                 "procedures",
+                "summaries",
                 "research",
                 "intent",
                 "incidents",
@@ -1138,10 +1166,12 @@ mod tests {
                 ("intent", 1),
                 ("incidents", 2),
                 ("pending", 2),
+                // Design 0.8.0, D50: no edges, so level 0, and last in the file.
+                ("summaries", 0),
             ]
         );
         let i = |n: &str| g.index(n).unwrap();
-        // 15 types, each in one layer.
+        // 16 types, each in one layer.
         for ty in DocType::ALL {
             assert!(g.layer_of_type(ty).is_some(), "{}", ty.name());
         }
@@ -1189,8 +1219,22 @@ mod tests {
 
     #[test]
     fn the_implied_graph_keeps_the_layers_of_the_types_in_use() {
+        // The implied graph is the default graph without the layer
+        // `summaries` (design 0.8.0, D50, P5): a folder `summaries/` of a 0.7.1
+        // project can hold documents of another type.
         let all = Graph::implied(&[]);
-        assert_eq!(all, Graph::default_graph());
+        let default = Graph::default_graph();
+        assert_eq!(all, Graph::default_graph_without_summaries());
+        assert_eq!(default.layers().len(), all.layers().len() + 1);
+        assert!(all.index("summaries").is_none());
+        assert!(all.layer_of_type(DocType::Summary).is_none());
+        let names =
+            |g: &Graph| -> Vec<String> { g.layers().iter().map(|l| l.name.clone()).collect() };
+        assert_eq!(names(&all), names(&default)[..10]);
+        assert_eq!(default.layers()[10].name, "summaries");
+        assert_eq!(default.layers()[10].types, [DocType::Summary]);
+        // A `types` list that names the type does not bring the layer.
+        assert!(Graph::implied(&[DocType::Summary]).layers().is_empty());
         let g = Graph::implied(&[DocType::Requirements, DocType::Decision, DocType::Research]);
         let names: Vec<&str> = g.layers().iter().map(|l| l.name.as_str()).collect();
         assert_eq!(names, ["requirements", "decisions", "research"]);

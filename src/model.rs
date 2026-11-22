@@ -27,12 +27,13 @@ pub enum DocType {
     Intent = 12,
     Spec = 13,
     Plan = 14,
+    Summary = 15,
 }
 
 impl DocType {
     /// The number of types. Per-type tables of the configuration have this
     /// length, with the index `DocType as usize`.
-    pub const COUNT: usize = 15;
+    pub const COUNT: usize = 16;
 
     pub const ALL: [DocType; DocType::COUNT] = [
         DocType::Product,
@@ -50,6 +51,7 @@ impl DocType {
         DocType::Intent,
         DocType::Spec,
         DocType::Plan,
+        DocType::Summary,
     ];
 
     pub fn name(self) -> &'static str {
@@ -69,6 +71,7 @@ impl DocType {
             "intent",
             "spec",
             "plan",
+            "summary",
         ][self as usize]
     }
 
@@ -118,7 +121,8 @@ impl DocType {
             | DocType::Roadmap
             | DocType::Questions
             | DocType::Incident
-            | DocType::Research => &[],
+            | DocType::Research
+            | DocType::Summary => &[],
         }
     }
 
@@ -234,6 +238,11 @@ pub struct Doc {
     pub depends_on: Vec<(String, u32)>,
     pub applies_to: Vec<String>,
     pub verified_by: Vec<(String, u32)>,
+    /// The pins of the front matter field `rests-on` (design 0.8.0, D51), each
+    /// with the line of the field. `None` if the field is absent. `Some` with
+    /// no pin if the field is there and empty: a `system` or `product` document
+    /// is a roll-up document by having the field, with or without pins.
+    pub rests_on: Option<Vec<(String, u32)>>,
     pub owner: Option<String>,
     /// The 0.5 type of a document that `upgrade` changed (`note` or
     /// `change`). Only the SD202 exemption reads it.
@@ -726,6 +735,7 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
         .map(|(s, _)| s)
         .collect();
     let verified_by = list("verified-by", &mut issues);
+    let rests_on = fm.get("rests-on").map(|_| list("rests-on", &mut issues));
     let aliases: Vec<String> = list("aliases", &mut issues)
         .into_iter()
         .map(|(s, _)| s)
@@ -792,6 +802,7 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
             depends_on: Vec::new(),
             applies_to: Vec::new(),
             verified_by: Vec::new(),
+            rests_on: None,
             owner,
             was_type: None,
             class: Class::Routine,
@@ -895,10 +906,24 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
                     code: Code::TypeInvalid,
                     line: 1,
                     target: w.name().to_string(),
-                    message: format!(
-                        "no layer of spec-dna.toml has type `{0}`; run `spec-dna layer add <name> --types {0}` to add one",
-                        w.name()
-                    ),
+                    message: if w == DocType::Summary && !config.layers_declared {
+                        // A project with no `[layers]` table has no layer for
+                        // the type (design 0.8.0, D50). The wording differs
+                        // from the one below, so that the fix of SD303 keeps
+                        // its text of 0.7.1 for such a project.
+                        "the type `summary` has no layer: a project with no `[layers]` table has no layer `summaries`; run `spec-dna layer add summaries` to add one".to_string()
+                    } else {
+                        format!(
+                            "no layer of spec-dna.toml has type `{}`; run `spec-dna {}` to add one",
+                            w.name(),
+                            // The layer of the summaries has a command with no options.
+                            if w == DocType::Summary {
+                                "layer add summaries".to_string()
+                            } else {
+                                format!("layer add <name> --types {}", w.name())
+                            }
+                        )
+                    },
                 });
             }
         }
@@ -1191,6 +1216,7 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
         depends_on,
         applies_to,
         verified_by,
+        rests_on,
         owner,
         was_type: was_type.map(|(s, _)| s),
         class,

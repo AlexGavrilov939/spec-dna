@@ -15,7 +15,7 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | approve | Set the status `accepted` or `approved` in a commit, and merge the commit with a pull request. The command `spec-dna approve <slug> <artifact>` does it for one artifact, and it is for a person | | [commands](commands.md#approve) |
 | approver | A person whose author e-mail is in `[change] approvers`. Only the approval commits of an approver count. The address of an agent or a bot is no approver (SD926) | | [config](config.md) |
 | arm | One of the 2 setups that `eval run --ab` compares on the same evals: `with` the skill and `without` it | | [evals](evals.md#run-the-arms) |
-| area | A topic folder under `requirements/` | | [config](config.md) |
+| area | A topic folder under `requirements/`. For the roll-up, a folder of any depth under the folder of the layer `requirements` is an area, and the path `summaries/<area>.md` is its summary | | [config](config.md), [types](types.md#summary) |
 | base | The commit that `check` compares with the head. Without `--base`, it is `HEAD`. With `--base <rev>`, it is the merge base of `<rev>` and `HEAD`. The change checks use the merge base of `--base`, of `origin/HEAD` or of the branch of `[change] base`, with `HEAD` | | [concepts](concepts.md#the-gate) |
 | base tree, head tree | The files at the base commit and at the head of a change. A gate reads an approval from the base tree. With `[change] approval = "branch"`, it also reads the approval commits of the branch | | [concepts](concepts.md#the-change-lifecycle) |
 | batch | The records of one result file of `eval run --ab`, in one file `bench/results/evals/<stamp>-<target>.jsonl`. For each name, the newest batch that has records of the name gives the row of the table of the release | | [evals](evals.md#the-records-of-a-release) |
@@ -43,8 +43,10 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | `finish` | The command that applies the delta of a change, checks the evidence and deletes the intent folder | | [change guide](guides/change.md) |
 | foundation | The layer of the top files `product.md`, `system.md` and `terms.md` | | [concepts](concepts.md#layers-and-the-graph) |
 | front matter | The YAML block at the start of a document, with fields such as `type` and `status` | | [types](types.md) |
+| frontier | The set of items that a roll-up document must pin: each active requirement in its scope, and the summary of the highest sub-area that has one in place of the requirements of that sub-area. A `system` document has the whole layer `requirements` as its scope. A `product` document has the `system` documents that have `rests-on` | | [types](types.md#summary) |
 | gate | A rule that blocks the next stage of a change until the document of the stage before has approval. spec-dna also calls `check` a gate | | [concepts](concepts.md#the-gate) |
 | group | A named set of areas in the configuration. It is a view and never a folder | | [config](config.md) |
+| guard | The rule of `refresh` that refuses a document that has a stale pin and whose text is the text of the base. `--holds` writes the pins anyway, and SD645 shows that claim | | [commands](commands.md#refresh) |
 | harness | The agent setup that an adapter writes: roles, skills, hooks and `REVIEW.md`. Today only the Claude Code adapter writes a harness | | [harness](harness.md) |
 | hash | The first 16 hexadecimal digits of SHA-256 over the normalized text of a requirement or a section | | [concepts](concepts.md#ids-and-requirements) |
 | `higher-risk` | A change class with an intent, a spec and a plan. The owner approves the plan | | [change guide](guides/change.md#choose-the-class) |
@@ -82,6 +84,8 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | research | Material that agents read only on request, in `research/` | types `note`, `reference` | [types](types.md) |
 | `REVIEW.md` | The review policy of the repository, which a code review service reads | | [harness](harness.md) |
 | role | A job in the harness, such as `verifier`, with its model and its agent file. An entry of `[owners]` also gives a role name: see owner role | | [harness](harness.md#roles) |
+| roll-up document | A `summary`, or a `system` or `product` document that has the field `rests-on`. It stores pins of the items below it. The chain is: the requirements, the summaries of the areas, `system`, then `product` | | [types](types.md#summary) |
+| roll-up pin | One entry of `rests-on`: `<doc-id>#<key>@<16 hex>` for a requirement, or `<doc-id>@<16 hex>` for a document. It records the text that the author read. It is stale when that text changes (SD641). The pin of the version in `spec-dna.toml` is another term: see pin | | [types](types.md#the-field-rests-on-and-its-pins) |
 | root | A folder that `spec-dna.toml` maps to document types. Document ids are relative to it | | [config](config.md) |
 | `routine` | A change class with an intent and a plan. The agent approves the plan, when the owner says so | | [change guide](guides/change.md#choose-the-class) |
 | rule | A project-wide requirement with a stable id, in `rules/` | type `invariant` | [types](types.md) |
@@ -97,6 +101,7 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | stage skill | A skill that `next` names for a step of a change, for example `write-plan`. The workflow pack has 9 stage skills | | [harness](harness.md#the-workflow-pack-and-reviewmd) |
 | standard document | A document form that a team already knows, such as an ADR or a PRD | | [types](types.md) |
 | subagent | An agent with its own context, which the main agent starts. The Claude Code adapter defines them in `.claude/agents/` | | [harness](harness.md) |
+| summary | A document of the type `summary`: the short text of one area of the requirements, with the pins of the items that it rests on. It has no status and no required section. The gate checks its pins, not its meaning | | [types](types.md#summary) |
 | template | The text that `spec-dna new` writes for a new document | | [types](types.md#templates) |
 | `terms` | The type of `terms.md`: a table of terms, meanings and forbidden synonyms. SD904 reads it | | [types](types.md) |
 | top file | A document of a layer that has a fixed file name, such as `terms.md` or `roadmap.md` | | [types](types.md#place-gives-the-type) |

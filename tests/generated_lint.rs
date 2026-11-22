@@ -86,6 +86,11 @@ fn write_documents(repo: &Repo) {
             "intent" => name.clone(),
             _ => format!("{name}-doc"),
         };
+        // The summary of an area needs the folder of that area under
+        // `requirements/` (design 0.8.0, D50), so the test writes one.
+        if ty == "summary" {
+            repo.write("docs/requirements/summary-doc/keep.md", "# Keep\n");
+        }
         let mut args = vec!["new", ty.as_str()];
         if !TOP_FILE_TYPES.contains(&ty.as_str()) {
             args.push(&id);
