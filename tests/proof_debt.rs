@@ -27,7 +27,7 @@ fn repo(profile: &str, rules: &str, first: &str, second: &str) -> Repo {
     let r = Repo::with_config(&config(profile, rules));
     r.write("docs/requirements/valves.md", &valves(first, second));
     r.write("tests/test_other.py", "# nothing\n");
-    r.commit("base");
+    r.commit_base_of_0_7_1("base");
     r
 }
 
@@ -83,7 +83,7 @@ fn a_debt_makes_a_strict_project_with_no_other_finding_pass() {
         "docs/requirements/valves.md",
         "---\nstatus: active\n---\n# Valves\n\n## Requirements\n\n- **close**: The controller SHALL close the valve in 5 seconds. <!-- proof-owed: environment -->\n",
     );
-    r.commit("base");
+    r.commit_base_of_0_7_1("base");
     // Without the marker, SD608 would be an error in `strict`.
     let (code, out, err) = r.run(&["check", "--all"]);
     assert_eq!(code, 0, "{out}{err}");
@@ -314,7 +314,7 @@ fn in_lite_status_and_stats_print_no_proof_line_and_read_no_report() {
         "tests/test_valves.py",
         "# covers: requirements/valves#open\ndef test_opens():\n    assert True\n",
     );
-    r.commit("base");
+    r.commit_base_of_0_7_1("base");
     r.write(
         "reports/junit.xml",
         "<testsuites><testsuite name=\"p\" tests=\"1\"><testcase classname=\"tests.test_valves\" name=\"test_opens\"/></testsuite></testsuites>",
@@ -341,7 +341,7 @@ fn in_lite_status_and_stats_print_no_proof_line_and_read_no_report() {
     ));
     r2.write(".gitignore", "reports/\n");
     r2.write("docs/requirements/valves.md", &valves(MANUAL, ""));
-    r2.commit("base");
+    r2.commit_base_of_0_7_1("base");
     let (_, out, _) = r2.run(&["status"]);
     assert!(out.contains("proof: 1 owed (manual 1)"), "{out}");
     let (_, out, _) = r2.run(&["stats", "--sdlc"]);
@@ -357,7 +357,7 @@ fn stats_with_an_unreadable_folder_of_reports_counts_no_report() {
     ));
     r.write("docs/requirements/valves.md", &valves(MANUAL, ""));
     r.write("reports/keep", "x");
-    r.commit("base");
+    r.commit_base_of_0_7_1("base");
     let dir = r.dir.join("reports");
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).unwrap();
     let (code, out, err) = r.run(&["stats", "--sdlc", "--json"]);
@@ -405,7 +405,7 @@ fn finish_repo(profile: &str, delta_line: &str) -> Repo {
         &format!("{FOLDER}/spec.md"),
         &format!("---\nstatus: approved\n---\n# Spec\n\n## Delta\n\n- {delta_line}\n"),
     );
-    r.commit("base");
+    r.commit_base_of_0_7_1("base");
     origin_head(&r.dir, "main");
     r.git(&["checkout", "-q", "-b", "feature"]);
     r.write("src/valves.py", "x = 2\n");

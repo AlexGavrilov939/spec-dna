@@ -72,7 +72,7 @@ fn pr_class_in(class: &str, config: &str, tests: &[(&str, &str)]) -> Repo {
             "---\nstatus: approved\n---\n# Spec\n\n## Delta\n\n- ADD {TAG}: The controller SHALL flush the line.\n"
         ),
     );
-    r.commit("base");
+    r.commit_base_of_0_7_1("base");
     origin_head(&r.dir, "main");
     r.git(&["checkout", "-q", "-b", "feature"]);
     r.write("docs/requirements/valves.md", &format!("{VALVES}{FLUSH}"));
@@ -608,7 +608,7 @@ fn sd616_is_a_state_code_of_check_all() {
     r.write(".gitignore", "reports/\n");
     r.write("docs/requirements/valves.md", &format!("{VALVES}{FLUSH}"));
     r.write("tests/test_valves.py", PY_TEST);
-    r.commit("base");
+    r.commit_base_of_0_7_1("base");
     r.write(
         "reports/junit.xml",
         &junit(
@@ -639,7 +639,7 @@ fn sd616_is_an_error_in_strict_and_off_in_lite() {
         r.write(".gitignore", "reports/\n");
         r.write("docs/requirements/valves.md", &format!("{VALVES}{FLUSH}"));
         r.write("tests/test_valves.py", PY_TEST);
-        r.commit("base");
+        r.commit_base_of_0_7_1("base");
         r.write(
             "reports/junit.xml",
             &junit(
@@ -879,7 +879,7 @@ fn finish_stops_at_step_5_without_a_stamp_and_with_a_skipped_case() {
             &format!("{FOLDER}/spec.md"),
             &format!("---\nstatus: approved\n---\n# Spec\n\n## Delta\n\n- ADD {TAG}: The controller SHALL flush the line.\n"),
         );
-        r.commit("base");
+        r.commit_base_of_0_7_1("base");
         origin_head(&r.dir, "main");
         r.git(&["checkout", "-q", "-b", "feature"]);
         r.write("tests/test_valves.py", PY_TEST);
@@ -1414,7 +1414,7 @@ fn finish_stops_at_step_5_with_sd620_until_the_case_passed_n_times() {
             &format!("{FOLDER}/spec.md"),
             &format!("---\nstatus: approved\n---\n# Spec\n\n## Delta\n\n- ADD {TAG}: The controller SHALL flush the line.\n"),
         );
-        r.commit("base");
+        r.commit_base_of_0_7_1("base");
         origin_head(&r.dir, "main");
         r.git(&["checkout", "-q", "-b", "feature"]);
         r.write("tests/test_valves.py", PY_TEST);
@@ -1468,7 +1468,7 @@ fn a_branch_that_lowers_the_class_of_the_base_does_not_skip_sd620_in_finish() {
             &format!("{FOLDER}/spec.md"),
             &format!("---\nstatus: approved\n---\n# Spec\n\n## Delta\n\n- ADD {TAG}: The controller SHALL flush the line.\n"),
         );
-        r.commit("base");
+        r.commit_base_of_0_7_1("base");
         origin_head(&r.dir, "main");
         r.git(&["checkout", "-q", "-b", "feature"]);
         if !class_in_branch.is_empty() {
@@ -1636,7 +1636,7 @@ fn finish_names_both_causes_when_sd617_and_sd620_stop_it() {
         &format!("{FOLDER}/spec.md"),
         &format!("---\nstatus: approved\n---\n# Spec\n\n## Delta\n\n- ADD {TAG}: The controller SHALL flush the line.\n- ADD requirements/valves#purge: The controller SHALL purge the line.\n"),
     );
-    r.commit("base");
+    r.commit_base_of_0_7_1("base");
     origin_head(&r.dir, "main");
     r.git(&["checkout", "-q", "-b", "feature"]);
     r.write(

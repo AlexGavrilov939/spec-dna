@@ -1,0 +1,5 @@
+repos:
+  - repo: https://example.test/typos
+    rev: v1.0.0
+    hooks:
+      - id: typos

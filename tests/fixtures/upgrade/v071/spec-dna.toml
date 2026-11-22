@@ -1,0 +1,101 @@
+# spec-dna configuration (docs/config.md). `spec-dna init` wrote it; edit it freely.
+spec-dna = "0.7.1"
+profile = "standard"  # lite, standard or strict (docs/profiles.md)
+# install-source = "https://github.com/AlexGavrilov939/spec-dna"  # a local or private clone
+
+[evidence]
+tests = ["**/tests/**", "**/*_test.*"]  # test files with `covers: <doc-id>#<key>` tags
+
+[change]  # the change process (docs/config.md)
+policy = "three-class"  # "three-class", "two-class" or "none"
+gate = "block"  # "block", "warn" or "off"
+high-risk-layers = ["interfaces", "rules"]  # a delta in these layers makes a change higher-risk
+high-risk-paths = []  # globs from the repository root
+shared-paths = ["docs/questions.md", "docs/roadmap.md"]  # documents that each change can edit (SD913)
+max-fanout = 8  # documents that one change can touch before SD905
+approval = "branch"  # "base" or "branch": where an approval can be
+approvers = ["owner@example.test"]  # the author e-mails of the approval commits
+
+[evals]  # agent evals (docs/config.md)
+dir = "evals"
+min-pass-rate = 0.8  # the share of evals that must pass
+runs = 3  # the runs of an eval that sets no `runs`
+max-total-usd = 20  # eval run refuses or stops above this spend
+
+[harness]
+level = "lean"
+deny = ["NotebookEdit"]
+context-meter = [300000, 600000]
+subagent-meter = 250000
+fanout-cap = 10
+skills = ["brainstorm", "specify", "clarify", "write-plan", "tdd", "review", "finish", "post-mortem"]
+review-md = true
+protect-tests = "fix-branches"
+
+[harness.roles]
+orchestrator = { claude-code = "opus", effort = "xhigh", fallback = ["opus", "sonnet"] }
+advisor = { claude-code = "fable", agent = "opus", effort = "xhigh" }
+verifier = { claude-code = "opus", effort = "high" }
+researcher = { claude-code = "haiku", effort = "high" }
+helper = { claude-code = "haiku" }
+
+[harness.efforts]
+sonnet = "high"
+
+# The layer graph (docs/config.md). `spec-dna layer add` adds a layer.
+[layers.foundation]
+types = ["product", "system", "terms"]
+files = ["product.md", "system.md", "terms.md"]
+max-chars = 30000
+
+[layers.rules]
+types = ["rule"]
+max-docs = 30
+
+[layers.requirements]
+types = ["requirements"]
+
+[layers.interfaces]
+types = ["interface"]
+
+[layers.decisions]
+types = ["decision"]
+
+[layers.procedures]
+types = ["procedure"]
+
+[layers.research]
+types = ["research"]
+moves-to = ["decisions", "requirements"]
+linked-from = ["decisions", "requirements"]
+context = "on-request"
+
+[layers.intent]
+types = ["intent", "spec", "plan"]
+moves-to = ["requirements", "interfaces", "rules", "decisions", "procedures"]
+keep = "until-finished"
+context = "on-request"
+max-docs = 30
+max-started = 3
+stale-days = 14
+
+[layers.incidents]
+types = ["incident"]
+moves-to = ["intent"]
+linked-from = ["rules", "procedures", "decisions", "requirements", "interfaces", "intent"]
+context = "on-request"
+
+[layers.pending]
+types = ["roadmap", "questions"]
+files = ["roadmap.md", "questions.md"]
+moves-to = ["intent", "decisions"]
+linked-from = ["intent", "requirements", "decisions"]
+context = "on-request"
+max-docs = 2
+
+# 7 Markdown files, mostly documentation
+[[roots]]
+path = "docs"
+type = "mixed"
+default-type = "procedure"
+status = "active"

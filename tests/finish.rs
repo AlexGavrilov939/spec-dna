@@ -154,7 +154,21 @@ impl Fx<'_> {
                 &format!("---\nstatus: {}\n---\n# Spec\n\n{body}", self.spec_status),
             );
         }
+        // The change is on the base from a commit that pins 0.7.1, so its plan was
+        // added before 0.8.0 and needs no acceptance record (design 0.8.0, P5). A
+        // later commit sets the pin of the binary.
+        let config = r.read("spec-dna.toml");
+        r.write(
+            "spec-dna.toml",
+            &config.replacen(
+                &format!("spec-dna = \"{VERSION}\""),
+                "spec-dna = \"0.7.1\"",
+                1,
+            ),
+        );
         r.commit("base");
+        r.write("spec-dna.toml", &config);
+        r.commit("move the pin");
         if self.origin {
             origin_head(&r.dir, "main");
         }
@@ -244,7 +258,7 @@ fn a_finish_applies_the_delta_deletes_the_folder_and_stages_the_paths() {
             "M docs/requirements/valves.md",
         ]
     );
-    assert_eq!(r.git_out(&["rev-list", "--count", "HEAD"]), "1");
+    assert_eq!(r.git_out(&["rev-list", "--count", "HEAD"]), "2");
     // The pull request of `finish` passes `check`.
     r.commit("finish");
     let (code, out) = check(&r, "main");
@@ -1371,7 +1385,7 @@ fn finish_adds_the_hours_of_the_tasks() {
     let (code, out, err) = fin(&r, &[]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(out.lines().any(|l| l == "Hours: 3.5"), "{out}");
-    assert_eq!(r.git_out(&["rev-list", "--count", "HEAD"]), "2");
+    assert_eq!(r.git_out(&["rev-list", "--count", "HEAD"]), "3");
     // The total has no zero after the last digit, a number can end with `h`,
     // and the sum of 0.1 and 0.2 is exact.
     let order = format!(
@@ -2494,13 +2508,15 @@ fn finish_json_has_the_list_deviations_with_id_kind_text_and_verdict() {
         out.contains("\"deviations\":[{\"id\":\"d1\",\"kind\":\"plan\",\"text\":\"The timeout check moved to `src/sensors.rs`.\",\"verdict\":\"accepted\"}]"),
         "{out}"
     );
-    // No deviation, and a pin before 0.8.0: no key `deviations`, as in 0.7.1, and
-    // no line `Deviations:`.
+    // No deviation: the key is an empty list at the pin 0.8.0 (the pin of the
+    // binary), and there is no line `Deviations:`. A pin before 0.8.0 has no
+    // key, and the unit test of `emits_deviations` covers it: the binary refuses
+    // such a pin.
     let r = s5_built("standard", "", "", |_| String::new(), "");
     s5_record(&r, |t| t);
     let (code, out, err) = s5_finish(&r, &["--dry-run", "--json"]);
     assert_eq!(code, 0, "{out}{err}");
-    assert!(!out.contains("deviations"), "{out}");
+    assert!(out.contains("\"deviations\":[]"), "{out}");
     let (code, out, err) = s5_finish(&r, &["--dry-run"]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(!out.contains("Deviations:"), "{out}");
@@ -2511,7 +2527,8 @@ fn in_lite_with_no_record_finish_prints_no_deviations_and_exits_0() {
     let r = s5_built("lite", "", "", |_| String::new(), S5_DEV_PLAN);
     let (code, out, err) = s5_finish(&r, &["--json"]);
     assert_eq!(code, 0, "{out}{err}");
-    assert!(!out.contains("deviations"), "{out}");
+    // No record, so no deviation: the list is empty.
+    assert!(out.contains("\"deviations\":[]"), "{out}");
 }
 
 #[test]

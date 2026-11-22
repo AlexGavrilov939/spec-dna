@@ -131,7 +131,7 @@ impl Fx<'_> {
                 &format!("---\nstatus: approved\n---\n# Spec\n\n{body}"),
             );
         }
-        r.commit("base");
+        r.commit_base_of_0_7_1("base");
         origin_head(&r.dir, "main");
         r.git(&["checkout", "-q", "-b", "feature"]);
         r
@@ -613,7 +613,7 @@ fn sd914_is_an_error_for_a_spec_that_the_diff_touches_and_a_warning_for_another(
             );
             r.write(&format!("docs/intent/{slug}/spec.md"), &bad_line(doc));
         }
-        r.commit("base");
+        r.commit_base_of_0_7_1("base");
         if origin {
             origin_head(&r.dir, "main");
         }

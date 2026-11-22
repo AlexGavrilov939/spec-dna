@@ -2286,3 +2286,291 @@ fn upgrade_removes_an_unedited_skill_file_of_0_6_with_its_empty_folder() {
             .exists()
     );
 }
+
+// --- the fixtures of 0.7.1 (0.8.0, slice S11) ---
+
+/// The 3 projects that the real binary 0.7.1 wrote, one for each profile
+/// (`tests/fixtures/upgrade/make.sh v071`). Each has the harness `lean`, and
+/// the change `drip-schedule` with an approved spec and an approved plan on
+/// the base.
+const V071: [(&str, &str); 3] = [
+    ("standard", "v071"),
+    ("lite", "v071-lite"),
+    ("strict", "v071-strict"),
+];
+
+/// The first line of `spec-dna.toml` that starts with `spec-dna = "`.
+fn pin_line(repo: &Repo) -> String {
+    repo.read("spec-dna.toml")
+        .lines()
+        .find(|l| l.starts_with("spec-dna = \""))
+        .expect("the pin line")
+        .to_string()
+}
+
+/// The paths after `wrote `, `would write `, `removed ` or `would remove `.
+fn written(out: &str) -> Vec<String> {
+    out.lines()
+        .filter_map(|l| {
+            ["wrote ", "would write ", "removed ", "would remove "]
+                .iter()
+                .find_map(|verb| l.strip_prefix(verb))
+        })
+        .map(str::to_string)
+        .collect()
+}
+
+/// A first `upgrade` moves the pin of each fixture of 0.7.1, and a second
+/// `upgrade` and a dry run change nothing: no byte of the tree, no path in
+/// the report, and `check --all` of the result has no finding. The test fails
+/// when the second run writes one file again.
+#[test]
+fn a_second_upgrade_of_the_fixture_of_0_7_1_changes_nothing_in_each_profile() {
+    for (profile, name) in V071 {
+        let repo = Repo::from_fixture(name, &[]);
+        let old_pin = pin_line(&repo);
+        assert_eq!(old_pin, "spec-dna = \"0.7.1\"", "{profile}");
+        assert_ne!(VERSION, "0.7.1", "the first upgrade has work to do");
+        let (code, out, err) = upgrade(&repo, &[]);
+        assert_eq!(code, 0, "{profile}: {out}{err}");
+        assert!(out.contains("proof: ok"), "{profile}: {out}");
+        assert!(
+            written(&out).contains(&"spec-dna.toml".to_string()),
+            "{profile}: {out}"
+        );
+        assert_eq!(
+            pin_line(&repo),
+            format!("spec-dna = \"{VERSION}\""),
+            "{profile}: the first run moves the pin"
+        );
+        repo.commit("upgrade");
+        let tree = tree_bytes(&repo.dir);
+        for args in [
+            &[][..],
+            &["--dry-run"],
+            &["--json"],
+            &["--dry-run", "--json"],
+        ] {
+            let (code, out, err) = upgrade(&repo, args);
+            assert_eq!(code, 0, "{profile} {args:?}: {out}{err}");
+            if args.contains(&"--json") {
+                assert!(out.contains("\"files\":[]"), "{profile} {args:?}: {out}");
+            } else {
+                assert!(
+                    out.contains("nothing to change"),
+                    "{profile} {args:?}: {out}"
+                );
+                assert_eq!(written(&out), Vec::<String>::new(), "{profile} {args:?}");
+            }
+            assert_eq!(tree_bytes(&repo.dir), tree, "{profile} {args:?}");
+            assert_eq!(status(&repo), "", "{profile} {args:?}");
+        }
+        let (code, out, err) = repo.run(&["check", "--all"]);
+        assert_eq!(code, 0, "{profile}: {out}{err}");
+        assert!(out.contains("0 errors and 0 warnings"), "{profile}: {out}");
+    }
+}
+
+/// What the first `upgrade` of each fixture of 0.7.1 writes. `upgrade` sets no
+/// key and adds no skill: the configuration differs from the fixture in the pin
+/// line only. In `standard` and `strict`, it adds the agent `acceptor`, and the
+/// text of each skill moves. In `lite`, it adds no file, and each changed line of
+/// a generated file is a marker line with the new version and the same hash.
+#[test]
+fn the_first_upgrade_of_the_fixture_of_0_7_1_writes_the_files_of_its_profile() {
+    for (profile, name) in V071 {
+        let repo = Repo::from_fixture(name, &[]);
+        let old = repo.read("spec-dna.toml");
+        let (code, out, err) = upgrade(&repo, &[]);
+        assert_eq!(code, 0, "{profile}: {out}{err}");
+        assert_eq!(
+            repo.read("spec-dna.toml"),
+            old.replace("spec-dna = \"0.7.1\"", &format!("spec-dna = \"{VERSION}\"")),
+            "{profile}: the pin is the only edit of the configuration"
+        );
+        let new_files: Vec<String> = status(&repo)
+            .lines()
+            .filter(|l| l.starts_with("??"))
+            .map(|l| l[3..].to_string())
+            .collect();
+        if profile == "lite" {
+            assert!(new_files.is_empty(), "{profile}: {new_files:?}");
+            // Each changed line differs from its old line in the version only.
+            let diff = repo.git_out(&["diff", "-U0", "--", "."]);
+            let old_lines: Vec<&str> = diff
+                .lines()
+                .filter(|l| l.starts_with('-') && !l.starts_with("---"))
+                .collect();
+            let new_lines: Vec<&str> = diff
+                .lines()
+                .filter(|l| l.starts_with('+') && !l.starts_with("+++"))
+                .collect();
+            assert_eq!(old_lines.len(), new_lines.len(), "{profile}");
+            for (o, n) in old_lines.iter().zip(&new_lines) {
+                // The pin line of the configuration is the one pair that is no marker.
+                if o.contains("spec-dna = \"") {
+                    continue;
+                }
+                assert_eq!(
+                    o[1..].replace("v0.7.1", &format!("v{VERSION}")),
+                    n[1..],
+                    "{profile}: a changed line of a generated file is a marker"
+                );
+            }
+        } else {
+            assert_eq!(new_files, [".claude/agents/acceptor.md"], "{profile}");
+            let skill = repo.read(".claude/skills/spec-dna-review/SKILL.md");
+            assert!(skill.contains("acceptor"), "{profile}");
+        }
+        // The keys that `upgrade` leaves to the person.
+        let text = repo.read("spec-dna.toml");
+        for key in [
+            "acceptance-for",
+            "higher-risk-acceptors",
+            "invariants",
+            "reliable-for",
+            "[owners]",
+            "[budgets.area]",
+            "[layers.summaries]",
+        ] {
+            assert!(!text.contains(key), "{profile}: upgrade wrote {key}");
+        }
+    }
+}
+
+const VALVE_TIMEOUT_INTENT: &str = "# Valve timeout\n\n## Intent\n\nClose the valve on a timeout.\n\n## Why now\n\nA valve stayed open.\n\n## Out of scope\n\n- An alarm.\n";
+const VALVE_TIMEOUT_SPEC: &str = "---\nstatus: approved\n---\n# Valve timeout\n\n## Delta\n\n- ADD requirements/valves#sensor-timeout: When a sensor gives no value for 60 seconds, the controller SHALL close the valve of its bed.\n\n## Interfaces\n\nNone.\n\n## Decisions\n\nNone.\n\n## Concerns\n\n- [x] A slow sensor. Resolved: 60 seconds.\n\n## Open questions\n\n- [x] Does the valve reopen? Answer: no.\n";
+const VALVE_TIMEOUT_PLAN: &str = "---\nstatus: approved\n---\n# Valve timeout\n\n## Files\n\n- `src/schedule.sh`\n- `tests/schedule_test.sh`\n\n## Order\n\n- [x] t1: Close the valve. Files: `src/schedule.sh`. Verify: `tests/schedule_test.sh` passes. Hours: 1.\n\n## Risks\n\n- A slow sensor.\n\n## Proof\n\n`tests/schedule_test.sh` covers `requirements/valves#sensor-timeout`.\n";
+
+/// The upgraded fixture on `main`, with `origin/HEAD` on it and a branch
+/// `feature` that adds the change `valve-timeout` with `class_line` in its
+/// intent (a line such as `class: routine`, or none), and then its code.
+fn upgraded_with_new_change(name: &str, class_line: &str) -> Repo {
+    upgraded_with_new_change_on(name, class_line, "[]")
+}
+
+/// Like `upgraded_with_new_change`. `high_risk_paths` is the value of
+/// `[change] high-risk-paths` in the project of 0.7.1, as TOML.
+fn upgraded_with_new_change_on(name: &str, class_line: &str, high_risk_paths: &str) -> Repo {
+    let repo = Repo::from_fixture(name, &[]);
+    let config = repo.read("spec-dna.toml");
+    assert!(config.contains("high-risk-paths = []"));
+    repo.write(
+        "spec-dna.toml",
+        &config.replace(
+            "high-risk-paths = []",
+            &format!("high-risk-paths = {high_risk_paths}"),
+        ),
+    );
+    repo.commit("the paths of high risk");
+    let (code, out, err) = upgrade(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    repo.commit("upgrade");
+    origin_head(&repo.dir, "main");
+    repo.git(&["checkout", "-q", "-b", "feature"]);
+    let front = if class_line.is_empty() {
+        "---\nstatus: accepted\n---\n".to_string()
+    } else {
+        format!("---\nstatus: accepted\n{class_line}\n---\n")
+    };
+    repo.write(
+        "docs/intent/valve-timeout/intent.md",
+        &format!("{front}{VALVE_TIMEOUT_INTENT}"),
+    );
+    repo.write("docs/intent/valve-timeout/spec.md", VALVE_TIMEOUT_SPEC);
+    repo.write("docs/intent/valve-timeout/plan.md", VALVE_TIMEOUT_PLAN);
+    repo.commit("plan");
+    let script = repo.read("src/schedule.sh");
+    repo.write(
+        "src/schedule.sh",
+        &format!("{script}# closes on a timeout\n"),
+    );
+    let test = repo.read("tests/schedule_test.sh");
+    repo.write(
+        "tests/schedule_test.sh",
+        &format!("{test}\n# covers: requirements/valves#sensor-timeout\n[ -f src/schedule.sh ]\n"),
+    );
+    repo.commit("code");
+    repo
+}
+
+/// The one exception of the profiles (design 0.8.0, Q43 and D70): a change
+/// whose plan a branch adds after the upgrade needs an acceptance record in
+/// `standard` for a `higher-risk` change and for an intent with no valid
+/// class, and in `strict` for each change. `lite` needs none.
+#[test]
+fn a_plan_that_a_branch_adds_after_the_upgrade_needs_a_record_by_profile_and_class() {
+    // The profile, the fixture, the class line of the intent, and SD927.
+    let cases: [(&str, &str, &str, bool); 9] = [
+        ("standard", "v071", "class: routine", false),
+        ("standard", "v071", "class: higher-risk", true),
+        ("standard", "v071", "", true),
+        ("lite", "v071-lite", "class: routine", false),
+        ("lite", "v071-lite", "class: higher-risk", false),
+        ("lite", "v071-lite", "", false),
+        ("strict", "v071-strict", "class: routine", true),
+        ("strict", "v071-strict", "class: higher-risk", true),
+        ("strict", "v071-strict", "", true),
+    ];
+    for (profile, name, class_line, needs) in cases {
+        let repo = upgraded_with_new_change(name, class_line);
+        let (code, out, err) = repo.run(&["finish", "valve-timeout", "--dry-run"]);
+        let all = format!("{out}{err}");
+        assert_eq!(
+            all.contains("SD927"),
+            needs,
+            "{profile} `{class_line}`: {all}"
+        );
+        if needs {
+            assert_eq!(code, 1, "{profile} `{class_line}`: {all}");
+        } else {
+            // The dry run goes through step 5.2 to the end.
+            assert_eq!(code, 0, "{profile} `{class_line}`: {all}");
+            assert!(out.contains("it would apply"), "{profile}: {all}");
+        }
+    }
+}
+
+/// The class of a change is also `higher-risk` when its `Files` match
+/// `[change] high-risk-paths`, so a `routine` intent on such a path needs a
+/// record in `standard`, and the same change on another path needs none.
+#[test]
+fn a_routine_change_on_a_high_risk_path_needs_a_record_in_standard() {
+    let repo = upgraded_with_new_change_on("v071", "class: routine", "[\"src/schedule.sh\"]");
+    let (code, out, err) = repo.run(&["finish", "valve-timeout", "--dry-run"]);
+    let all = format!("{out}{err}");
+    assert_eq!(code, 1, "{all}");
+    assert!(all.contains("SD927"), "{all}");
+    let repo = upgraded_with_new_change_on("v071", "class: routine", "[\"src/other.sh\"]");
+    let (code, out, err) = repo.run(&["finish", "valve-timeout", "--dry-run"]);
+    let all = format!("{out}{err}");
+    assert_eq!(code, 0, "{all}");
+    assert!(!all.contains("SD927"), "{all}");
+}
+
+/// The change that the base holds from 0.7.1, `drip-schedule`, needs no record
+/// after the upgrade in any profile: its plan was added at a pin before 0.8.0.
+#[test]
+fn a_plan_of_0_7_1_on_the_base_needs_no_record_after_the_upgrade() {
+    for (profile, name) in V071 {
+        let repo = Repo::from_fixture(name, &[]);
+        let (code, out, err) = upgrade(&repo, &[]);
+        assert_eq!(code, 0, "{profile}: {out}{err}");
+        repo.commit("upgrade");
+        origin_head(&repo.dir, "main");
+        repo.git(&["checkout", "-q", "-b", "feature"]);
+        let plan = repo.read("docs/intent/drip-schedule/plan.md");
+        repo.write(
+            "docs/intent/drip-schedule/plan.md",
+            &plan.replace("- [ ] t", "- [x] t"),
+        );
+        repo.commit("tick the tasks");
+        let (exit, out, err) = repo.run(&["finish", "drip-schedule", "--dry-run"]);
+        let all = format!("{out}{err}");
+        assert_eq!(exit, 0, "{profile}: {all}");
+        assert!(out.contains("it would apply"), "{profile}: {all}");
+        for code in ["SD927", "SD928", "SD929", "SD930", "SD933", "SD941"] {
+            assert!(!all.contains(code), "{profile}: {code}: {all}");
+        }
+    }
+}

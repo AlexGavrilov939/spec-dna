@@ -2,6 +2,83 @@
 
 This file lists the changes of each version. The project uses [Semantic Versioning](https://semver.org). Diagnostic codes are in [docs/diagnostics.md](docs/diagnostics.md).
 
+## 0.8.0 - 2026-11-22
+
+0.8.0 adds an independent acceptance of a change in one pass, test reports as evidence, a roll-up of requirements into summaries, and agent roles in `[owners]`. It adds 31 diagnostic codes in 5 new rule groups, 5 commands or command forms and 5 options of commands. A project of 0.7.1 moves with `spec-dna upgrade`. In `lite`, each new mechanism is off, and each generated file keeps its text of 0.7.1. In `standard`, only the acceptance of a `higher-risk` change and the roll-up are on. The other mechanisms need a key, or a marker for the proof debt.
+
+### Upgrade from 0.7.1
+
+- Install the 0.8.0 binary. Then run `spec-dna upgrade --pin-file <spec-dna-pin.toml>` on a clean tree. If you have work that is not committed, run `git stash -u` first, and `git stash pop` after the commit. Commit the paths that `upgrade` prints in one commit. [docs/guides/upgrade-0.6.md](docs/guides/upgrade-0.6.md#run-the-upgrade) gives the report and the steps. Before the upgrade, each command of 0.8.0 stops with exit code 3 on the old pin.
+- `upgrade` sets no key. In `spec-dna.toml`, it changes the pin line only, and it adds no skill, no table and no list. In `lite`, it adds no file, and it changes only the version in the marker of each generated file. The text above each marker stays the text of 0.7.1. In `standard` and `strict`, it writes the new text of each workflow skill file and of `model-team.md`, and it changes only the version in the marker of the other generated files. It adds the agent file `.claude/agents/acceptor.md` when the harness level is `lean` or `full` and the list `skills` has `review`. It adds no other file. The tests ran it on a project that the real binary 0.7.1 wrote, in each profile. A second run changes nothing.
+- A hook that runs `spec-dna check` refuses each commit while the pin is older than the binary, so the upgrade is the first commit of the branch. SD503 does not count `spec-dna.toml` when it differs from the base only in the pin line and in `[spec-dna-sha256]`, so the pull request of the upgrade can hold other work. The pin stays exact, so each teammate needs 0.8.0. The release commit of this repository moves the pin with the version ([ADR 0013](docs/adr/0013-self-hosting.md)).
+- The cache has a new parser version, so each project rebuilds it once.
+- In the tests, `check --all` of an upgraded project gives 0 errors and 0 warnings in each profile. No new error comes without a key that the project set. The one exception is the acceptance of a change whose plan a branch adds after the upgrade. A plan that is on the base from 0.7.1 needs no record, and `finish` prints a note for it in `standard` and `strict`. For a plan that a branch adds, a record is needed in these cases:
+  - `standard`: a `higher-risk` change, an intent with no valid `class`, and a `routine` change whose `Files` or diff match `[change] high-risk-paths` or whose delta names a requirement of a layer in `high-risk-layers`.
+  - `strict`: each change that has a plan.
+  - `lite`: none.
+- To turn the record off for a project, set `[change] acceptance-for = "none"`, or `[rules] acceptance = "off"`. A matched role of `[owners]` still needs a record with `acceptance-for = "none"`. Make the edit in a pull request of its own (SD503). A branch cannot lower the rule with its own commits: the rule reads the stricter of the branch and the base. A shallow clone cuts the history of the branch, so `check` and `finish` then need a record for each change with a plan and name `fetch-depth: 0`. A workflow that `init` wrote has `fetch-depth: 0`.
+- A `standard` project sees no new warning after the upgrade. Each new warning needs an act of the project: SD616 (`[evidence] reports`), SD618 and SD619 (a marker `proof-owed`), SD645 (`refresh --holds`), SD705 and SD707 (`[budgets.area]`). A rule for the group of the code turns it off, for example `[rules] area-budget = "off"`. The new groups are `reports`, `proof`, `acceptance`, `rollup` and `area-budget`. A rule for a group of 0.7.1, such as `budgets`, `evidence` or `changes`, changes no new code.
+- `upgrade` does not set these keys. Add the key to turn the mechanism on: `[evidence] reports` (test reports), `[evidence] reliable-for` and `reliable-runs`, `[change] invariants`, `[change] higher-risk-acceptors`, `[owners]`, `[budgets.area]` and `[layers.summaries]`. `init` writes some of them for a new project, as the profile table below says. For the roll-up, run `spec-dna layer add summaries`, then `spec-dna init` to write the skill again, because SD502 reports the old skill after the new layer.
+- A person entry in `[owners]` (`@<login>` or an e-mail) gives a warning, not exit code 3. It needs nothing, because 0.8.0 reads agent roles only.
+- `finish --json` has the new key `deviations` in a project that pins 0.8.0, an empty list when the plan has no deviation. It has the keys `rollup` and `acceptance_runs` only when the change has the data. `next --json` has the new field `person`. `status --json` and `stats --json` can have the new object `proof` ([docs/commands.md](docs/commands.md#status) gives the cases).
+- A result file of `eval run --ab` of 0.7.1 that has fewer than 15 pairs or fewer than 5 evals reads as `inconclusive` now (the floor of the verdict). The committed records of 0.7.x keep their 9 keys and stay valid. `eval pack` writes the 5 evals `accept-1` to `accept-5` into a project that runs it again, and a file that exists stays.
+
+### Added
+
+- Acceptance in one pass. A change that needs a record has one independent run, which is also its review. `spec-dna accept <slug>` writes the skeleton of the record `acceptance.toml` in the folder of the change, `accept <slug> --brief` prints the brief, and `finish` moves the record to `.spec-dna/accepted/<slug>.toml`. The agent `acceptor` (the model `opus`, the effort `high`, with the role line `acceptor` in `[harness.roles]` that `init` writes for a new project) works from the prompt line that `spec-dna next` prints, `cd '<root>' && spec-dna accept <slug> --brief`. The skill `review` holds the steps of the acceptance in `standard` and `strict`, so there is no new skill, and `next --json` has the 9 skill names of 0.7.1. The record has the format 2: each finding is a `blocker` or a `note`, and an entry has `roles`. A project with the policy `none` needs no record.
+- Who needs a record. The new key `[change] acceptance-for` is `none`, `higher-risk` or `all`. The default is `higher-risk` in `standard` and `lite`, and `all` in `strict`. An intent with no valid `class` counts as `higher-risk`, and so does a change on a path of `high-risk-paths` or in a layer of `high-risk-layers`. A matched role of `[owners]` also needs a record. `[change] higher-risk-acceptors` (1 to 3, default 1) is the number of acceptor entries of a `higher-risk` change. `init` writes 2 in `strict`.
+- The stop rule. Only a `blocker` gives the result `rejected`. A fix of a note needs a follow-up, `spec-dna accept <slug> --follow-up --brief` and `accept <slug> --follow-up`, not a new full run. After 2 rejected records of one change, `next` names the owner and starts no third run. With `approval = "branch"`, SD941 stops a third record until an approver approves the plan again. With `base`, SD941 is not used. `finish` prints `Acceptance runs: <n>, <r> rejected` when a change has 2 or more records.
+- `[owners]` with agent roles. The table maps a glob to role names. A change that edits a matched path needs a record, and the record has an entry for each matched role. One entry can answer more than one role. SD933 reports a missing role.
+- The acknowledgement with `branch`. `spec-dna approve <slug> acceptance` adds the e-mail of an approver to a record that has a deviation (SD934). SD932 checks that each commit of the record changes nothing else. With `base`, the merge of the pull request acknowledges the deviation.
+- Hook rule D. With `[harness] protect-approvals = true`, the hook `protect-approvals` limits a `git commit` in a call of the agent `acceptor` to one `acceptance.toml`, in one fixed form. `init` writes the key in `strict` only, and `upgrade` writes it nowhere. The rule reads the text of a command, so it is no sandbox: [docs/harness.md](docs/harness.md#spec-dna-hook-protect-approvals) lists what stays open.
+- Deviations and invariants. A plan can have the section `Deviations`. The record answers each item, and `finish` prints them as `Deviations: <n>` (SD939, SD940). With `[change] invariants = true`, a spec lists the rules that the change must keep true, and the record answers each one (SD936, SD937, SD938).
+- Test reports and proof levels. With `[evidence] reports`, a `covers:` tag proves a requirement only when a bound test case passed in a report. `spec-dna evidence stamp` binds a report to the code tree, `check --reports` and `finish` read the reports (SD613 to SD617), and `case:` in a tag names the case. `[evidence] reliable-for` and `reliable-runs` select the level `reliable` (SD620). The marker `<!-- proof-owed: <reason> -->` records a proof debt (SD618, SD619). `status` and `stats` count the proof states. `reliable-for` with an empty `reports` is exit code 3. `tree-exclude` lists the files that the code tree leaves out.
+- Roll-up. The new type `summary` and the layer `summaries` hold the short text of an area. The field `rests-on` pins the requirements that a summary covers, in the form `<doc-id>#<key>@<hash>`. SD641 to SD645 report a stale, incomplete, invalid or re-pinned summary. `spec-dna new summary <area>` writes a summary, and `spec-dna refresh <id>` writes its pins again. The guard of `refresh` refuses a document whose text did not change, unless `--holds` says that the text still holds. `finish` re-pins a summary that the change edited, and `finish --holds <id>` claims another one. `next` prints one note for the summaries that a delta makes due. `mv` prints the summaries that a move makes stale. SD913 does not report a summary. A project with no summary sees no change.
+- The area budget. `[budgets.area]` with `soft` and `hard` (SD705 to SD707) bounds the size of an area. A summary counts in place of its sub-area. `init` writes the table in `standard` (60,000 and 120,000 characters) and `strict` (40,000 and 80,000), and `upgrade` writes none.
+- The `summary` tier of `context`. The tier serves the chain of summaries and top documents of a request, after the conventions and before the rules, with at most a quarter of the budget. A stale document gets the word `stale`. The tier is new in `--json`, and a tree with no summary gets the output of 0.7.1.
+- The 5 rule groups. `reports` (SD613 to SD617), `proof` (SD618 to SD620), `acceptance` (SD927 to SD941), `rollup` (SD641 to SD645) and `area-budget` (SD705 to SD707). A rule for a group of 0.7.1 changes no code of them. [docs/profiles.md](docs/profiles.md) gives the severity of each code.
+- Evals. `eval run --arms` compares 2 or 3 harness arms (`none`, `lean`, `lean-no-advisor`, `full` and `project`), and `--harness` sets the team of a run. `eval verdict --compare` gives the verdict of 2 arms. A verdict below 15 pairs of 5 evals is `inconclusive`. A record has the 3 new keys `harness`, `turns` and `seconds`. An eval file can have the key `change`. `eval run --ab accept` runs the 5 evals `accept-1` to `accept-5` of the skill `review`.
+- The cost of one pass. The 5 evals ran 3 times in each arm, 15 pairs in each of 2 batches, with `claude` 2.1.330 and the effort `xhigh`. With the advisor, the arm with the new text had a mean of 1.74 USD and 4.6 minutes for a run, and it found each planted defect and accepted the control in 15 of 15 runs. Without the advisor, it had 0.53 USD and 2.2 minutes, and it passed 13 of 15 runs. Both verdicts are `inconclusive`. The fixtures are small changes, so a real slice costs more. The records are in `bench/results/evals/` (`20261122T064254Z-accept.jsonl` and `20261122T090136Z-accept-no-advisor.jsonl`).
+
+The profiles. Each new mechanism is off in `lite`. A cell says when the mechanism is on:
+
+| Mechanism | `lite` | `standard` | `strict` |
+| --- | --- | --- | --- |
+| Acceptance, deviations (SD927 to SD935, SD938 to SD941) | off | a `higher-risk` change, a matched role, or `acceptance-for = "all"` | each change with a plan |
+| Invariants (SD936, SD937) | off | `[change] invariants = true` | `init` writes the key |
+| Test reports (SD613 to SD617) | off | `[evidence] reports` | `[evidence] reports` |
+| The level `reliable` (SD620) | off | `reports` and `reliable-for` | the same |
+| Proof debt (SD618, SD619) | off | a marker, as warnings | a marker, SD619 an error |
+| Roll-up (SD641 to SD645) | off | on, with a summary | on, with a summary |
+| Area budget (SD705 to SD707) | off | `[budgets.area]` | `[budgets.area]`, as errors |
+| Skill text and the agent `acceptor` | text of 0.7.1, no agent | text of 0.8.0, agent | text of 0.8.0, agent |
+
+### Changed
+
+- The skill `review` holds the steps of the acceptance in `standard` and `strict`. The description of each skill does not change. Each skill file of `standard` and `strict` has new text, so SD502 reports it until `upgrade` writes it again. `skill show` prints the text of the profile of the project.
+- `next` has one item `review` for each change. For a change that needs a record, it holds the prompt line, the follow-up line or the line for the owner. For a change that needs none, it is the item of 0.7.1.
+- A task whose text names `spec-dna accept <slug>` closes with `finish` where the acceptance is on, as a task that names `spec-dna finish <slug>` does.
+- `finish` has the parts 5.1 to 5.3 and 5.5 in its step 5: the reports, the record, the deviations and the archive. A stop keeps a step number from 0 to 5.
+- A plan that a commit added when `spec-dna.toml` pinned a version before 0.8.0 needs no record. A plan that a branch adds always needs one when the rule asks for it.
+- The parser version is 18, so the cache rebuilds once.
+- `eval run --ab` without `--harness` keeps the copy of 0.7.1. The arm `without` of the target `accept` has the `review` text of `lite`.
+
+### Fixed
+
+- The check of a release. `gh attestation verify` prints nothing on success when its output goes to a file or a pipe, and the check of 0.7.1 said "ok" on that silence. The script `scripts/verify-release.sh` checks the assets of a release (the 7 binaries, `SHA256SUMS` and `spec-dna-pin.toml`), keeps the exit code of each `gh` call, and prints `<n> of <n> assets verified`. The workflow `release` creates a draft, runs the script, and publishes the draft only when it passes.
+- A task of a person. `next` and `status` end the line of a task with `[person]`, not with a skill, for a task with the label `By: person` or with the title `Review by the owner`. `--json` adds `"person": true`. When only such tasks are open, `next` says that it waits for a person. The skill `write-plan` writes the label.
+- The report of `upgrade` counts the errors of the planned tree with that tree as its own base, as `check --all` does after the commit. An old excess of a budget (SD702) is no error of the report now.
+- The 5 open notes of part A: a repeated id in `[[deviation]]` or `[[invariant]]` gives SD928, part 5.3 prints the deviations of the record, a code span in `Delta:`, `Follow-up:` and `Invariants` reads as its text, `none` in backticks is `none`, and an empty `Invariants` section with the key gives SD936.
+
+### Moved to 0.8.1
+
+- The persons of `[owners]` (`@<login>` and e-mails). 0.8.0 gives a warning and reads agent roles only.
+- The value `review` of `[change] approval`, and the command `spec-dna reviews`, which would read the reviews of the code host.
+
+### Verdicts of the skills, rerun for 0.8.0
+
+TODO-VERDICTS
+
 ## 0.7.1 - 2026-11-19
 
 0.7.1 fixes faults that the first projects found in 0.7.0: a task that only `finish` can do, the pin move of `upgrade`, the checks of a plan of 0.6 and an older `--base`. It adds the real hours of a task and the key `[change] shared-paths`, and it reruns the evals that part A of this release changed. A project of 0.7.0 moves with `spec-dna upgrade`.

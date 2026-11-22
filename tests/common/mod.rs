@@ -131,7 +131,7 @@ fn write_file(dir: &Path, path: &str, text: &str) {
 
 fn commit_all(dir: &Path, msg: &str) {
     git(dir, &["add", "-A"]);
-    git(dir, &["commit", "-q", "-m", msg]);
+    git(dir, &["commit", "-q", "--allow-empty", "-m", msg]);
 }
 
 /// The feature branch of the 3 merge helpers. It starts at `main`, adds 2
@@ -253,6 +253,24 @@ impl Repo {
         commit_all(&self.dir, msg);
     }
 
+    /// Commits the tree as the base of a change that was planned before 0.8.0.
+    /// The commit pins 0.7.1, so a plan in it needs no acceptance record (design
+    /// 0.8.0, P5). A second commit, `move the pin`, sets the pin of the binary
+    /// again, because the binary refuses another pin. The tree needs the pin of
+    /// the binary on its first line, as `with_config` writes it.
+    pub fn commit_base_of_0_7_1(&self, msg: &str) {
+        let config = self.read("spec-dna.toml");
+        let pin = format!("spec-dna = \"{VERSION}\"");
+        assert!(config.contains(&pin), "no pin of the binary: {config}");
+        self.write(
+            "spec-dna.toml",
+            &config.replacen(&pin, "spec-dna = \"0.7.1\"", 1),
+        );
+        commit_all(&self.dir, msg);
+        self.write("spec-dna.toml", &config);
+        commit_all(&self.dir, "move the pin");
+    }
+
     /// Like `commit`, with the e-mail of the author set to `author`. The
     /// committer keeps the e-mail of the fixture, so the commit has an author
     /// that differs from its committer, as a commit of the web editor of a
@@ -265,7 +283,11 @@ impl Repo {
     /// (for example `GIT_AUTHOR_EMAIL` and `GIT_COMMITTER_EMAIL`).
     pub fn commit_env(&self, msg: &str, env: &[(&str, &str)]) {
         git(&self.dir, &["add", "-A"]);
-        git_env(&self.dir, &["commit", "-q", "-m", msg], env);
+        git_env(
+            &self.dir,
+            &["commit", "-q", "--allow-empty", "-m", msg],
+            env,
+        );
     }
 
     /// Like `commit`, with the author date and the committer date `date`.

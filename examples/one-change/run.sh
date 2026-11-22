@@ -171,11 +171,36 @@ EOF
 perl -pi -e 's/^- \[ \] t/- [x] t/' docs/intent/sensor-timeout/plan.md
 git commit -q -am "feat: close the valve on a sensor timeout"
 run 0 'spec-dna next sensor-timeout'
-run 1 'spec-dna finish sensor-timeout'
 
-say "The agent links the test to the new requirement. Then finish applies the delta and deletes the folder."
+say "The agent links the test to the new requirement."
 perl -0pi -e 's/\n\ndef test_sensor_timeout/\n\n# covers: requirements\/valves#sensor-timeout\ndef test_sensor_timeout/' tests/test_valves.py
 git commit -q -am "test: cover the sensor timeout"
+
+say "The change is higher-risk, so finish needs an acceptance record from a second agent. It stops and writes nothing."
+run 1 'spec-dna finish sensor-timeout'
+
+say "The acceptor, an agent that did not write the code, reads the brief and writes the record. The script stands in for it."
+run 0 'spec-dna accept sensor-timeout --brief | sed -n 1p'
+brief=$(spec-dna accept sensor-timeout --brief | tail -n 1)
+run 0 'spec-dna accept sensor-timeout --session s1'
+perl -pi -e 's/^result = "pending"/result = "accepted"/; s/^brief = "pending"/brief = "'"${brief#brief }"'"/' docs/intent/sensor-timeout/acceptance.toml
+cat >> docs/intent/sensor-timeout/acceptance.toml <<'EOF'
+
+[[attempt]]
+acceptor = 1
+text = "Read `on_sensor_timeout` in `src/valves.py`: it calls `close_valve` for the bed, and `close_valve` sets `valve_open` to false, as the requirement says."
+outcome = "held"
+
+[[finding]]
+acceptor = 1
+severity = "note"
+path = "tests/test_valves.py"
+text = "The test has no body yet."
+EOF
+git add docs/intent/sensor-timeout/acceptance.toml
+git commit -q -m "docs: accept the change sensor-timeout"
+
+say "Now finish applies the delta and deletes the folder."
 run 0 'spec-dna finish sensor-timeout'
 run 0 'git diff --cached -U0 -- docs/requirements'
 git commit -q -m "docs: finish sensor-timeout"

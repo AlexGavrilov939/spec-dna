@@ -1268,7 +1268,11 @@ fn second_pull_request(r: &Repo, class: &str) {
 }
 
 fn replay(class: &str) {
-    let rp = Replay::new(&branch_keys(&[APPROVER]));
+    // The test is about the approvals and the squash merges. A `higher-risk`
+    // change also needs an acceptance record at the pin of the binary, and
+    // `acceptance_need.rs` and `accept_cmd.rs` test that.
+    let keys = format!("{}acceptance-for = \"none\"\n", branch_keys(&[APPROVER]));
+    let rp = Replay::new(&keys);
     first_pull_request(&rp.r, class);
     let (code, out, found) = rp.check();
     assert_eq!(found, want(&[]), "pr1: {out}");
