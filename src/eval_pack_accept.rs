@@ -69,6 +69,8 @@ const ACCEPT_TOOLS: &[&str] = &[
     "Bash(git diff:*)",
     "Bash(git log:*)",
     "Bash(git merge-base:*)",
+    "Bash(git add:*)",
+    "Bash(git commit:*)",
     "Bash(python3 -m pytest:*)",
     "Bash(sh test.sh:*)",
 ];

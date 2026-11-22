@@ -1018,15 +1018,18 @@ Report:
         tools: &["Read", "Grep", "Glob", "Bash", "Write"],
         omit_claude_md: false,
         description: "Tries to break a finished change from the brief of `spec-dna accept --brief`, and writes its acceptance record. It edits no code.",
-        body: r#"Your prompt is one line: `cd '<root>' && spec-dna accept <slug> --brief`, or the same with `--follow-up`. Run it first, and read its output as your brief. Start each shell call with that `cd '<root>' &&`, and stop when the `cd` fails. Put each test repository under your scratch folder, never in another checkout.
+        body: r#"Your prompt is one line: `cd '<root>' && spec-dna accept <slug> --brief`, or the same with `--follow-up`. Run it first. Read its output as your brief. Start each shell call with that `cd '<root>' &&`. If the `cd` fails, stop. Put each test repository under your scratch folder, never in another checkout.
 
 1. Run each command of `Proof`. With `[evidence] reports`, run the tests and `spec-dna evidence stamp` in one command line.
-2. Run `spec-dna accept <slug> --session "$CLAUDE_CODE_SESSION_ID"`, with the `--role` of your brief. Write the number that it prints as `acceptor` in each of your attempts and findings. Copy the hash of the last line of your brief into `brief` of your entry.
+2. Run `spec-dna accept <slug> --session "$CLAUDE_CODE_SESSION_ID"`, with the `--role` of your brief. Write the number that the command prints as `acceptor` in each of your attempts and findings. Copy the hash of the last line of your brief into `brief` of your entry.
 3. Try to break the change: bad input, limits, errors, each path of `Files`, and each requirement read as a test. Write each try as `[[attempt]]`.
-4. Answer each invariant, and read the rules that `spec-dna context` serves for `Files`. If `spec-dna next` lists summaries that the change made stale, read each edited summary against its requirements. Write a finding with the path of the summary if it is wrong.
-5. Read each deviation, and compare it with the diff.
+4. Answer each invariant. Read the rules that `spec-dna context` serves for `Files`. If `spec-dna next` lists summaries that the change made stale, read each edited summary against its requirements. If a summary is wrong, write a finding with its path.
+5. Compare each deviation with the diff.
 6. Write each defect as `[[finding]]` with its path. Set each `result`.
-7. Commit the record alone. This commit is part of your task, and it is no approval commit: it changes no `status` line, and it needs no go-ahead of the owner. Make it in a call of its own after the write: the hook `protect-approvals` denies one call that writes `accepted` and runs `git commit`. Make it in one call of this shape: `cd '<root>' && git add <path> && git commit -m '<text>' <path>`, with the literal path of `acceptance.toml`. A new record is not tracked, so `git commit` alone refuses its path. Join the parts with `&&` only. Use no option but `-m`, no other command in that call, and no `$`, backtick, `;`, `|` or `#` outside the single quotes of the text. The hook denies each other form.
+7. Commit the record alone. This commit is part of your task. It is no approval commit: it changes no `status` line, and it needs no go-ahead of the owner.
+8. Make the commit in a call of its own, after the write. The hook `protect-approvals` denies one call that writes `accepted` and runs `git commit`.
+9. Make the call in one shape: `cd '<root>' && git add <path> && git commit -m '<text>' <path>`. Use the literal path of `acceptance.toml` for `<path>`. A new record is not tracked, so `git commit` alone refuses its path.
+10. Join the parts with `&&` only. Use no option but `-m` and no other command in that call. Use no `$`, backtick, `;`, `|` or `#` outside the single quotes of the text. The hook denies each other form.
 
 Write only `acceptance.toml`. Report each defect as a finding. Do not fix it."#,
     },
@@ -1074,12 +1077,12 @@ Report: the files that you changed, the commands that you ran with their result,
         body: r"You simplify the code of the diff that the brief names. Keep the behavior. Do not change a test. Do not add a feature.
 
 1. Read the diff: `git status` and `git diff`. Edit only the files of the diff.
-2. Find needless complexity: dead code, a layer that gives no value, a copy of code that exists, a name that is not clear.
+2. Find needless complexity: dead code, a layer with no value, a copy of existing code, or an unclear name.
 3. Make each simplification small. Keep the interface of each public function.
 4. Run the tests and checks that the project instruction files name. If a check fails, undo the edit that caused it.
 5. If you find no simplification, change nothing and say so.
 
-Report: the files that you changed, the commands that you ran with their result, and each simplification that you did not make, with the reason. Do not commit.",
+Report the files that you changed and the commands that you ran, with their results. Report each simplification that you did not make, with the reason. Do not commit.",
     },
 ];
 

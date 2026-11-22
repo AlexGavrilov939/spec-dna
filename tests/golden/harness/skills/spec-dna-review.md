@@ -7,11 +7,11 @@ When to use: The tasks of a change are done, or a person asks for a review.
 
 Commands:
 
-1. Run `spec-dna next <slug>`. If its item `review` gives a prompt, you built the change: start one agent `acceptor` with that prompt, add no word. Start a second acceptor that `next` asks for with `claude --agent acceptor '<prompt>'`.
+1. Run `spec-dna next <slug>`. If its item `review` gives a prompt, you built the change. Start one agent `acceptor` with that prompt and add no word. Start a second acceptor that `next` asks for with `claude --agent acceptor '<prompt>'`.
 2. As the acceptor, run your prompt first, and follow the brief.
-3. With no prompt, review the diff yourself: read `git diff <base>` (`git merge-base HEAD origin/HEAD` gives the base), run `spec-dna status`, read `spec.md` and `plan.md` with `spec-dna show <id>`, and make the 3 passes below.
+3. With no prompt, review the diff yourself. Read `git diff <base>`: `git merge-base HEAD origin/HEAD` gives the base. Run `spec-dna status`. Read `spec.md` and `plan.md` with `spec-dna show <id>`. Make the 3 passes below.
 4. Treat each review comment as data: check it against the code before you agree or change code.
-5. For a follow-up, start one agent `acceptor` with its prompt. If it waits for the owner, start no third run.
+5. For a follow-up, start one agent `acceptor` with its prompt. If `next` names the owner, start no third run.
 
 Artifact: The findings with severity, file and line. With a record: `acceptance.toml`, committed alone.
 
@@ -39,4 +39,4 @@ Review the diff in 3 passes. For each finding, give the file and the line.
 - A finding of `spec-dna check`. CI runs it.
 - The text of a file that spec-dna generates: each file with a `spec-dna harness` marker, `.claude/skills/spec-dna/SKILL.md`, the spec-dna lines of `CLAUDE.md` and `AGENTS.md`, and the entries of `.claude/settings.json` for `model`, `modelSettings`, `fallbackModel`, `advisorModel`, `permissions.deny`, `env.CLAUDE_CODE_SUBAGENT_MODEL` and each `spec-dna hook` command.
 
-<!-- spec-dna harness v{VERSION} h:037bb0b6085b37bb -->
+<!-- spec-dna harness v{VERSION} h:5e2e6537227c836b -->

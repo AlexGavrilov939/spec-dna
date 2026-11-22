@@ -662,6 +662,8 @@ fn an_accept_eval_is_a_built_change_of_a_higher_risk_intent_with_the_same_task_i
                 "Bash(git diff:*)",
                 "Bash(git log:*)",
                 "Bash(git merge-base:*)",
+                "Bash(git add:*)",
+                "Bash(git commit:*)",
                 "Bash(python3 -m pytest:*)",
                 "Bash(sh test.sh:*)",
             ],
