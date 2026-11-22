@@ -1,6 +1,6 @@
 # Evals
 
-This page gives the eval file, the runner, the cost cap, the pack that measures each skill and the CI job of the evals. Read it when you test the agent setup of a Claude Code project. [commands.md](commands.md#eval) gives the command.
+This page gives the eval file, the runner, the cost cap, the pack that measures each skill, the measured cost of one acceptance pass and the CI job of the evals. Read it when you test the agent setup of a Claude Code project. [commands.md](commands.md#eval) gives the command.
 
 An eval is a task with checks that tests the agent setup of a project: its instruction files, skills, hooks and roles. `spec-dna eval run` runs the evals and reports the pass rate. Thus a team can see when a change of the setup makes the agent worse. The runner uses the Claude Code adapter and starts headless Claude Code. [agents.md](agents.md) lists the adapters.
 
@@ -314,6 +314,44 @@ A record that has `result = "accepted"` fails the evals 1 to 4. A record that re
 - A catch rate of N of M is the rate for these 4 planted defects, with this model and this text. The bootstrap resamples 4 evals that have a defect, so the interval is wide. The rate is not a rate for real defects.
 - 16 of 16 can mean that the defects are too easy. 0 of 16 can mean that they are too hard.
 - The comparison shows the value of the text and the agent `acceptor` over the review of 0.7.1. It does not show the value over a person.
+
+### The measured cost of one acceptance pass
+
+Read this section to learn what the acceptance of a change in `standard` costs. The acceptance is the single pass of 0.8.0 that fills the acceptance record. The numbers come from 2 paid batches of the target `accept`.
+
+Each batch ran the 5 evals `accept-1` to `accept-5`, with 3 runs of each eval in each arm: 15 pairs. The fixtures are toy projects of 1 or 2 files. The version of Claude Code was 2.1.330. The runner passed `--model opus --effort xhigh`, `--max-turns 40` and `--max-budget-usd 2.5`. The records are in `bench/results/evals/*-accept*.jsonl`.
+
+The arm `with` is the single pass of 0.8.0. The arm `without` is the `review` of 0.7.1 with the brief.
+
+| Batch | Harness | Arm | Runs that pass the oracle | Mean cost | Mean turns | Mean time |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | `lean` (advisor on) | `with` | 15 of 15 | 1.744 USD | 30.0 | 4.61 minutes |
+| 1 | `lean` (advisor on) | `without` | 15 of 15 | 1.674 USD | 32.2 | 4.58 minutes |
+| 2 | `lean-no-advisor` | `with` | 13 of 15 | 0.525 USD | 21.5 | 2.20 minutes |
+| 2 | `lean-no-advisor` | `without` | 11 of 15 | 0.702 USD | 29.9 | 2.88 minutes |
+
+- Batch 1 used the models `claude-fable-5-2` and `claude-opus-5-5`. Batch 2 used `claude-opus-5-5` only.
+- The most expensive run of the arm `with` cost 2.00 USD and took 6.5 minutes in batch 1. In batch 2, it cost 0.63 USD and took 3.5 minutes.
+- The 2 failures of the arm `with` in batch 2 are `accept-2` and the check `focused`. The record rejects the change and names the planted path, but it cites more than 3 different paths.
+- The analysis reads both batches as `inconclusive`. In batch 1, both arms are at the ceiling.
+- The spend was 72.86 USD in all: the canary 3.19 USD, batch 1 51.28 USD and batch 2 18.40 USD.
+
+On these fixtures, one pass costs 0.5 to 1.7 USD and takes 2 to 5 minutes. This is less time than the review of 0.7.1 plus a separate acceptance of part A. That sum took 13 to 25 minutes on the slices of this repository. A real slice is larger than a toy fixture, so a real pass costs more.
+
+What the numbers do not prove:
+
+- 15 pairs and 5 toy fixtures are a small sample.
+- The oracle does not separate the arms. Batch 1 is at the ceiling, and batch 2 is `inconclusive`.
+- About 4 tool calls for each pass were denied in each batch. The result file counts the denials. It does not list the denied commands, so the effect on the cost is not known.
+- One account, one model set and one version of Claude Code gave the numbers.
+
+To repeat the measure, run this command:
+
+```text
+spec-dna eval run --ab accept --harness lean --runs 3 --max-total-usd 60
+```
+
+It needs `python3` with the module `tomllib` (Python 3.11 or later). It needs a binary of version 0.8.0 or later, so that the copies pin 0.8.0. The command runs 30 runs and costs about 50 USD with the advisor. Use `--harness lean-no-advisor` for about 18 USD. The estimate of the command is 75 USD, because the budget of a run is 2.5 USD. The cap of 60 USD is enough, because the real runs cost less than the budget.
 
 ### Run the arms
 
