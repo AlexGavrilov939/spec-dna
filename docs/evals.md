@@ -1,6 +1,6 @@
 # Evals
 
-This page gives the eval file, the runner, the cost cap, the pack that measures each skill, the measured cost of one acceptance pass, the freeze of the skill texts for the reruns and the CI job of the evals. Read it when you test the agent setup of a Claude Code project. [commands.md](commands.md#eval) gives the command.
+This page gives the eval file, the runner, the cost cap, the pack that measures each skill, the measured cost of one acceptance pass, the freeze of the skill texts for the reruns, the reruns of 0.8.0 and the CI job of the evals. Read it when you test the agent setup of a Claude Code project. [commands.md](commands.md#eval) gives the command.
 
 An eval is a task with checks that tests the agent setup of a project: its instruction files, skills, hooks and roles. `spec-dna eval run` runs the evals and reports the pass rate. Thus a team can see when a change of the setup makes the agent worse. The runner uses the Claude Code adapter and starts headless Claude Code. [agents.md](agents.md) lists the adapters.
 
@@ -543,6 +543,41 @@ The skill texts of the profiles `standard` and `strict` of 0.8.0 are frozen at t
 The golden files `tests/golden/harness/skills/*.md` and `tests/golden/harness/acceptor.md` hold the same hashes. The texts of the profile `lite` are the texts of 0.7.1, so they are not part of the freeze. A change of one of these texts after the reruns makes the verdicts apply to an older text. Thus the next change of one of these hashes needs a new rerun.
 
 The records of the reruns are in `bench/results/evals/`. The newest batch of a skill gives its row in the table `RELEASE` of `src/verdict.rs`. `spec-dna eval verdict --release` prints the table.
+
+### The reruns of 0.8.0
+
+The reruns of D66 are paid runs with `--harness lean`. The tree was built with version 0.8.0, and Claude Code was 2.1.330. The skill texts are the frozen texts of the section above. The plan for each skill was 5 evals, 3 runs and 2 arms: 15 pairs.
+
+| Skill | Complete pairs | `with` | `without` | Verdict |
+| --- | --- | --- | --- | --- |
+| `specify` | 15 | 15 of 15 (16.82 USD) | 9 of 15 (21.27 USD) | `on` |
+| `write-plan` | 14 | 14 of 14 (21.49 USD) | 10 of 14 (20.05 USD) | none: below the floor |
+| `finish` | 10 | 10 of 10 (8.52 USD) | 10 of 10 (9.03 USD) | none: below the floor |
+
+- `specify`: the batch `20261122T103356Z-specify.jsonl` has 30 records. The newest batch decides, so the row of `specify` in `RELEASE` comes from it. The committed records of `specify` hold passes, costs, turns and seconds, but not the stop reason or the names of the failed checks. The 6 failed runs of `without` are: 3 stopped by the turn limit (`error_max_turns`), 1 stopped by the cost limit and 2 ended with failed checks.
+- `write-plan` and `finish`: each batch stopped at its cost cap before the 15th pair. The floor of D59 is 15 pairs, so these batches give no verdict. 14 of 14 against 10 of 14 is not a verdict. The 10 pairs of `finish` cover 4 of the 5 evals: `finish-5` did not run, and the floor needs 5 evals.
+- `execute`: it was not rerun (D66).
+- `review`: the merged skill was not rerun. The accept evals measure it ([the evals of the acceptance record](#the-evals-of-the-acceptance-record)).
+
+`eval records` refuses a result that has an incomplete pair, and the loader of `RELEASE` reads no subfolder. Thus the result files of `write-plan` and `finish` are in `bench/results/evals/below-floor/`, with the same content as the files of the tool. The files were re-indented. They hold counts, costs and check names only. The rows of `write-plan` and `finish` in `RELEASE` stay the rows of the older batches, so their verdicts describe older texts.
+
+The first batch of `finish`, `below-floor/20261122T103357Z-finish-invalid-fixture-class.json`, is INVALID. The fixtures of `finish-1` to `finish-5` had `class: higher-risk`. At pin 0.8.0, `finish` then stopped at SD927, so no run could pass. The batch has 4 complete pairs with 0 passes, and a ninth run of one side only. Since the change of this slice that sets `class: routine` in the fixtures of the `finish` evals, the fixtures are `class: routine`. Do not use this file for a row.
+
+The reruns cost 139.79 USD of the cap of 140 USD. This sum includes 26.02 USD for runs that 2 processes did on the same result file (an error of the operator). It also includes 13.96 USD for the invalid batch and a canary. The 99.81 USD is the sum of the `spend_usd` headers of the 3 valid result files: 38.10 for `specify`, 42.82 for `write-plan` and 18.89 for `finish`. The invalid batch (12.24 USD) is in a committed file. The duplicate runs (26.02 USD, from 14.09 plus 11.93) and the canary (1.72 USD) come from the notes and logs of the operator, and from no committed file. The sum is 99.81 + 26.02 + 13.96 = 139.79.
+
+To finish the reruns, resume each batch with a higher cap. About 10 USD more is necessary for the 2 batches. For `finish`, use the same command with the target `finish`.
+
+```text
+spec-dna eval run --ab write-plan --runs 3 --harness lean --resume <result file> --max-total-usd <higher cap>
+```
+
+When a batch is complete, run `eval records` on its file and write the output to `bench/results/evals/<stamp>-<target>.jsonl`. Then paste the table that the test of `RELEASE` prints.
+
+Lessons:
+
+- Start one process for each result file, and check with `ps` after a stop.
+- Run one canary pair before a batch.
+- Run the reference solution of each eval under the pin of the next version before a paid run.
 
 ### The simulation of the rules
 
