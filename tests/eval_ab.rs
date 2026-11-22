@@ -1380,8 +1380,9 @@ const RELEASED: [&str; 12] = [
 ];
 
 /// The names with the verdict `on` in the table of the release.
-const RELEASED_ON: [&str; 6] = [
+const RELEASED_ON: [&str; 7] = [
     "brainstorm",
+    "specify",
     "clarify",
     "tdd",
     "finish",

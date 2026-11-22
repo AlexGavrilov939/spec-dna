@@ -1,0 +1,488 @@
+{
+  "spec_dna": "0.8.0",
+  "claude_code": "2.1.330",
+  "models": [
+    "claude-fable-5-2",
+    "claude-opus-5-5"
+  ],
+  "started": "2026-11-22T10:33:57Z",
+  "target": "finish",
+  "harness": "lean",
+  "runs": 3,
+  "seed": 24,
+  "resamples": 2000,
+  "max_total_usd": 32,
+  "estimate_usd": 45,
+  "spend_usd": 12.242284,
+  "excluded": {
+    "with": 0,
+    "without": 0
+  },
+  "stopped": "interrupted",
+  "skills": [
+    {
+      "name": "finish",
+      "evals": 5,
+      "with": {
+        "runs": 4,
+        "passes": 0,
+        "pass_rate": 0,
+        "cost_usd": 5.550282,
+        "cost_per_correct_usd": null
+      },
+      "without": {
+        "runs": 4,
+        "passes": 0,
+        "pass_rate": 0,
+        "cost_usd": 5.11888,
+        "cost_per_correct_usd": null
+      },
+      "difference": {
+        "value": 0,
+        "low": 0,
+        "high": 0
+      },
+      "cost_ratio": null,
+      "verdict": null,
+      "rule": null,
+      "below_floor": true,
+      "pairs": [
+        {
+          "eval": "finish-1",
+          "run": 1,
+          "with": {
+            "claude_exit": 0,
+            "subtype": "success",
+            "cost_usd": 1.410589,
+            "excluded": 0,
+            "permission_denials": 5,
+            "passed": false,
+            "tokens": {
+              "in": 49888,
+              "out": 20623,
+              "cache_read": 511689,
+              "cache_write": 39786
+            },
+            "models": [
+              "claude-fable-5-2",
+              "claude-opus-5-5"
+            ],
+            "checks": [
+              {
+                "name": "folder-gone",
+                "passed": false
+              },
+              {
+                "name": "delta-applied",
+                "passed": false
+              },
+              {
+                "name": "committed",
+                "passed": false
+              },
+              {
+                "name": "no-folder-commit",
+                "passed": true
+              },
+              {
+                "name": "finish-complete",
+                "passed": false
+              },
+              {
+                "name": "hours-line",
+                "passed": false
+              }
+            ],
+            "turns": 17,
+            "seconds": 258.9
+          },
+          "without": {
+            "claude_exit": 0,
+            "subtype": "success",
+            "cost_usd": 1.212793,
+            "excluded": 0,
+            "permission_denials": 6,
+            "passed": false,
+            "tokens": {
+              "in": 39080,
+              "out": 16944,
+              "cache_read": 605336,
+              "cache_write": 39762
+            },
+            "models": [
+              "claude-fable-5-2",
+              "claude-opus-5-5"
+            ],
+            "checks": [
+              {
+                "name": "folder-gone",
+                "passed": false
+              },
+              {
+                "name": "delta-applied",
+                "passed": false
+              },
+              {
+                "name": "committed",
+                "passed": false
+              },
+              {
+                "name": "no-folder-commit",
+                "passed": true
+              },
+              {
+                "name": "finish-complete",
+                "passed": false
+              },
+              {
+                "name": "hours-line",
+                "passed": false
+              }
+            ],
+            "turns": 23,
+            "seconds": 207.9
+          }
+        },
+        {
+          "eval": "finish-1",
+          "run": 2,
+          "with": {
+            "claude_exit": 0,
+            "subtype": "success",
+            "cost_usd": 1.476579,
+            "excluded": 0,
+            "permission_denials": 5,
+            "passed": false,
+            "tokens": {
+              "in": 51115,
+              "out": 22582,
+              "cache_read": 510010,
+              "cache_write": 37944
+            },
+            "models": [
+              "claude-fable-5-2",
+              "claude-opus-5-5"
+            ],
+            "checks": [
+              {
+                "name": "folder-gone",
+                "passed": false
+              },
+              {
+                "name": "delta-applied",
+                "passed": false
+              },
+              {
+                "name": "committed",
+                "passed": false
+              },
+              {
+                "name": "no-folder-commit",
+                "passed": true
+              },
+              {
+                "name": "finish-complete",
+                "passed": false
+              },
+              {
+                "name": "hours-line",
+                "passed": false
+              }
+            ],
+            "turns": 19,
+            "seconds": 287.8
+          },
+          "without": {
+            "claude_exit": 0,
+            "subtype": "success",
+            "cost_usd": 1.468609,
+            "excluded": 0,
+            "permission_denials": 7,
+            "passed": false,
+            "tokens": {
+              "in": 21267,
+              "out": 26775,
+              "cache_read": 774517,
+              "cache_write": 67183
+            },
+            "models": [
+              "claude-fable-5-2",
+              "claude-opus-5-5"
+            ],
+            "checks": [
+              {
+                "name": "folder-gone",
+                "passed": false
+              },
+              {
+                "name": "delta-applied",
+                "passed": false
+              },
+              {
+                "name": "committed",
+                "passed": true
+              },
+              {
+                "name": "no-folder-commit",
+                "passed": false
+              },
+              {
+                "name": "finish-complete",
+                "passed": false
+              },
+              {
+                "name": "hours-line",
+                "passed": false
+              }
+            ],
+            "turns": 23,
+            "seconds": 321.1
+          }
+        },
+        {
+          "eval": "finish-1",
+          "run": 3,
+          "with": {
+            "claude_exit": 1,
+            "subtype": "error_max_budget_usd",
+            "cost_usd": 1.665838,
+            "excluded": 0,
+            "permission_denials": 5,
+            "passed": false,
+            "tokens": {
+              "in": 54489,
+              "out": 25853,
+              "cache_read": 506964,
+              "cache_write": 38493
+            },
+            "models": [
+              "claude-fable-5-2",
+              "claude-opus-5-5"
+            ],
+            "checks": [
+              {
+                "name": "folder-gone",
+                "passed": false
+              },
+              {
+                "name": "delta-applied",
+                "passed": false
+              },
+              {
+                "name": "committed",
+                "passed": false
+              },
+              {
+                "name": "no-folder-commit",
+                "passed": true
+              },
+              {
+                "name": "finish-complete",
+                "passed": false
+              },
+              {
+                "name": "hours-line",
+                "passed": false
+              }
+            ],
+            "turns": 15,
+            "seconds": 312.4
+          },
+          "without": {
+            "claude_exit": 0,
+            "subtype": "success",
+            "cost_usd": 1.043996,
+            "excluded": 0,
+            "permission_denials": 5,
+            "passed": false,
+            "tokens": {
+              "in": 39202,
+              "out": 12612,
+              "cache_read": 539509,
+              "cache_write": 39463
+            },
+            "models": [
+              "claude-fable-5-2",
+              "claude-opus-5-5"
+            ],
+            "checks": [
+              {
+                "name": "folder-gone",
+                "passed": false
+              },
+              {
+                "name": "delta-applied",
+                "passed": false
+              },
+              {
+                "name": "committed",
+                "passed": false
+              },
+              {
+                "name": "no-folder-commit",
+                "passed": true
+              },
+              {
+                "name": "finish-complete",
+                "passed": false
+              },
+              {
+                "name": "hours-line",
+                "passed": false
+              }
+            ],
+            "turns": 16,
+            "seconds": 167
+          }
+        },
+        {
+          "eval": "finish-2",
+          "run": 1,
+          "with": {
+            "claude_exit": 0,
+            "subtype": "success",
+            "cost_usd": 0.997277,
+            "excluded": 0,
+            "permission_denials": 4,
+            "passed": false,
+            "tokens": {
+              "in": 30626,
+              "out": 14929,
+              "cache_read": 499208,
+              "cache_write": 32653
+            },
+            "models": [
+              "claude-fable-5-2",
+              "claude-opus-5-5"
+            ],
+            "checks": [
+              {
+                "name": "folder-gone",
+                "passed": false
+              },
+              {
+                "name": "delta-applied",
+                "passed": false
+              },
+              {
+                "name": "committed",
+                "passed": false
+              },
+              {
+                "name": "no-folder-commit",
+                "passed": true
+              },
+              {
+                "name": "finish-complete",
+                "passed": false
+              },
+              {
+                "name": "no-invented-hours",
+                "passed": false
+              }
+            ],
+            "turns": 22,
+            "seconds": 197.1
+          },
+          "without": {
+            "claude_exit": 0,
+            "subtype": "success",
+            "cost_usd": 1.393481,
+            "excluded": 0,
+            "permission_denials": 7,
+            "passed": false,
+            "tokens": {
+              "in": 40823,
+              "out": 21762,
+              "cache_read": 751896,
+              "cache_write": 54326
+            },
+            "models": [
+              "claude-fable-5-2",
+              "claude-opus-5-5"
+            ],
+            "checks": [
+              {
+                "name": "folder-gone",
+                "passed": false
+              },
+              {
+                "name": "delta-applied",
+                "passed": false
+              },
+              {
+                "name": "committed",
+                "passed": true
+              },
+              {
+                "name": "no-folder-commit",
+                "passed": false
+              },
+              {
+                "name": "finish-complete",
+                "passed": false
+              },
+              {
+                "name": "no-invented-hours",
+                "passed": true
+              }
+            ],
+            "turns": 23,
+            "seconds": 303.9
+          }
+        },
+        {
+          "eval": "finish-2",
+          "run": 2,
+          "with": null,
+          "without": {
+            "claude_exit": 1,
+            "subtype": "error_max_budget_usd",
+            "cost_usd": 1.573122,
+            "excluded": 0,
+            "permission_denials": 6,
+            "passed": false,
+            "tokens": {
+              "in": 56803,
+              "out": 21977,
+              "cache_read": 525861,
+              "cache_write": 43228
+            },
+            "models": [
+              "claude-fable-5-2",
+              "claude-opus-5-5"
+            ],
+            "checks": [
+              {
+                "name": "folder-gone",
+                "passed": false
+              },
+              {
+                "name": "delta-applied",
+                "passed": false
+              },
+              {
+                "name": "committed",
+                "passed": false
+              },
+              {
+                "name": "no-folder-commit",
+                "passed": true
+              },
+              {
+                "name": "finish-complete",
+                "passed": false
+              },
+              {
+                "name": "no-invented-hours",
+                "passed": false
+              }
+            ],
+            "turns": 20,
+            "seconds": 279.1
+          }
+        }
+      ]
+    }
+  ]
+}
