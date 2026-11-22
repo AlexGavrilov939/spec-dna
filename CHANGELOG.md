@@ -77,7 +77,7 @@ The profiles. Each new mechanism is off in `lite`. A cell says when the mechanis
 
 ### Verdicts of the skills, rerun for 0.8.0
 
-TODO-VERDICTS
+The rerun of `specify` gives `on`, but 3 of the 6 failures of the arm `without` stopped at the turn limit with each check passed. `write-plan`, `finish` (reruns below the floor) and `execute` (no rerun) keep verdicts of older texts, and `accept` evals measure `review` but change no verdict.
 
 ## 0.7.1 - 2026-11-19
 
