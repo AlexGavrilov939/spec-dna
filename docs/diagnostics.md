@@ -39,6 +39,7 @@ Without `--base`, the change codes that need a base use the merge base of `origi
 | SD601 to SD612 | Links, drift, evidence and quality | [Links, drift and quality](#links-drift-and-quality-sd601-to-sd612) |
 | SD613 to SD617 | Test reports | [Test reports](#test-reports-sd613-to-sd617) |
 | SD618 to SD620 | Proof levels and the proof debt | [Proof levels and the proof debt](#proof-levels-and-the-proof-debt-sd618-to-sd620) |
+| SD641 to SD645 | The roll-up: summaries and pins | [Roll-up](#roll-up-sd641-to-sd645) |
 | SD701 to SD704 | Budgets | [Budgets](#budgets-sd701-to-sd704) |
 | SD801 to SD807 | Requirement text | [Requirement text](#requirement-text-sd801-to-sd807) |
 | SD901 to SD904 | Layers | [Layers](#layers-sd901-to-sd904) |
@@ -72,7 +73,7 @@ Without `--base`, the change codes that need a base use the merge base of `origi
 | --- | --- | --- | --- |
 | SD301 | front-matter-syntax | error | The front matter is not in the supported YAML subset. |
 | SD302 | front-matter-field | error | A known field has a value of the wrong kind. The `class` of an `intent` must be `routine` or `higher-risk`: another value, such as `small-fix`, gives SD302 (a small fix has no intent). A `was-type` value other than `note` or `change` also gives SD302. |
-| SD303 | type-invalid | error | The `type` is unknown (the message names the new type of a type of 0.5), it does not match a single-type root, or it is not in the `types` list of the project. The document has no type: its front matter has none, its place gives none, and the root has no `default-type`. The type is valid only in the `intent` layer (`intent`, `spec` or `plan`), and the document is at another place. A type that no layer has also gives SD303, with the hint to run `spec-dna layer add`. In the first 3 cases (an unknown type, no type, and an intent-only type at a wrong place), the document has no valid type. It gets no SD304 for its status and no SD305 for the sections of a type, and no budget applies to it. |
+| SD303 | type-invalid | error | The `type` is unknown (the message names the new type of a type of 0.5), it does not match a single-type root, or it is not in the `types` list of the project. The document has no type: its front matter has none, its place gives none, and the root has no `default-type`. The type is valid only in the `intent` layer (`intent`, `spec` or `plan`), and the document is at another place. A type that no layer has also gives SD303, with the hint to run `spec-dna layer add`. For the type `summary`, the hint is `spec-dna layer add summaries`, and the fix names that command only in a project that has a `[layers]` table. A project with no `[layers]` table keeps the fix of 0.7.1. In the first 3 cases (an unknown type, no type, and an intent-only type at a wrong place), the document has no valid type. It gets no SD304 for its status and no SD305 for the sections of a type, and no budget applies to it. |
 | SD304 | status-invalid | error | After the `status-map` of the root applies, the status is absent, or the type does not allow it. The types `requirements`, `interface`, `rule`, `procedure` and `intent` use `draft` for a proposal. `proposed` is for a decision. On an `intent`, the message names `closed` for `rejected` and `research` for `done`. |
 | SD305 | section-missing | error | A document has no section with a heading from one group of `required-sections` of the root for its type. The defaults are: decision `Decision Outcome` or `Decision`; rule `Rules`; incident `Summary` and `Root cause`; intent `Intent`, `Problem` or `Summary`; spec `Delta`; plan `Files`. |
 | SD306 | placeholder-left | error | A template placeholder (`{{text}}`, from `spec-dna new`) is still in the document. |
@@ -183,6 +184,24 @@ These codes are new in 0.8.0. They are in the rule group `proof`, so a rule for 
 - SD618 and SD619 run on a marker. No key turns them on. The marker is an act of the author on one requirement, as `verified-by` is.
 - SD620 runs only when `check` reads the reports (`--reports`) and `reliable-for` covers the change. A requirement with no passed case gives SD617 or SD916, not SD620. When SD617 is off, a requirement with a tag and no passed case gives SD620. A requirement with a `verified-by` record and a tag whose bound case failed, was skipped or passed too few times gives SD620 too. A `verified-by` record with no tag is exempt.
 - A debt is never proof. SD916, SD617 and SD620 stop `finish` for a requirement that has a debt, as they stop one that has none.
+
+## Roll-up (SD641 to SD645)
+
+These codes are new in 0.8.0. They are in the rule group `rollup`, so a rule for the group `budgets` does not change them. They read each `summary` document, and each `system` or `product` document that has the field `rests-on` ([types.md](types.md#summary)). A tree with no such document gives none of them. In `lite`, each of them is off. A rule for the group `rollup`, or for one code, turns them on there. The tables give the severity in `standard`.
+
+| Code | Name | Severity | Meaning |
+| --- | --- | --- | --- |
+| SD641 | summary-stale | error | A pin no longer holds. Its text changed, or its target was removed or is not active, or the target is no longer in the frontier of the document, which could hold it before (it moved to another area, a summary of a sub-area now stands for it, or a `system` document lost its `rests-on`). |
+| SD642 | summary-incomplete | error | An item of the frontier has no pin: a new requirement, a requirement that became active, or a new summary of a sub-area. |
+| SD643 | pin-invalid | error | A pin is not in the pin form, is ambiguous, names a document of the same or a higher level, names a section and not a requirement, names a target that no frontier can hold (a whole document of another type, such as a decision, a research document or a requirements document with no key, or a requirement of a document outside the layer `requirements`), or sits in a document of another type than `summary`, `system` and `product`. |
+| SD644 | summary-no-area | error | The path of a summary names no folder of the layer `requirements`. |
+| SD645 | summary-repinned | warning | Against the base, the set of pins of a document changed, and its text did not. The set compares the resolved targets and the hashes. A pin that `refresh` rewrites from an alias to the canonical id is no change. A `system` or `product` document that had `rests-on` in the base and lost it, with the same text, gets SD645 too: the removal is a repin, and it ends the SD641 of that document. It shows the claim of `spec-dna refresh <id> --holds`. It needs a base: with no base, it gives no finding. |
+
+- Each stale pin is one diagnostic with the pin as its target. Thus the gate sees a second stale pin of a document as new. A stale summary of the base is not new, so it does not stop a later change.
+- The message of SD641 and SD642 names the pin or the item, and the command `spec-dna refresh <id>`. A person or an agent reads the requirement, edits the text of the summary, then runs `refresh`. If the text still holds, `refresh <id> --holds` writes the pins, and SD645 shows that claim in the diff.
+- The check does not read the meaning. A summary with a wrong text and current pins passes. SD645 shows a claim: it does not check it.
+- SD645 uses the base of the change checks (the merge base of `--base` and `HEAD`), or `HEAD` when there is none. `refresh` uses the same base for its guard.
+- `finish` and `mv` do not yet know the roll-up. A new SD641 that a change causes can stop them in `standard` and `strict`.
 
 ## Budgets (SD701 to SD704)
 

@@ -24,7 +24,7 @@ spec-dna treats the specifications as code. Each document has a type and a stabl
 
 The documents are plain Markdown files in git. spec-dna reads their front matter, headings, links, code spans and requirement list items. It needs no database and no service.
 
-Each document has 1 of 15 types. The place of a file gives its type: a file under `rules/` is a `rule`, and `terms.md` is the `terms` document. A `type:` field in the front matter is necessary only where the place gives no type.
+Each document has 1 of 16 types. The place of a file gives its type: a file under `rules/` is a `rule`, and `terms.md` is the `terms` document. A `type:` field in the front matter is necessary only where the place gives no type.
 
 | Type | Content | Place in the default graph |
 | --- | --- | --- |
@@ -38,6 +38,7 @@ Each document has 1 of 15 types. The place of a file gives its type: a file unde
 | `incident` | A post-mortem record of one event | `docs/incidents/` |
 | `research` | Material that agents read only on request | `docs/research/` |
 | `intent`, `spec`, `plan` | The documents of one change | `docs/intent/<slug>/` |
+| `summary` | The short text of one area of the requirements | `docs/summaries/<area>.md`, in the layer `summaries` that `spec-dna layer add summaries` adds |
 
 A new project with fewer than 30 documents gets the small graph. It has no layer for `interface`, `procedure` and `research`, and `spec-dna layer add` adds one.
 

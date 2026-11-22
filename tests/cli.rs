@@ -3931,7 +3931,9 @@ fn init_preview_shows_how_each_answer_was_applied() {
     for want in [
         "How the answers were applied:",
         "  1. profile: strict (changed from standard) -> profile = \"strict\"",
-        "  2. layer graph: default (changed from small) -> 10 [layers.*] tables",
+        // The default graph has the layer `summaries` in `strict` (design
+        // 0.8.0, D50), so 11 tables. It had 10 before slice S8a.
+        "  2. layer graph: default (changed from small) -> 11 [layers.*] tables",
         "  3. areas of requirements: valves, sensors (changed from none) -> areas = [\"valves\", \"sensors\"]",
         "  6. evidence policy and link style: profile, both (default, writes nothing)",
         "  7. normative language and heading aliases: en; outcome: -; amendments: - (default, writes nothing)",

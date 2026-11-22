@@ -120,6 +120,7 @@ pub fn diagnose_against(config: &Config, c: &Corpus, base: Option<&Corpus>) -> V
             }
         }
     }
+    out.extend(rollup_diags(config, c, base));
     let mut out = apply_severity(config, out);
     // SD612 skips a reference that SD611 or SD901 reports in this run, so it
     // reads the diagnostics after their severity.
@@ -128,6 +129,62 @@ pub fn diagnose_against(config: &Config, c: &Corpus, base: Option<&Corpus>) -> V
     out.extend(layer_limits(config, c, &layers));
     out.extend(crate::lifecycle::tree_checks(config, c, base, &layers));
     out.sort();
+    out
+}
+
+/// The codes of the roll-up (design 0.8.0, D52): SD641 to SD644 for each
+/// summary, and each `system` or `product` document with `rests-on`, and SD645
+/// against `base`. The tree has the pins, so the gate sees a second stale pin of
+/// one document as new: each finding names its pin as its target. The caller
+/// applies the severity. A tree with no such document gives nothing.
+fn rollup_diags(config: &Config, c: &Corpus, base: Option<&Corpus>) -> Vec<Diag> {
+    use crate::rollup::Kind;
+    const CODES: [Code; 5] = [
+        Code::SummaryStale,
+        Code::SummaryIncomplete,
+        Code::PinInvalid,
+        Code::SummaryNoArea,
+        Code::SummaryRepinned,
+    ];
+    if CODES.iter().all(|code| config.is_off(*code)) {
+        return Vec::new();
+    }
+    let roll = crate::rollup::Rollup::build(config, c);
+    let mut out: Vec<Diag> = roll
+        .all()
+        .into_iter()
+        .map(|(i, f)| {
+            let code = match f.kind {
+                Kind::Stale => Code::SummaryStale,
+                Kind::Incomplete => Code::SummaryIncomplete,
+                Kind::Invalid => Code::PinInvalid,
+                Kind::NoArea => Code::SummaryNoArea,
+            };
+            diag(&c.docs[i as usize], f.line, code, f.target, f.message)
+        })
+        .collect();
+    if let Some(base) = base {
+        for i in crate::rollup::repinned(c, base) {
+            let d = &c.docs[i as usize];
+            let line = d
+                .rests_on
+                .as_ref()
+                .and_then(|p| p.first())
+                .map_or(1, |p| p.1);
+            let message = if d.rests_on.is_none() && d.ty != DocType::Summary {
+                format!(
+                    "`{}` lost its field `rests-on` against the base and its text did not: the document is no roll-up document now, and its pins no longer stand for its text; check that this is right",
+                    d.id
+                )
+            } else {
+                format!(
+                    "the pins of `{}` changed against the base and its text did not: a claim that the text still holds (`spec-dna refresh {0} --holds`); check that it does",
+                    d.id
+                )
+            };
+            out.push(diag(d, line, Code::SummaryRepinned, "", message));
+        }
+    }
     out
 }
 
@@ -1445,7 +1502,7 @@ fn c_root(c: &Corpus, d: &Diag) -> usize {
         .map_or(0, |&i| c.docs[i as usize].root)
 }
 
-fn head_to_base<'a>(base: &'a Corpus, h: &Doc) -> Option<&'a Doc> {
+pub(crate) fn head_to_base<'a>(base: &'a Corpus, h: &Doc) -> Option<&'a Doc> {
     let names = std::iter::once(&h.id).chain(&h.aliases);
     for n in names {
         if let Some([i]) = base.lookup.get(&canonical(n)).map(Vec::as_slice) {

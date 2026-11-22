@@ -149,7 +149,7 @@ spec-dna new intent add-drip-lines       # docs/intent/add-drip-lines/intent.md:
 
 A new project has the small graph, with no layer for `procedure`, `interface` and `research`. `spec-dna layer add` adds a layer ([commands.md](commands.md#layer-add)).
 
-There are 15 types: `product`, `system`, `terms`, `roadmap`, `questions`, `rule`, `requirements`, `interface`, `decision`, `procedure`, `incident`, `research`, `intent`, `spec` and `plan`. [docs/types.md](types.md) gives their statuses, required sections, budgets and templates. `context` serves the layers in the order of the graph, from the most stable layer. It never serves a `research` document unless a target names it.
+There are 16 types: `product`, `system`, `terms`, `roadmap`, `questions`, `rule`, `requirements`, `interface`, `decision`, `procedure`, `incident`, `research`, `intent`, `spec`, `plan` and `summary`. [docs/types.md](types.md) gives their statuses, required sections, budgets and templates. `context` serves the layers in the order of the graph, from the most stable layer. It never serves a `research` document unless a target names it.
 
 To link a test to a requirement, write a `covers:` tag in a comment of the test. This works in any language:
 

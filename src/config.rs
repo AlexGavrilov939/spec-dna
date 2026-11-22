@@ -1111,6 +1111,11 @@ impl Profile {
             // in `lite`. SD936 and SD937 run only with `[change] invariants`
             // (`configured_severity`). The deviations need no key.
             "SD936" | "SD937" | "SD938" | "SD939" | "SD940" => (None, Some(E), Some(E)),
+            // The roll-up (design 0.8.0, D52). Off in `lite`. SD641 and SD642
+            // run where a summary or a `system` or `product` document has
+            // pins. A stale summary is an error in `standard` and `strict`.
+            "SD641" | "SD642" | "SD643" | "SD644" => (None, Some(E), Some(E)),
+            "SD645" => (None, Some(W), Some(W)),
             _ => return Some(code.severity()),
         };
         match self {
@@ -1126,7 +1131,7 @@ impl Profile {
 pub type Rules = Vec<(String, Option<Severity>)>;
 
 /// The rule groups. A rule with a group name sets every code of the group.
-pub const GROUPS: [(&str, &[&str]); 11] = [
+pub const GROUPS: [(&str, &[&str]); 12] = [
     ("references", &["SD101", "SD102", "SD104", "SD106"]),
     ("ids", &["SD201", "SD202", "SD203", "SD204"]),
     ("budgets", &["SD701", "SD702", "SD703", "SD704"]),
@@ -1141,6 +1146,7 @@ pub const GROUPS: [(&str, &[&str]); 11] = [
             "SD936", "SD937", "SD938", "SD939", "SD940", "SD941",
         ],
     ),
+    ("rollup", &["SD641", "SD642", "SD643", "SD644", "SD645"]),
     ("lint", &["SD801", "SD802", "SD803", "SD804", "SD805"]),
     ("layers", &["SD901", "SD902", "SD903", "SD904"]),
     (
@@ -1381,6 +1387,7 @@ pub const DEFAULT_BUDGETS: [(u32, u32); DocType::COUNT] = [
     (6_000, 12_000),  // intent
     (10_000, 20_000), // spec
     (0, 0),           // plan: it grows with the size of the change, so it has no default budget
+    (3_000, 6_000), // summary: the budget of a rule, because `context` serves it first (design 0.8.0, D50)
 ];
 
 /// The default required sections of each type: a list of groups. A document
@@ -3480,7 +3487,9 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
     fn no_layers_table_gives_the_implied_graph() {
         let c = Config::parse(BASE).unwrap();
         assert!(!c.layers_declared);
-        assert_eq!(c.layers, Graph::default_graph());
+        // The default graph without the layer `summaries` (design 0.8.0, D50).
+        assert_eq!(c.layers, Graph::default_graph_without_summaries());
+        assert!(c.layers.index("summaries").is_none());
         assert!(c.areas.is_empty() && c.groups.is_empty());
         // A `types` list keeps the layers that hold one of its types.
         let c = with("types = [\"requirements\", \"decision\"]", "").unwrap();
@@ -4285,6 +4294,50 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
         assert!(Nothing < HigherRisk && HigherRisk < All);
         assert_eq!(HigherRisk.max(All), All);
         assert_eq!(Nothing.max(HigherRisk), HigherRisk);
+    }
+
+    #[test]
+    fn the_roll_up_codes_have_their_profile_rows_and_their_group() {
+        use Severity::{Error as E, Warning as W};
+        type Sev = Option<Severity>;
+        // Design 0.8.0, D52: code, lite, standard, strict. The codes are off in
+        // `lite`, and a stale summary is an error in the 2 other profiles.
+        let rows: [(Code, &str, Sev, Sev, Sev); 5] = [
+            (Code::SummaryStale, "SD641", None, Some(E), Some(E)),
+            (Code::SummaryIncomplete, "SD642", None, Some(E), Some(E)),
+            (Code::PinInvalid, "SD643", None, Some(E), Some(E)),
+            (Code::SummaryNoArea, "SD644", None, Some(E), Some(E)),
+            (Code::SummaryRepinned, "SD645", None, Some(W), Some(W)),
+        ];
+        for (code, name, lite, standard, strict) in rows {
+            assert_eq!(code.code(), name);
+            // The default of a code is a warning (P6).
+            assert_eq!(code.severity(), Severity::Warning, "{name}");
+            for (profile, want) in [("lite", lite), ("standard", standard), ("strict", strict)] {
+                let c = with(&format!("profile = \"{profile}\""), "").unwrap();
+                assert_eq!(c.severity(code, Some(0)), want, "{name} {profile}");
+            }
+            let groups: Vec<&str> = GROUPS
+                .iter()
+                .filter(|g| g.1.contains(&name))
+                .map(|g| g.0)
+                .collect();
+            assert_eq!(groups, ["rollup"], "{name}");
+            // A rule for the group sets the code, and a rule for the code
+            // wins over the group.
+            let c = with("profile = \"lite\"\n[rules]\nrollup = \"error\"", "").unwrap();
+            assert_eq!(c.severity(code, Some(0)), Some(E), "{name}");
+            let c = with("profile = \"standard\"\n[rules]\nrollup = \"off\"\n", "").unwrap();
+            assert_eq!(c.severity(code, Some(0)), None, "{name}");
+        }
+        // The group `budgets` of 0.7.1 does not change the codes.
+        let c = with("profile = \"standard\"\n[rules]\nbudgets = \"off\"\n", "").unwrap();
+        assert_eq!(c.severity(Code::SummaryStale, Some(0)), Some(E));
+        // The type has the budget of a rule.
+        assert_eq!(
+            DEFAULT_BUDGETS[DocType::Summary as usize],
+            DEFAULT_BUDGETS[DocType::Rule as usize]
+        );
     }
 
     #[test]

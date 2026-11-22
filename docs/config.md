@@ -7,7 +7,7 @@ An unknown key is an error (exit code 3), so a typo cannot disable a rule withou
 ```toml
 spec-dna = "0.7.1"              # required: the pinned version
 profile = "standard"            # "lite", "standard" (default) or "strict"
-types = ["requirements", "decision", "rule", "procedure", "incident", "research"]  # default: all 15
+types = ["requirements", "decision", "rule", "procedure", "incident", "research"]  # default: all 16
 exclude = ["**/vendor/**"]      # repository globs that are never documents
 self-urls = ["https://example.org/acme/specs/blob/*/"]  # URLs of this repository
 install-source = "ssh://git@example.org/tools/spec-dna.git"  # where `cargo install` gets spec-dna
@@ -132,7 +132,7 @@ sonnet = "high"
 | `spec-dna` | string | required | The pinned version. If the binary has a different version, `check`, `finish`, `init` and `eval run` do not run. They print the install command and exit with code 3. The other commands print a warning. To move the pin, run `spec-dna upgrade`. In the checkout of spec-dna itself (a tree binary), SD503 does not count a change of the pin line. See [the tree binary](diagnostics.md#files-that-sd503-counts). |
 | `spec-dna-sha256` | table | none | The SHA-256 sums of the release assets of the pin. Each key is an asset name: `spec-dna-<version>-<target>`, with the suffix `.exe` for a Windows target. Each value is its sum. See [The table `spec-dna-sha256`](#the-table-spec-dna-sha256). |
 | `profile` | string | `"standard"` | The default severity of each diagnostic code: `"lite"`, `"standard"` or `"strict"`. [docs/profiles.md](profiles.md) gives the table. |
-| `rules` | table | `{}` | Severity overrides for every root. A key is a rule group (`references`, `ids`, `budgets`, `drift`, `evidence`, `reports`, `proof`, `acceptance`, `lint`, `layers`, `changes`) or a code (`SD704`). A value is `"off"`, `"warning"` or `"error"`. A code rule has priority over a group rule. The group `evidence` holds SD103, SD105 and SD608. The group `reports` holds SD613 to SD617. The group `proof` holds SD618 to SD620. The group `acceptance` holds SD927 to SD931, SD933 and SD935 to SD941. No rule for the group `evidence` changes the groups `reports` and `proof`. No rule for the group `changes` changes the group `acceptance`. The group `layers` holds SD901 to SD904. The group `changes` holds SD905 and SD910 to SD926. The word `rules` in `[layers.rules]` is a layer name, not the `[rules]` table: the key path shows which one. |
+| `rules` | table | `{}` | Severity overrides for every root. A key is a rule group (`references`, `ids`, `budgets`, `drift`, `evidence`, `reports`, `proof`, `acceptance`, `rollup`, `lint`, `layers`, `changes`) or a code (`SD704`). A value is `"off"`, `"warning"` or `"error"`. A code rule has priority over a group rule. The group `evidence` holds SD103, SD105 and SD608. The group `reports` holds SD613 to SD617. The group `proof` holds SD618 to SD620. The group `acceptance` holds SD927 to SD931, SD933 and SD935 to SD941. The group `rollup` holds SD641 to SD645. A rule for the group `budgets` does not change the group `rollup`. No rule for the group `evidence` changes the groups `reports` and `proof`. No rule for the group `changes` changes the group `acceptance`. The group `layers` holds SD901 to SD904. The group `changes` holds SD905 and SD910 to SD926. The word `rules` in `[layers.rules]` is a layer name, not the `[rules]` table: the key path shows which one. |
 | `language` | string | `"en"` | The language of the normative text: a BCP 47 language tag, such as `en`, `en-GB` or `de`. It is a top-level key only. The form is a primary subtag of 2 or 3 letters, then subtags of 1 to 8 letters or digits, separated by `-`. spec-dna does not check a tag against the language registry. A tag in another form, such as `english`, `en_GB` or `x-private`, is an error (exit code 3). The primary subtag `en` (in any case) means English. Another primary subtag disables the checks that read English word lists (SD801 to SD805 and SD904). |
 | `change` | table | none | The change process. See [The table `change`](#the-table-change). |
 | `change.policy` | string | required in the table | `"three-class"`, `"two-class"` or `"none"`. Without the `[change]` table the policy is `"none"`. With `"none"`, the codes SD905 and SD910 to SD926 are off, and no rule can enable them. |
@@ -153,7 +153,7 @@ sonnet = "high"
 | `types` | list of strings | all types | The document types of the project. A document of another type is an error (SD303), and `spec-dna new` does not accept it. |
 | `areas` | list of strings | `[]` | The areas of the project: the names of the folders of `requirements/`. Each name is one folder name, and a name is not listed twice. Two names that differ only in case (`valves` and `Valves`) are an error (exit code 3), because a file system that ignores case gives one folder for both. The compare changes only the letters A to Z. `new` and `mv` stop with exit code 2 for a path whose area differs from a name of `areas` only in case. |
 | `groups` | table | `{}` | Named sets of areas. A key is a group name. A value is a list of areas. Each area must be in `areas`, or the file is an error (exit code 3). An area can be in more than one group. |
-| `layers` | table | the default graph | The layer graph: one table for each layer. A project with no `[layers]` table gets the [default graph](#default-graph). See [The table `layers`](#the-table-layers). |
+| `layers` | table | the default graph | The layer graph: one table for each layer. A project with no `[layers]` table gets the [default graph](#default-graph) without the layer `summaries`. See [The table `layers`](#the-table-layers). |
 | `layers.<name>.types` | list of strings | `[]` | The document types of the layer. A type is in one layer at most. |
 | `layers.<name>.dir` | string | the name of the layer | The folder of the layer, relative to the root. No 2 layers have the same folder. |
 | `layers.<name>.files` | list of strings | `[]` | The top files of the layer, relative to the root, such as `["terms.md"]`. An entry has no `..`, no `/` at the start, no `\` and no `:`. A layer with `files` has no `dir`, and no 2 layers have the same file. |
@@ -296,7 +296,7 @@ The level of a layer is the number of edges on its longest `moves-to` path to a 
 
 A document belongs to the first layer in the file whose `paths` match it. If no `paths` match, it belongs to the layer that has its type. `spec-dna layer list` shows which rule put each document in its layer: `paths`, `files` (a top file of the layer of its type) or `type`.
 
-A project with no `[layers]` table gets the [default graph](#default-graph). If the project sets `types`, the graph keeps only the layers that hold one of these types. It drops the edges to the other layers. A project with a `[layers]` table gets only the layers that it writes.
+A project with no `[layers]` table gets the [default graph](#default-graph) without the layer `summaries`. Reason: a project of 0.7.1 can have a folder `summaries/` with documents of another type, and a new place type would change their type. `spec-dna layer add summaries` adds the layer. If the project sets `types`, the graph keeps only the layers that hold one of these types. It drops the edges to the other layers. A project with a `[layers]` table gets only the layers that it writes. A project with a `[layers]` table and a `summary` document, but with no layer that has the type, gets SD303, and the message names `spec-dna layer add summaries`.
 
 ### Keep and context
 
@@ -312,7 +312,7 @@ A project with no `[layers]` table gets the [default graph](#default-graph). If 
 
 ### Default graph
 
-`init` writes the default graph for a project of 30 documents or more. A project with no `[layers]` table also gets it. The column "Level" is a result of the graph. It is not a key.
+`init` writes the default graph for a project of 30 documents or more. A project with no `[layers]` table also gets it, but without the last layer (`summaries`). In the profile `lite`, the roll-up is off, so `init` writes the default graph without `summaries` there too. The column "Level" is a result of the graph. It is not a key.
 
 | Layer | Types | `moves-to` | `linked-from` | `keep` | `context` | Limits | Level |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -326,10 +326,13 @@ A project with no `[layers]` table gets the [default graph](#default-graph). If 
 | `intent` | `intent`, `spec`, `plan` | `requirements`, `interfaces`, `rules`, `decisions`, `procedures` | none | `until-finished` | `on-request` | `max-docs = 30`, `max-started = 3`, `stale-days = 14` | 1 |
 | `incidents` | `incident` | `intent` | `rules`, `procedures`, `decisions`, `requirements`, `interfaces`, `intent` | `forever` | `on-request` | none | 2 |
 | `pending` | `roadmap`, `questions` (`files`) | `intent`, `decisions` | `intent`, `requirements`, `decisions` | `forever` | `on-request` | `max-docs = 2` | 2 |
+| `summaries` | `summary` | none | none | `forever` | `always` | none | 0 |
+
+The layer `summaries` holds the summary of each area of the layer `requirements` ([Roll-up](types.md#summary)). Its folder is `summaries/`, and the path `summaries/<area>.md` is the summary of the folder `requirements/<area>/`. `spec-dna layer add summaries` adds it to a project that has no such layer. A project of 0.7.1 with no summary has no new diagnostic: SD303 reports a `summary` document only in a project that has a `[layers]` table and no layer with the type.
 
 A layer at level 0 needs no `linked-from`, because no layer is more stable than it. `research` and `incidents` keep `linked-from` entries, because a decision, a rule or a procedure names its source. `pending` lists `requirements` and `decisions`, because a requirement can name an open question and a decision can name the roadmap (SD901).
 
-For a project of fewer than 30 documents, also a new project, `init` writes the small graph. It has 7 of the 10 layers: `interfaces`, `procedures` and `research` are not in it. `layer add` adds a missing layer later.
+For a project of fewer than 30 documents, also a new project, `init` writes the small graph. It has 7 of the 11 layers: `interfaces`, `procedures`, `research` and `summaries` are not in it. `layer add` adds a missing layer later.
 
 | Layer | `moves-to` | Level |
 | --- | --- | --- |
@@ -598,7 +601,7 @@ The default budgets are (soft and hard, in characters):
 - `terms`, `requirements`, `interface` and `spec`: 10,000 and 20,000
 - `procedure`: 14,000 and 28,000
 - `decision`: 7,000 and 14,000
-- `rule`: 3,000 and 6,000
+- `rule` and `summary`: 3,000 and 6,000
 - `incident` and `intent`: 6,000 and 12,000
 - `research` and `plan`: none. A plan of small tasks grows with the size of the change, and `finish` deletes it. `[budgets.plan]` sets a budget
 

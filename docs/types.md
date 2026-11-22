@@ -1,6 +1,6 @@
 # Document types
 
-This page gives the 15 document types of spec-dna. It lists the purpose, the statuses, the required sections, the budgets and the use in `context` of each type. Read it when you write a document or choose a type.
+This page gives the 16 document types of spec-dna. It lists the purpose, the statuses, the required sections, the budgets and the use in `context` of each type. Read it when you write a document or choose a type.
 
 [ADR 0001](adr/0001-information-model.md) defines the first 6 types of version 0.1.0. Version 0.2.0 adds more, and version 0.6.0 renames and merges some of them (see [Types of 0.5](#types-of-05)). Each type has a default template: `spec-dna new <type> [<id>]` writes a document from it. [Templates](#templates) lists them all.
 
@@ -21,6 +21,7 @@ This page gives the 15 document types of spec-dna. It lists the purpose, the sta
 | `intent` | The request for one change | draft, accepted, closed | `Intent`, `Problem` or `Summary` | 6,000, 12,000 | counted only (`on-request` layer) |
 | `spec` | The delta that one change makes to the requirements | draft, approved | `Delta` | 10,000, 20,000 | counted only (`on-request` layer) |
 | `plan` | The files and the order of one change | draft, approved | `Files` | none | counted only (`on-request` layer) |
+| `summary` | The short text of one area of the requirements, with the pins of the documents below it | none | none | 3,000, 6,000 | when a target names it |
 
 A root can change the required sections (`required-sections`) and the budgets (`[budgets.<type>]`). [config.md](config.md) gives the keys.
 
@@ -61,7 +62,7 @@ The types `intent`, `spec` and `plan` are valid only as `<dir>/<slug>/<type>.md`
 
 These 3 types are also not valid as `type` or `default-type` of a root. That is an error (exit code 3).
 
-A document of a type that no layer has gives SD303. The message says to run `spec-dna layer add`. A project with no `[layers]` table has the [default graph](config.md#default-graph), so each type has a layer.
+A document of a type that no layer has gives SD303. The message says to run `spec-dna layer add`. A project with no `[layers]` table has the [default graph](config.md#default-graph) without the layer `summaries`, so each type but `summary` has a layer. For `summary`, the message says to run `spec-dna layer add summaries`.
 
 The default graph gives these places. The folder is the name of the layer, unless the layer sets `dir`.
 
@@ -76,6 +77,7 @@ The default graph gives these places. The folder is the name of the layer, unles
 | `incident` | `incidents/` | none |
 | `research` | `research/` | none |
 | `intent`, `spec`, `plan` | `intent/<slug>/<type>.md` | draft |
+| `summary` | `summaries/<area>.md` | none |
 
 ## Statuses
 
@@ -110,6 +112,45 @@ An incident records an event: a summary, a timeline, the root cause, links, and 
 A research document holds research, data, transcripts or other material that agents seldom read. It has no budget and no status. `context` never serves it, unless a target names it. It counts the research documents that a request reaches, in one line. `show` reads it.
 
 Use it for large material that agents read only on request. `spec-dna history` moves the history sections of a document into a research document.
+
+## Summary
+
+A summary is the short text of one area of the requirements. The path gives the area: `summaries/<area>.md` is the summary of the folder `requirements/<area>/`. `summaries/valves.md` is the summary of `requirements/valves/`, and `summaries/valves/drives.md` is the summary of `requirements/valves/drives/`. A folder of any depth is an area. Thus a split area gets a deeper summary, and the number of levels follows the folders.
+
+A summary has no status, no required section and no requirement key. It is not normative. Its budget is 3,000 and 6,000 characters, as for a `rule`. `[budgets.summary]` changes it.
+
+The layer `summaries` and the type are new in 0.8.0. A project with no `[layers]` table does not have the layer. `spec-dna layer add summaries` adds it ([config.md](config.md#default-graph)). `spec-dna new summary <area>` writes the file with the pins of the area. An area with no folder under `requirements/` gives exit code 2, and `check` gives SD644 for such a path.
+
+### The field `rests-on` and its pins
+
+A summary stores one pin for each item that it rests on, in the front matter field `rests-on`. A `system` or `product` document that has the field is a roll-up document too: it is the top of the chain. The chain is: the requirements, the summaries of the areas (one level for each depth of the folders), `system`, then `product`.
+
+```md
+---
+rests-on:
+  - requirements/valves/closing#close-on-timeout@3f2a9c1b7e0d4a11
+  - requirements/valves/closing#max-angle@0b7e2d91c4a5f310
+  - summaries/valves/drives@9a1c44e0d2b7f6a3
+---
+
+# Valves
+
+A valve closes 30 seconds after its sensor stops. It never opens more than 80 degrees. The drives of the valves have their own summary.
+```
+
+A pin has the form `<doc-id>#<key>@<16 hex>` for a requirement, and `<doc-id>@<16 hex>` for a document. The hash is the hash that `spec-dna show` prints. For a document, it is the hash of its text without link destinations, without the front matter and without the amendment, history and live sections (the hash that SD405 compares). The front matter is not in the body. Thus a new pin never makes a summary stale, and a refresh never changes the hash that the level above pins.
+
+A pin resolves as a reference does: through the alias of a moved document, the alias of a moved key, the alias of a split section and a legacy id. An alias that names more than one document is ambiguous, and SD643 reports it. `spec-dna refresh` writes the canonical id.
+
+The frontier of a document is the set of items that it must pin:
+
+- A summary of the area `a`: each active requirement under the folder of `a`. If the requirement is under a sub-area that has a summary, the item is the summary of the highest such sub-area, and not the requirement.
+- A `system` document with `rests-on`: the same rule over the whole layer `requirements`.
+- A `product` document with `rests-on`: each `system` document with `rests-on`. With none, the frontier of the layer.
+
+An active requirement is a requirement of a document with the status `active`, as SD608 reads it. A pin must name an item of the frontier. The frontier holds only items below the document. Thus a pin to a document of the same or a higher level gives SD643, and no cycle can pass `check`.
+
+`check` compares the pins with the frontier and the current hashes ([SD641 to SD645](diagnostics.md#roll-up-sd641-to-sd645)). `spec-dna refresh` writes the pins ([commands.md](commands.md#refresh)). The gate checks the pins, never the meaning: a summary with a wrong text and current pins passes. A `system` or `product` document starts with `rests-on: []` in its front matter, and `spec-dna refresh system` writes the pins. A document with no `rests-on` is not a roll-up document, and a 0.7.1 tree has none.
 
 ## Intent, spec and plan
 
@@ -289,6 +330,7 @@ A section that states "nothing" gives no SD914 (`Interfaces`), no SD919 (`Concer
 | `procedure` (default) | `procedure` | `new procedure <slug>` | Purpose, Steps |
 | `product`, `system`, `terms`, `roadmap`, `questions` (default) | by name | `new <type>` | Writes `<root>/<type>.md`. `terms` has the table term, meaning and forbidden synonyms. The header cells `Term` and `Forbidden synonyms` (any order, any case) mark the table that SD904 reads. A cell of synonyms splits at `,` and `;`. The column `Meaning` is not read |
 | `requirements`, `rule`, `interface`, `research` (default) | by name | `new <type> <id>` | One form for each type |
+| `summary` (default) | `summary` | `new summary <area>` | The title and one placeholder. The front matter has `rests-on` with one pin for each item of the frontier of the area, sorted by id. A project template of the type gets the pins too. The area must be a folder under the folder of the layer `requirements` |
 
 The `prd` and `rfc` templates satisfy the required section of an `intent`, because each has a `Problem` or a `Summary` heading. Each embedded template is under 700 bytes, and a test checks it.
 

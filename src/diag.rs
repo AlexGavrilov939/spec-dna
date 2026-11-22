@@ -159,6 +159,11 @@ ApproverAgent = "SD926", "approver-agent", Warning, "Remove the address from `[c
     RecordIncomplete = "SD938", "record-incomplete", Warning, "The record has no answer for a declared invariant, or no entry with the same text for a deviation. The message names the entry to add. An acceptor writes the entry, and commits the record alone. Run `spec-dna accept <slug> --brief` to see the items.";
     DeviationInvalid = "SD939", "deviation-invalid", Warning, "Fix the item of `Deviations` in the plan. Write `- <id> (<kind>): <text>`, where the kind is `plan` or `spec`, and each id is used once.";
     AcceptanceRerun = "SD941", "acceptance-rerun", Warning, "With `[change] approval = \"branch\"`, the record comes after 2 rejected records of the change, and no approval commit of `plan.md` comes after the second. A third run needs the word of the owner: set `status: draft` in `plan.md`, then the approver runs `spec-dna approve <slug> plan`. In a shallow clone, fetch the full history (`fetch-depth: 0`).";
+    SummaryStale = "SD641", "summary-stale", Warning, "A pin of a summary, or of a `system` or `product` document with `rests-on`, no longer holds: the text under it changed, the target was removed or is not active, or the target is no longer in the frontier of the document. Read the item that the message names. Edit the text of the summary so that it states the new meaning, then run `spec-dna refresh <id>`. If the text of the summary still holds, run `spec-dna refresh <id> --holds`: the diff and SD645 show that claim. `refresh` refuses a document whose text did not change, unless it has `--holds`.";
+    SummaryIncomplete = "SD642", "summary-incomplete", Warning, "An item of the frontier of the document has no pin: a new requirement, a requirement that became active, or a new summary of a sub-area. Read the item that the message names. Edit the text of the summary to cover it, then run `spec-dna refresh <id>`. If the text of the summary still holds, run `spec-dna refresh <id> --holds`.";
+    PinInvalid = "SD643", "pin-invalid", Warning, "Fix the pin. Write `<doc-id>#<key>@<16 hex>` for a requirement, or `<doc-id>@<16 hex>` for a document, with the hash that `spec-dna show` prints. A pin names an item below its document: a summary pins the requirements and the summaries of its area, a `system` document pins the summaries, and a `product` document pins the `system` documents. An alias that names more than one document is ambiguous: use the full id. Put `rests-on` only in a summary, a `system` document or a `product` document. Run `spec-dna refresh <id>` to write the pins again.";
+    SummaryNoArea = "SD644", "summary-no-area", Warning, "A summary is the file `<summaries folder>/<area>.md` of an area, and `<requirements folder>/<area>/` must be a folder of the layer `requirements`. Move the summary to the path of an existing area, or delete it. `spec-dna new summary <area>` writes a summary at the right path.";
+    SummaryRepinned = "SD645", "summary-repinned", Warning, "Against the base, the pins of the document changed and its text did not. This is the claim of `spec-dna refresh <id> --holds`: the text still holds. Check that the text still says the truth about the changed items. If it does not, edit it. The finding is a warning that shows the claim, and it needs no other action.";
     DeviationUnresolved = "SD940", "deviation-unresolved", Warning, "A `spec` deviation needs a way to fix the difference. Write `Delta: <verb> <doc-id>#<key>` that names a line of the delta of the spec, or `Follow-up: <slug>` that names a change folder of the tree.";
 }
 
@@ -181,6 +186,14 @@ pub const CUT_HISTORY_FIX: &str = "Fetch the full history (`fetch-depth: 0`) and
 
 /// The fix of SD929 for a record in the folder of the change, before `finish`.
 pub const STALE_BEFORE_FINISH_FIX: &str = "Delete the record, run `spec-dna accept <slug>` again from a new brief, and run `spec-dna finish <slug>` again.";
+
+/// The fix of SD303 for the type `summary` in a project that has a `[layers]`
+/// table and no layer for it (design 0.8.0, D50). A project with no table keeps
+/// the fix of 0.7.1.
+pub const NO_SUMMARY_LAYER_FIX: &str = "Use a type of the root and of the `types` list of spec-dna.toml (without the list: product, system, terms, roadmap, questions, rule, requirements, interface, decision, procedure, incident, research, intent, spec, plan, summary), or add the type to the list. If no layer has the type, run `spec-dna layer add <name> --types <type>`. For the type `summary`, run `spec-dna layer add summaries`. The message names the new type of a type of 0.5.";
+
+/// The part of the message of SD303 that selects `NO_SUMMARY_LAYER_FIX`.
+pub const NO_SUMMARY_LAYER_MARK: &str = "no layer of spec-dna.toml has type `summary`";
 
 /// The fix of SD929 for an archive file, after `finish`.
 pub const STALE_AFTER_FINISH_FIX: &str = "Revert the commit of `finish`, merge the base, run `spec-dna accept <slug>` again from a new brief, and run `spec-dna finish <slug>` again.";
@@ -211,6 +224,7 @@ impl Diag {
         let said = |mark: &str| self.message.contains(mark);
         match self.code {
             Code::RecordEdited if said(crate::acceptance::CUT_MARK) => CUT_HISTORY_FIX,
+            Code::TypeInvalid if said(NO_SUMMARY_LAYER_MARK) => NO_SUMMARY_LAYER_FIX,
             // The message names the place: the fix follows it.
             Code::AcceptanceStale if said(crate::acceptance::STALE_AFTER_FINISH) => {
                 STALE_AFTER_FINISH_FIX

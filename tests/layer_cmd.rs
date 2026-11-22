@@ -680,3 +680,60 @@ fn layer_add_json_and_the_help() {
         "{out}"
     );
 }
+
+#[test]
+fn layer_add_summaries_adds_the_layer_of_the_type_summary() {
+    // Design 0.8.0, D50. The implied graph has no layer `summaries`, so the
+    // file gets the tables of the implied graph first, then the new layer,
+    // which has the type `summary` with no `--types`.
+    let r = Repo::with("");
+    let (code, out, err) = r.run(&["layer", "add", "summaries"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let text = r.text();
+    assert_eq!(text.matches("[layers.").count(), 11, "{text}");
+    assert!(
+        text.ends_with("\n\n[layers.summaries]\ntypes = [\"summary\"]\n"),
+        "{text}"
+    );
+    assert!(
+        out.contains("next: run spec-dna new summary <id> to write the first document"),
+        "{out}"
+    );
+    let (_, list, _) = r.run(&["layer", "list"]);
+    assert!(
+        list.lines()
+            .last()
+            .unwrap()
+            .starts_with("summaries  level 0"),
+        "{list}"
+    );
+    // The layer works: a summary of an area is a file of the layer.
+    let doc = r.dir.join("docs/requirements/valves/closing.md");
+    fs::create_dir_all(doc.parent().unwrap()).unwrap();
+    fs::write(
+        doc,
+        "---\nstatus: active\n---\n# Closing\n\n## Requirements\n\n- **close-on-timeout**: When the sensor stops, the valve SHALL close after 30 seconds.\n",
+    )
+    .unwrap();
+    let (code, out, err) = r.run(&["new", "summary", "valves"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(r.dir.join("docs/summaries/valves.md").is_file());
+    // A second run does not replace the layer.
+    let before = r.text();
+    let (code, _, err) = r.run(&["layer", "add", "summaries"]);
+    assert_eq!(code, 2, "{err}");
+    assert_eq!(r.text(), before);
+}
+
+#[test]
+fn layer_add_summaries_with_its_own_types_keeps_the_types_of_the_user() {
+    // The default type applies only when no option names the content of the
+    // layer.
+    let r = Repo::with("");
+    let (code, out, err) = r.run(&["layer", "add", "summaries", "--types", "research"]);
+    assert_eq!(code, 2, "{out}{err}");
+    let r = Repo::with("");
+    let (code, out, err) = r.run(&["layer", "add", "summaries", "--paths", "docs/summaries/**"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!r.text().contains("types = [\"summary\"]"), "{}", r.text());
+}

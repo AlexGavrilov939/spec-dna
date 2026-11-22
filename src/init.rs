@@ -369,6 +369,11 @@ impl Plan {
                 .custom
                 .as_ref()
                 .map_or_else(|| Graph::implied(&[]), |c| c.0.clone()),
+            // The roll-up is off in `lite` (design 0.8.0, D50): the default
+            // graph that `init` writes has no layer `summaries` there.
+            GraphChoice::Default if self.profile == Profile::Lite => {
+                Graph::default_graph_without_summaries()
+            }
             size => Graph::of_size(size.name()).expect("a size has a graph"),
         }
     }

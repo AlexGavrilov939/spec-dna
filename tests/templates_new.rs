@@ -733,3 +733,142 @@ fn the_key_adds_the_section_to_a_project_template_that_lacks_it_and_keeps_one_th
     assert!(text.contains("- {{A rule.}}"), "{text}");
     assert!(!text.contains("- none"), "{text}");
 }
+
+// The type `summary` (design 0.8.0, D50 and D51). The layer `summaries` is not
+// in the implied graph, so each test declares the layers that it needs.
+
+const SUMMARY_LAYERS: &str = "[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.summaries]\ntypes = [\"summary\"]\n\n";
+
+const CLOSING: &str = "---\nstatus: active\n---\n# Closing\n\n## Requirements\n\n- **close-on-timeout**: When the sensor stops, the valve SHALL close after 30 seconds.\n- **max-angle**: The valve SHALL NOT open more than 80 degrees.\n";
+
+fn summary_repo() -> Repo {
+    let r = Repo::with(
+        SUMMARY_LAYERS,
+        "[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n",
+    );
+    r.write("docs/requirements/valves/closing.md", CLOSING);
+    r.commit("base");
+    r
+}
+
+/// The hash that `show` prints for an id: the text after `h:` on its first line.
+fn shown_hash(r: &Repo, id: &str) -> String {
+    let out = r.run(&["show", id]).1;
+    let first = out.lines().next().unwrap_or("");
+    let at = first
+        .find(" h:")
+        .unwrap_or_else(|| panic!("no hash: {out}"));
+    first[at + 3..]
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_string()
+}
+
+#[test]
+fn new_summary_writes_the_pins_of_the_current_tree_and_a_placeholder_body() {
+    let r = summary_repo();
+    let (code, out, err) = r.run(&["new", "summary", "valves"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.starts_with("wrote docs/summaries/valves.md (summary template)"),
+        "{out}"
+    );
+    let text = r.read("docs/summaries/valves.md");
+    let a = shown_hash(&r, "requirements/valves/closing#close-on-timeout");
+    let b = shown_hash(&r, "requirements/valves/closing#max-angle");
+    assert_eq!(a.len(), 16, "{a}");
+    // The place gives the type. A summary has no status. The pins are sorted
+    // by id, one for each requirement.
+    let want = format!(
+        "---\nrests-on:\n  - requirements/valves/closing#close-on-timeout@{a}\n  - requirements/valves/closing#max-angle@{b}\n---\n# Valves\n\n"
+    );
+    assert!(text.starts_with(&want), "{text}");
+    assert!(
+        !text.contains("type:") && !text.contains("status:"),
+        "{text}"
+    );
+    assert!(text.contains("{{"), "{text}");
+    assert!(text.len() < 700, "{} bytes", text.len());
+    // Until an agent writes the text, SD306 reports the placeholder. The pins
+    // hold, and the form is right.
+    r.commit("summary");
+    let out = r.run(&["check", "--all"]).1;
+    assert!(out.contains("SD306"), "{out}");
+    for bad in [
+        "SD303", "SD304", "SD305", "SD641", "SD642", "SD643", "SD644",
+    ] {
+        assert!(!out.contains(bad), "{bad}: {out}");
+    }
+}
+
+#[test]
+fn new_summary_of_an_area_with_no_folder_is_a_usage_error_and_writes_nothing() {
+    let r = summary_repo();
+    let (code, out, err) = r.run(&["new", "summary", "nope"]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(err.contains("requirements/nope"), "{err}");
+    assert!(!r.exists("docs/summaries/nope.md"));
+    // A folder of any depth is an area. The summary of a deeper area is a
+    // deeper file, and the summary of the parent pins it, not its requirements.
+    r.write(
+        "docs/requirements/valves/drives/motor.md",
+        "---\nstatus: active\n---\n# Motor\n\n## Requirements\n\n- **spin-up**: The motor SHALL reach full speed in 2 seconds.\n",
+    );
+    let (code, out, err) = r.run(&["new", "summary", "valves/drives"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let drives = r.read("docs/summaries/valves/drives.md");
+    assert!(
+        drives.contains("  - requirements/valves/drives/motor#spin-up@"),
+        "{drives}"
+    );
+    assert!(drives.contains("# Drives\n"), "{drives}");
+    let (code, out, err) = r.run(&["new", "summary", "valves"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let valves = r.read("docs/summaries/valves.md");
+    assert!(
+        valves.contains("  - requirements/valves/closing#max-angle@"),
+        "{valves}"
+    );
+    assert!(valves.contains("  - summaries/valves/drives@"), "{valves}");
+    assert!(!valves.contains("motor"), "{valves}");
+    // An existing file is not replaced.
+    let (code, _, err) = r.run(&["new", "summary", "valves"]);
+    assert_eq!(code, 2, "{err}");
+    assert_eq!(r.read("docs/summaries/valves.md"), valves);
+}
+
+#[test]
+fn new_summary_without_the_layer_names_the_command_that_adds_it() {
+    // The implied graph has no layer `summaries` (P5): a folder `summaries/`
+    // of a 0.7.1 project can hold documents of another type.
+    let r = Repo::mixed();
+    r.write("docs/requirements/valves.md", CLOSING);
+    let (code, out, err) = r.run(&["new", "summary", "valves"]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(err.contains("layer add summaries"), "{err}");
+    assert!(!r.exists("docs/summaries/valves.md"));
+}
+
+#[test]
+fn a_project_template_of_a_summary_gets_the_pins_too() {
+    let r = summary_repo();
+    r.write(
+        "docs/templates/summary.md",
+        "---\ntype: summary\n---\n# Title\n\n{{What the area does.}}\n",
+    );
+    r.write(
+        "spec-dna.toml",
+        &format!(
+            "spec-dna = \"{VERSION}\"\n{SUMMARY_LAYERS}[templates]\ndir = \"docs/templates\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n"
+        ),
+    );
+    let (code, out, err) = r.run(&["new", "summary", "valves"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let text = r.read("docs/summaries/valves.md");
+    assert!(
+        text.starts_with("---\nrests-on:\n  - requirements/valves/closing#close-on-timeout@"),
+        "{text}"
+    );
+    assert!(text.contains("{{What the area does.}}"), "{text}");
+}
