@@ -115,6 +115,7 @@ pub const BRAINSTORM_SPECIFY: &[PackEval] = &[
         max_turns: 20,
         max_budget_usd: 1.5,
         branch: Some("feature/report-cache"),
+        change: None,
         checks: &[
             ("intent-written", written!("report-cache")),
             (
@@ -148,6 +149,7 @@ pub const BRAINSTORM_SPECIFY: &[PackEval] = &[
         max_turns: 20,
         max_budget_usd: 1.5,
         branch: Some("feature/weekly-mail"),
+        change: None,
         checks: &[
             ("intent-written", written!("weekly-mail")),
             (
@@ -197,6 +199,7 @@ pub const BRAINSTORM_SPECIFY: &[PackEval] = &[
         max_turns: 20,
         max_budget_usd: 1.5,
         branch: Some("feature/cent-drift"),
+        change: None,
         checks: &[
             ("intent-written", written!("cent-drift")),
             ("no-placeholder", no_placeholder!("cent-drift")),
@@ -228,6 +231,7 @@ pub const BRAINSTORM_SPECIFY: &[PackEval] = &[
         max_turns: 20,
         max_budget_usd: 1.5,
         branch: Some("feature/bin-page"),
+        change: None,
         checks: &[
             ("intent-written", written!("bin-page")),
             ("no-placeholder", no_placeholder!("bin-page")),
@@ -261,6 +265,7 @@ pub const BRAINSTORM_SPECIFY: &[PackEval] = &[
         max_turns: 20,
         max_budget_usd: 1.5,
         branch: Some("feature/reorder-mail"),
+        change: None,
         checks: &[
             ("intent-written", written!("reorder-mail")),
             ("no-placeholder", no_placeholder!("reorder-mail")),
@@ -301,6 +306,7 @@ pub const BRAINSTORM_SPECIFY: &[PackEval] = &[
         max_turns: 25,
         max_budget_usd: 2.0,
         branch: Some("feature/threshold-10"),
+        change: None,
         checks: &[
             (
                 "spec-written",
@@ -341,6 +347,7 @@ pub const BRAINSTORM_SPECIFY: &[PackEval] = &[
         max_turns: 25,
         max_budget_usd: 2.0,
         branch: Some("feature/order-retention"),
+        change: None,
         checks: &[
             (
                 "spec-written",
@@ -381,6 +388,7 @@ pub const BRAINSTORM_SPECIFY: &[PackEval] = &[
         max_turns: 25,
         max_budget_usd: 2.0,
         branch: Some("feature/items-csv"),
+        change: None,
         checks: &[
             ("spec-written", r##"[ -f docs/intent/items-csv/spec.md ]"##),
             (
@@ -422,6 +430,7 @@ pub const BRAINSTORM_SPECIFY: &[PackEval] = &[
         max_turns: 25,
         max_budget_usd: 2.0,
         branch: Some("feature/audit-file"),
+        change: None,
         checks: &[
             ("spec-written", r##"[ -f docs/intent/audit-file/spec.md ]"##),
             (
@@ -467,6 +476,7 @@ pub const BRAINSTORM_SPECIFY: &[PackEval] = &[
         max_turns: 25,
         max_budget_usd: 2.0,
         branch: Some("feature/retention-and-report"),
+        change: None,
         checks: &[
             (
                 "spec-written",
@@ -511,6 +521,7 @@ pub const CLARIFY_WRITE_PLAN: &[PackEval] = &[
         max_turns: 20,
         max_budget_usd: 1.5,
         branch: Some("feature/threshold-10"),
+        change: None,
         checks: &[
             (
                 "none-open",
@@ -555,6 +566,7 @@ pub const CLARIFY_WRITE_PLAN: &[PackEval] = &[
         max_turns: 20,
         max_budget_usd: 1.5,
         branch: Some("feature/order-retention"),
+        change: None,
         checks: &[
             (
                 "two-closed",
@@ -599,6 +611,7 @@ pub const CLARIFY_WRITE_PLAN: &[PackEval] = &[
         max_turns: 20,
         max_budget_usd: 1.5,
         branch: Some("feature/items-csv"),
+        change: None,
         checks: &[
             (
                 "none-unboxed",
@@ -643,6 +656,7 @@ pub const CLARIFY_WRITE_PLAN: &[PackEval] = &[
         max_turns: 20,
         max_budget_usd: 1.5,
         branch: Some("feature/audit-file"),
+        change: None,
         checks: &[
             (
                 "none-open",
@@ -687,6 +701,7 @@ pub const CLARIFY_WRITE_PLAN: &[PackEval] = &[
         max_turns: 20,
         max_budget_usd: 1.5,
         branch: Some("feature/retention-and-report"),
+        change: None,
         checks: &[
             (
                 "none-unboxed",
@@ -727,6 +742,7 @@ pub const CLARIFY_WRITE_PLAN: &[PackEval] = &[
         max_turns: 25,
         max_budget_usd: 2.0,
         branch: Some("feature/bin-labels"),
+        change: None,
         checks: &[
             ("plan-written", r##"[ -f docs/intent/bin-labels/plan.md ]"##),
             (
@@ -772,6 +788,7 @@ pub const CLARIFY_WRITE_PLAN: &[PackEval] = &[
         max_turns: 25,
         max_budget_usd: 2.0,
         branch: Some("feature/export-csv"),
+        change: None,
         checks: &[
             ("plan-written", r##"[ -f docs/intent/export-csv/plan.md ]"##),
             (
@@ -821,6 +838,7 @@ pub const CLARIFY_WRITE_PLAN: &[PackEval] = &[
         max_turns: 25,
         max_budget_usd: 2.0,
         branch: Some("feature/importers-update"),
+        change: None,
         checks: &[
             (
                 "plan-written",
@@ -869,6 +887,7 @@ pub const CLARIFY_WRITE_PLAN: &[PackEval] = &[
         max_turns: 25,
         max_budget_usd: 2.0,
         branch: Some("feature/reorder-note"),
+        change: None,
         checks: &[
             (
                 "plan-written",
@@ -917,6 +936,7 @@ pub const CLARIFY_WRITE_PLAN: &[PackEval] = &[
         max_turns: 25,
         max_budget_usd: 2.0,
         branch: Some("feature/audit-split"),
+        change: None,
         checks: &[
             (
                 "plan-written",
@@ -973,6 +993,7 @@ pub const REVIEW_FINISH: &[PackEval] = &[
         max_turns: 25,
         max_budget_usd: 2.0,
         branch: Some("feature/review-1"),
+        change: None,
         checks: &[
             ("out-written", r##"[ -s REVIEW-OUT.md ]"##),
             ("finds-bug", r##"grep -Eqi 'remove_item' REVIEW-OUT.md"##),
@@ -1011,6 +1032,7 @@ pub const REVIEW_FINISH: &[PackEval] = &[
         max_turns: 25,
         max_budget_usd: 2.0,
         branch: Some("feature/review-2"),
+        change: None,
         checks: &[
             ("out-written", r##"[ -s REVIEW-OUT.md ]"##),
             ("finds-bug", r##"grep -Eqi 'count_bin' REVIEW-OUT.md"##),
@@ -1049,6 +1071,7 @@ pub const REVIEW_FINISH: &[PackEval] = &[
         max_turns: 25,
         max_budget_usd: 2.0,
         branch: Some("feature/review-3"),
+        change: None,
         checks: &[
             ("out-written", r##"[ -s REVIEW-OUT.md ]"##),
             ("finds-bug", r##"grep -Eqi 'tail|header' REVIEW-OUT.md"##),
@@ -1087,6 +1110,7 @@ pub const REVIEW_FINISH: &[PackEval] = &[
         max_turns: 25,
         max_budget_usd: 2.0,
         branch: Some("feature/review-4"),
+        change: None,
         checks: &[
             ("out-written", r##"[ -s REVIEW-OUT.md ]"##),
             ("finds-bug", r##"grep -Eqi 'stock_total' REVIEW-OUT.md"##),
@@ -1125,6 +1149,7 @@ pub const REVIEW_FINISH: &[PackEval] = &[
         max_turns: 25,
         max_budget_usd: 2.0,
         branch: Some("feature/review-5"),
+        change: None,
         checks: &[
             ("out-written", r##"[ -s REVIEW-OUT.md ]"##),
             ("finds-bug", r##"grep -Eqi 'bin_of' REVIEW-OUT.md"##),
@@ -1167,6 +1192,7 @@ pub const REVIEW_FINISH: &[PackEval] = &[
         max_turns: 20,
         max_budget_usd: 1.5,
         branch: Some("feature/low-stock-10"),
+        change: None,
         checks: &[
             (
                 "folder-gone",
@@ -1203,6 +1229,7 @@ pub const REVIEW_FINISH: &[PackEval] = &[
         max_turns: 20,
         max_budget_usd: 1.5,
         branch: Some("feature/low-stock-10"),
+        change: None,
         checks: &[
             (
                 "folder-gone",
@@ -1239,6 +1266,7 @@ pub const REVIEW_FINISH: &[PackEval] = &[
         max_turns: 20,
         max_budget_usd: 1.5,
         branch: Some("feature/low-stock-10"),
+        change: None,
         checks: &[
             (
                 "folder-gone",
@@ -1279,6 +1307,7 @@ pub const REVIEW_FINISH: &[PackEval] = &[
         max_turns: 20,
         max_budget_usd: 1.5,
         branch: Some("feature/audit-file"),
+        change: None,
         checks: &[
             ("note-written", r##"[ -s FINISH-NOTE.md ]"##),
             (
@@ -1304,6 +1333,7 @@ pub const REVIEW_FINISH: &[PackEval] = &[
         max_turns: 20,
         max_budget_usd: 1.5,
         branch: Some("feature/low-stock-10"),
+        change: None,
         checks: &[
             ("note-written", r##"[ -s FINISH-NOTE.md ]"##),
             (
@@ -1333,6 +1363,7 @@ pub const POST_MORTEM: &[PackEval] = &[
         max_turns: 25,
         max_budget_usd: 2.0,
         branch: Some("feature/sync-dedupe"),
+        change: None,
         checks: &[
             (
                 "intent-written",
@@ -1377,6 +1408,7 @@ pub const POST_MORTEM: &[PackEval] = &[
         max_turns: 25,
         max_budget_usd: 2.0,
         branch: Some("feature/sync-dedupe"),
+        change: None,
         checks: &[
             (
                 "intent-written",
@@ -1421,6 +1453,7 @@ pub const POST_MORTEM: &[PackEval] = &[
         max_turns: 25,
         max_budget_usd: 2.0,
         branch: Some("feature/audit-sync"),
+        change: None,
         checks: &[
             (
                 "intent-written",
@@ -1465,6 +1498,7 @@ pub const POST_MORTEM: &[PackEval] = &[
         max_turns: 25,
         max_budget_usd: 2.0,
         branch: Some("feature/sync-dedupe"),
+        change: None,
         checks: &[
             (
                 "intent-written",
@@ -1509,6 +1543,7 @@ pub const POST_MORTEM: &[PackEval] = &[
         max_turns: 25,
         max_budget_usd: 2.0,
         branch: Some("feature/sync-dedupe"),
+        change: None,
         checks: &[
             (
                 "intent-written",

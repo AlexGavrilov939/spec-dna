@@ -782,7 +782,17 @@ fn copy_files(dir: &Path, files: &[(PathBuf, String)]) -> Result<(), Fatal> {
             fs::create_dir_all(parent)
                 .map_err(|e| Fatal::Io(format!("cannot copy `{rel}`: {e}")))?;
         }
-        fs::copy(src, &dst).map_err(|e| Fatal::Io(format!("cannot copy `{rel}`: {e}")))?;
+        // A copy with `fs::copy` keeps the time of the source. A file of the
+        // change that has the size and the time of the file of the fixture (a
+        // ticked box has the same size) then looks unchanged to git, and
+        // `git add -A` drops it from the change commit. A new write gives the
+        // file the time of now.
+        let bytes = fs::read(src).map_err(|e| Fatal::Io(format!("cannot copy `{rel}`: {e}")))?;
+        fs::write(&dst, bytes).map_err(|e| Fatal::Io(format!("cannot copy `{rel}`: {e}")))?;
+        // The mode of the source (a script keeps its execute bit).
+        if let Ok(meta) = fs::metadata(src) {
+            let _ = fs::set_permissions(&dst, meta.permissions());
+        }
     }
     Ok(())
 }

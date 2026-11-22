@@ -362,6 +362,15 @@ fn the_agents_line_evals_fail_on_the_fixture_and_pass_with_the_reference_solutio
     prove_n("agents-line", 2);
 }
 
+/// Design 0.8.0, D62: the 5 evals `accept-1` to `accept-5`. The reference solution
+/// runs the real `spec-dna accept` on the copy, so a fixture that the command
+/// refuses fails here, and the record that it fills passes the oracle. A wrong
+/// record fails one named check.
+#[test]
+fn the_accept_evals_fail_on_the_fixture_and_pass_with_the_reference_solution() {
+    prove("accept");
+}
+
 /// The number after `"<key>": ` in the text of an eval file.
 fn number(text: &str, key: &str) -> f64 {
     let at = text
@@ -472,5 +481,119 @@ fn the_task_of_an_execute_eval_names_no_rule_of_its_skill() {
         if ["execute-7", "execute-9", "execute-10"].contains(&id.as_str()) {
             assert!(task.contains("tick of its box"), "{id}: {task}");
         }
+    }
+}
+
+/// The stub of the rehearsal of `eval run --ab accept`: it does the work of the
+/// reference record of the eval that its copy belongs to. The slug of the change
+/// names the eval.
+const STUB_AB: &str = r#"#!/bin/sh
+if [ "$1" = "--version" ]; then echo "2.1.325 (Claude Code)"; exit 0; fi
+slug=$(ls docs/intent | head -1)
+case "$slug" in
+    bulk-discount) id=accept-1 ;;
+    order-export) id=accept-2 ;;
+    partial-refund) id=accept-3 ;;
+    item-sync) id=accept-4 ;;
+    parcel-fee) id=accept-5 ;;
+    *) echo "unknown change $slug" >&2; exit 9 ;;
+esac
+SOL="$SOLROOT/$id/reference"
+export SOL
+sh "$SOL/solve.sh" || { echo "the solution failed" >&2; exit 9; }
+echo '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.1,"num_turns":4,"result":"ok"}'
+"#;
+
+/// Design 0.8.0, D62: the paid run of `eval run --ab accept --harness lean` has
+/// 10 sides for 1 run. With the real pack and the reference record of each eval,
+/// each side of each arm passes each check, so a paid run measures the agent and
+/// not the copy. The arm `without` has the review of 0.7.1 and no agent file.
+#[test]
+fn the_real_pack_runs_in_both_arms_of_ab_accept_and_the_reference_record_passes_each_check() {
+    let lab = Lab::new();
+    let bin = stub_bin(&lab.tmp.dir.join("bin-ab"), "claude", STUB_AB);
+    let path = path_with(bin.parent().unwrap());
+    let tmp = lab.tmp.dir.join("tmp-ab");
+    fs::create_dir_all(&tmp).unwrap();
+    let tmp = tmp.to_string_lossy().into_owned();
+    let root = solutions().to_string_lossy().into_owned();
+    let set = [
+        ("PATH", path.as_str()),
+        ("TMPDIR", tmp.as_str()),
+        ("SOLROOT", root.as_str()),
+        ("SPEC_DNA_EVAL_BACKOFF", "0"),
+        ("GIT_AUTHOR_NAME", "agent"),
+        ("GIT_AUTHOR_EMAIL", "agent@example.invalid"),
+        ("GIT_COMMITTER_NAME", "agent"),
+        ("GIT_COMMITTER_EMAIL", "agent@example.invalid"),
+        ("GIT_CONFIG_GLOBAL", "/dev/null"),
+        ("GIT_CONFIG_NOSYSTEM", "1"),
+    ];
+    let (code, out, err) = lab.repo.run_env(
+        &[
+            "eval",
+            "run",
+            "--ab",
+            "accept",
+            "--harness",
+            "lean",
+            "--runs",
+            "1",
+            "--max-total-usd",
+            "50",
+            "--json",
+        ],
+        &set,
+        &[],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("\"target\":\"accept\""), "{out}");
+    assert!(!out.contains("\"passed\":false"), "{out}");
+    assert!(!out.contains("\"claude_exit\":9"), "{out}{err}");
+    // 5 evals, 2 arms: a side passes, and so does each of its checks: 4 checks
+    // in the evals 1 to 4 and 2 in the control.
+    let passed = out.matches("\"passed\":true").count();
+    assert_eq!(passed, 2 * (4 * (1 + 4) + (1 + 2)), "{out}");
+    assert_eq!(out.matches("\"claude_exit\":0").count(), 10, "{out}");
+}
+
+/// Design 0.8.0, D62: at the start of the agent, the copy of each eval `accept-<n>`
+/// has the whole change in its commit: the commit lists the plan with its ticked
+/// box and the 2 files of the code, the tree is clean, and `spec-dna accept` does
+/// not refuse. A file of the change that git took for unchanged (the same size and
+/// the same time as the file of the fixture) would give an empty or partial diff
+/// and a refusal that no reference record shows.
+#[test]
+fn the_copy_of_each_accept_eval_has_the_whole_change_in_its_commit_and_a_clean_tree() {
+    let lab = Lab::new();
+    let facts = solutions().join("accept-facts");
+    let slugs = [
+        ("accept-1", "bulk-discount"),
+        ("accept-2", "order-export"),
+        ("accept-3", "partial-refund"),
+        ("accept-4", "item-sync"),
+        ("accept-5", "parcel-fee"),
+    ];
+    for (id, slug) in slugs {
+        let (exit, _) = lab.run(id, &facts);
+        assert_eq!(exit, 0, "{id}");
+        let text = fs::read_to_string(lab.tmp.dir.join(format!("tmp/facts-{slug}")))
+            .unwrap_or_else(|e| panic!("{id}: no facts: {e}"));
+        let fact = |key: &str| -> String {
+            text.lines()
+                .find_map(|l| l.strip_prefix(&format!("{key}=")))
+                .unwrap_or_else(|| panic!("{id}: no {key} in {text}"))
+                .trim()
+                .to_string()
+        };
+        assert_eq!(
+            fact("stat"),
+            "1",
+            "{id}: the plan is not in the commit: {text}"
+        );
+        assert_eq!(fact("files"), "3", "{id}: {text}");
+        assert_eq!(fact("ticked"), "1", "{id}: {text}");
+        assert_eq!(fact("dirty"), "0", "{id}: the tree is not clean: {text}");
+        assert_eq!(fact("accept"), "0", "{id}: `accept` refuses: {text}");
     }
 }

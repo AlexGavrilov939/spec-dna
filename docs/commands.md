@@ -1102,7 +1102,7 @@ spec-dna index <dir or file> [--replace]
 
 ```text
 spec-dna eval run [<id>...] [--runs <n>] [--min-pass-rate <r>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate] [--harness <arm>]
-spec-dna eval run --ab <skill|all|agents-line> [--harness <arm>] [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate | --no-isolate] [--resume <result file>] [--json]
+spec-dna eval run --ab <skill|all|agents-line|accept> [--harness <arm>] [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate | --no-isolate] [--resume <result file>] [--json]
 spec-dna eval run --arms <arm>,<arm>[,<arm>] [<id>...] [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--resume <result file>] [--json]
 spec-dna eval pack
 spec-dna eval verdict [--release] [--json]
@@ -1138,7 +1138,7 @@ spec-dna itself makes no network call. `claude` makes network calls, and each ru
 | --- | --- |
 | 0 | The pass rate is at least `min-pass-rate`. Also `--dry-run` |
 | 1 | The pass rate is lower |
-| 2 | Usage error: a bad option value, an unknown id, `--out` that is `[evals] dir`, or no `run` subcommand. Also an unknown harness arm, 1 arm or more than 3 with `--arms`, `--arms` with `--ab`, and `--no-isolate` with `--arms` or `--harness` |
+| 2 | Usage error: a bad option value, an unknown id, `--out` that is `[evals] dir`, or no `run` subcommand. Also an unknown harness arm, 1 arm or more than 3 with `--arms`, `--arms` with `--ab`, `--no-isolate` with `--arms` or `--harness`, the target `accept` with no harness arm (`--harness lean`, `lean-no-advisor` or `full`), and the target `accept` when `python3` has no module `tomllib` |
 | 3 | No `[evals]` table, an invalid eval file (also `change` with no `branch`), no eval, an absent `check.sh`, a different version pin, an estimate above the cap, a stop by the cap, or a `claude` that is absent or cannot start |
 | 4 | A git or file error of `eval run` itself: the temporary folder, the copy, the base commit, the commit of the change or the result file |
 
@@ -1146,7 +1146,7 @@ A plain `eval run` with `--harness` keeps the meaning of exit code 1: the pass r
 
 ### eval run --ab
 
-`eval run --ab <target>` measures a skill against no skill ([ADR 0016](adr/0016-skill-evals.md)). The target is a skill, `all` or `agents-line`. It reads the pack in `<[evals] dir>/pack/`, runs each eval in the arms `with` and `without` in pairs, and writes `<[evals] dir>/results/skills-<YYYYMMDD>T<HHMMSS>Z.json` (or the folder of `--out`). The result has the pass rates, the costs, the difference and the cost ratio with a 90% interval, and a verdict. [evals.md](evals.md#the-pack-and-the-measure-of-a-skill) gives the arms, the rules of the verdict and the result file.
+`eval run --ab <target>` measures a skill against no skill ([ADR 0016](adr/0016-skill-evals.md)). The target is a skill, `all`, `agents-line` or `accept` (the 5 evals of the acceptance record). The target `accept` needs a harness arm and `python3` with `tomllib`. Both arms have the same tools, with no tool `Agent`, and its result decides no verdict ([evals.md](evals.md#the-evals-of-the-acceptance-record)). `--ab` and `--arms` print the pin that they write into the copies on the standard error. It reads the pack in `<[evals] dir>/pack/`, runs each eval in the arms `with` and `without` in pairs, and writes `<[evals] dir>/results/skills-<YYYYMMDD>T<HHMMSS>Z.json` (or the folder of `--out`). The result has the pass rates, the costs, the difference and the cost ratio with a 90% interval, and a verdict. [evals.md](evals.md#the-pack-and-the-measure-of-a-skill) gives the arms, the rules of the verdict and the result file.
 
 `--ab` accepts `--runs`, `--max-total-usd`, `--out`, `--dry-run`, `--json`, `--isolate` (the default), `--no-isolate` and `--resume <result file>`. `--resume` goes on in a result file of the same target: it skips the pairs that the file holds, and it writes one merged file. `--resume <file> --runs <n>` with `n` above the `runs` of the file adds runs to each eval. SIGHUP, SIGINT and SIGTERM write the partial result, with `"stopped": "interrupted"`, and exit with 129, 130 and 143. The result has the key `runs`. `--resume` rejects a lower `--runs`, and `--runs` with a file that kept the runs of each eval. An estimate above the cap does not stop the command: it prints a note and starts, and the check before each run stops it at the cap. `--dry-run` prints the estimate also when it is above the cap, and exits with 0. `--min-pass-rate` with `--ab` is a usage error. `--ab` needs `<[evals] dir>/check.sh`. An attempt that the API refuses (401, 403, 429, a 5xx status or a page of Cloudflare) is excluded: no result counts it, and the runner tries it again after 60, 120, 240, 480, 960 and 1,920 seconds. The variable `SPEC_DNA_EVAL_BACKOFF` (an integer from 0 to 3,600) sets the first wait in seconds. After the last wait, the command stops with `"stopped": "api-error"` and writes the partial result.
 
@@ -1174,7 +1174,7 @@ A stop by the cap keeps the complete waves. The command accepts `--runs`, `--max
 
 ### eval pack
 
-`eval pack` writes the 57 evals of the pack and their fixtures to `<[evals] dir>/pack/`. It writes each file once, and it keeps each file that exists. The output has one line `wrote <path>` or `kept <path>` for each file. With `--json` it prints `{"written":[...],"kept":[...]}`. Exit code 0, 3 for no `[evals]` table, or 4 for a write error. It takes no argument and no other option.
+`eval pack` writes the 62 evals of the pack and their fixtures to `<[evals] dir>/pack/`. It writes each file once, and it keeps each file that exists. The output has one line `wrote <path>` or `kept <path>` for each file. With `--json` it prints `{"written":[...],"kept":[...]}`. Exit code 0, 3 for no `[evals]` table, or 4 for a write error. It takes no argument and no other option.
 
 ### eval verdict
 

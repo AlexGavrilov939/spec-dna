@@ -1,6 +1,7 @@
 //! `spec-dna eval pack`: the evals that measure each skill (ADR 0016, design
-//! D32 and D35). The pack has 5 evals for each of 11 skills and 2 evals of
-//! the pair `agents-line`, 57 in total,
+//! D32 and D35). The pack has 5 evals for each of 11 skills, 2 evals of
+//! the pair `agents-line` and the 5 evals `accept-1` to `accept-5` of the
+//! acceptance record (D62), 62 in total,
 //! with small fixtures that hold no data of a consumer project (rule zero).
 //! The command writes each eval as `<[evals] dir>/pack/<id>.json`, and the
 //! files of its fixture below `<[evals] dir>/pack/fixtures/<id>/`. It writes a
@@ -12,8 +13,9 @@
 //! `VERIFY`, `DEBUG`, `BRAINSTORM_SPECIFY`, `CLARIFY_WRITE_PLAN`,
 //! `REVIEW_FINISH` or `POST_MORTEM`). The module needs no other change. The
 //! 10 evals of `tdd` and `debug` are in the sibling file `eval_pack_pilot.rs`,
-//! the 5 of `execute` are in `eval_pack_execute.rs`, and the 5 of `verify` and
-//! the 2 of `agents-line` are in `eval_pack_harder.rs`, with their fixtures.
+//! the 5 of `execute` are in `eval_pack_execute.rs`, the 5 of `verify` and
+//! the 2 of `agents-line` are in `eval_pack_harder.rs`, and the 5 of the
+//! acceptance record are in `eval_pack_accept.rs`, with their fixtures.
 //! Each of them has a reference solution and wrong solutions in
 //! `tests/fixtures/eval-solutions/<id>/`, and `tests/eval_pack_pilot/mod.rs`
 //! runs them with a stub `claude`. The evals of `brainstorm` are in
@@ -25,7 +27,8 @@
 //!   `agents-line` uses `tdd-1`, `debug-1`, `execute-10`, `agents-line-1` and
 //!   `agents-line-2`.
 //! - `files` are the files of the fixture: the path in the project and the
-//!   text. The text `{{VERSION}}` becomes the version of the binary, so a
+//!   text. `change` (optional, D60) holds the files of a commit on `branch`
+//!   that the runner makes after the base commit. The text `{{VERSION}}` becomes the version of the binary, so a
 //!   fixture pins the version that wrote it. The runner also writes the
 //!   version of the running binary into the pin line of `spec-dna.toml`.
 //! - A check is a shell command. It runs in the copy after the agent ends, and
@@ -56,6 +59,10 @@ pub struct PackEval {
     pub max_turns: u32,
     pub max_budget_usd: f64,
     pub branch: Option<&'static str>,
+    /// The files of the change (D60): the path in the project and the text.
+    /// The runner copies them over the copy and commits them on `branch`.
+    /// `write` puts them in `<dir>/pack/changes/<id>/`.
+    pub change: Option<&'static [(&'static str, &'static str)]>,
     /// The name and the shell command of each check.
     pub checks: &'static [(&'static str, &'static str)],
     /// The files of the fixture: the path and the text.
@@ -88,6 +95,11 @@ mod execute;
 #[path = "eval_pack_harder.rs"]
 mod harder;
 
+/// The 5 evals of the acceptance record: `accept-1` to `accept-5`. Their key
+/// `skill` is `review` (design 0.8.0, D62 and D71).
+#[path = "eval_pack_accept.rs"]
+mod accept;
+
 /// Group of `execute`: `execute-6` to `execute-10`.
 static EXECUTE: &[PackEval] = execute::EXECUTE;
 /// Group of `tdd`.
@@ -104,6 +116,9 @@ static BRAINSTORM_SPECIFY: &[PackEval] = crate::eval_pack_rest::BRAINSTORM_SPECI
 static CLARIFY_WRITE_PLAN: &[PackEval] = crate::eval_pack_rest::CLARIFY_WRITE_PLAN;
 /// Group of t16: `review` and `finish`.
 static REVIEW_FINISH: &[PackEval] = crate::eval_pack_rest::REVIEW_FINISH;
+/// The 5 evals of the acceptance record. The id is `accept-<n>`, the skill is
+/// `review`.
+static ACCEPT: &[PackEval] = accept::ACCEPT;
 /// Group of t17: `post-mortem`.
 static POST_MORTEM: &[PackEval] = crate::eval_pack_rest::POST_MORTEM;
 
@@ -117,6 +132,7 @@ pub fn all() -> Vec<&'static PackEval> {
         BRAINSTORM_SPECIFY,
         CLARIFY_WRITE_PLAN,
         REVIEW_FINISH,
+        ACCEPT,
         POST_MORTEM,
         AGENTS_LINE_OWN,
     ]
@@ -140,6 +156,9 @@ pub fn eval_json(e: &PackEval, dir: &str) -> String {
         .str("fixture", &format!("{dir}/pack/fixtures/{}", e.id));
     if let Some(b) = e.branch {
         obj = obj.str("branch", b);
+    }
+    if e.change.is_some() {
+        obj = obj.str("change", &format!("{dir}/pack/changes/{}", e.id));
     }
     let compact = obj
         .strs("allowed-tools", &tools)
@@ -167,6 +186,12 @@ pub fn write(repo: &Repo, dir: &str, evals: &[&PackEval]) -> Result<Written, Fat
         for (path, text) in e.files {
             files.push((
                 format!("{dir}/pack/fixtures/{}/{path}", e.id),
+                text.replace("{{VERSION}}", crate::adapters::VERSION),
+            ));
+        }
+        for (path, text) in e.change.unwrap_or(&[]) {
+            files.push((
+                format!("{dir}/pack/changes/{}/{path}", e.id),
                 text.replace("{{VERSION}}", crate::adapters::VERSION),
             ));
         }
@@ -218,6 +243,11 @@ mod tests {
         }
     }
 
+    /// The skill of a group: the group `accept` measures the skill `review`.
+    fn group_skill(group: &str) -> &str {
+        if group == "accept" { "review" } else { group }
+    }
+
     #[test]
     fn each_eval_of_the_pack_is_valid_for_the_runner_and_sd506() {
         let evals = all();
@@ -226,17 +256,19 @@ mod tests {
             let text = eval_json(e, "evals");
             let parsed = crate::evals::parse_eval(e.id, text.as_bytes(), &table(), &|p| {
                 p == format!("evals/pack/fixtures/{}", e.id)
+                    || (e.change.is_some() && p == format!("evals/pack/changes/{}", e.id))
             })
             .unwrap_or_else(|err| panic!("{}: {}", e.id, err.message));
             assert_eq!(parsed.skill.as_deref(), Some(e.skill), "{}", e.id);
             assert_eq!(parsed.runs, RUNS, "{}", e.id);
             assert!(!e.files.is_empty(), "{}: no fixture file", e.id);
-            // The id is `<group>-<n>`. The group is a skill, or `agents-line`.
+            // The id is `<group>-<n>`. The group is a skill, `agents-line`, or
+            // `accept`, whose evals have the skill `review` (D62).
             let (group, n) = e.id.rsplit_once('-').unwrap();
-            assert_eq!(group, e.skill, "{}", e.id);
+            assert_eq!(group_skill(group), e.skill, "{}", e.id);
             assert!(n.parse::<u32>().is_ok_and(|n| n >= 1), "{}", e.id);
             assert!(
-                Skill::from_key(group).is_some() || group == "agents-line",
+                Skill::from_key(group).is_some() || ["agents-line", "accept"].contains(&group),
                 "{}",
                 e.id
             );
@@ -250,7 +282,7 @@ mod tests {
         ids.sort_unstable();
         ids.dedup();
         assert_eq!(ids.len(), n, "an id is twice in the pack");
-        let groups: [(&[PackEval], &[&str]); 9] = [
+        let groups: [(&[PackEval], &[&str]); 10] = [
             (EXECUTE, &["execute"]),
             (TDD, &["tdd"]),
             (VERIFY, &["verify"]),
@@ -259,6 +291,7 @@ mod tests {
             (BRAINSTORM_SPECIFY, &["brainstorm", "specify"]),
             (CLARIFY_WRITE_PLAN, &["clarify", "write-plan"]),
             (REVIEW_FINISH, &["review", "finish"]),
+            (ACCEPT, &["review"]),
             (POST_MORTEM, &["post-mortem"]),
         ];
         for (group, skills) in groups {
@@ -297,15 +330,33 @@ mod tests {
     }
 
     #[test]
-    fn the_pack_has_5_evals_for_each_skill_and_2_of_agents_line() {
+    fn the_pack_has_5_evals_for_each_skill_2_of_agents_line_and_5_of_accept() {
         let evals = all();
-        assert_eq!(evals.len(), 57);
-        // The evals of the steps of the record in `review` are the work of D62
-        // (design 0.8.0), so the pack has the 5 evals of 0.7.1 for it.
+        assert_eq!(evals.len(), 62);
+        // The group of a skill is the prefix of the id. The 5 evals `accept-1`
+        // to `accept-5` have the skill `review` (D62), so the skill `review`
+        // has 10 evals and its group has 5.
+        let in_group = |g: &str| {
+            evals
+                .iter()
+                .filter(|e| e.id.rsplit_once('-').unwrap().0 == g)
+                .count()
+        };
         for skill in Skill::ALL {
-            let n = evals.iter().filter(|e| e.skill == skill.key()).count();
-            assert_eq!(n, 5, "{}", skill.key());
+            assert_eq!(in_group(skill.key()), 5, "{}", skill.key());
+            let by_skill = evals.iter().filter(|e| e.skill == skill.key()).count();
+            assert_eq!(by_skill, if skill.key() == "review" { 10 } else { 5 });
         }
+        assert_eq!(in_group("accept"), 5);
+        let accept: Vec<&str> = evals
+            .iter()
+            .filter(|e| e.id.starts_with("accept-"))
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(
+            accept,
+            ["accept-1", "accept-2", "accept-3", "accept-4", "accept-5"]
+        );
         let own: Vec<&str> = evals
             .iter()
             .filter(|e| e.skill == "agents-line")

@@ -978,7 +978,7 @@ The text of the change follows. A line that starts with `=== ` names a part.
 /// change of one byte changes the hash of each brief, so a change needs a new
 /// `BRIEF_FORMAT`.
 const BRIEF_TEXT_2: &str = "\
-You are the acceptor and the reviewer of one change. You did not write its code. You review the change, you try to break it, and you write one record about it. You edit no code.
+You are the acceptor and the reviewer of one change. You did not write its code. You review the change. You try to break it. You write one record about the change. You edit no code.
 
 Work from this text only. Do not ask the builder for more text.
 
@@ -991,12 +991,12 @@ Steps:
 
 1. Read the intent, the spec and the plan below.
 2. Run each command that the section `Proof` of the plan names. Run the tests of the paths under `paths`.
-3. Review the change in 3 passes, and give the file and the line of each finding. Bugs: a logic error, a missing check, a wrong edge case, and a test that does not prove the change. Security: a leaked secret, an unsafe input, and an access that the change does not need. Compliance: compare the code with the delta, the invariants and the deviations below, and with the rules of the project. Report a broken requirement, a delta line that the code does not meet, and a file that `Files` does not list.
+3. Review the change in 3 passes. Give the file and the line of each finding. Bugs: a logic error, a missing check, a wrong edge case, and a test that does not prove the change. Security: a leaked secret, an unsafe input, and an access that the change does not need. Compliance: compare the code with the delta, the invariants and the deviations below, and with the rules of the project. Report a broken requirement, a delta line that the code does not meet, and a file outside `Files`.
 4. Run `spec-dna accept <slug> --session \"<your session id>\"`. Add `--role <role>` for each role of the first line of this text, except `acceptor`. The command writes the skeleton `acceptance.toml` in the folder of the change, and it prints the number of your entry. Write that number as `acceptor` in each of your attempts and findings.
 5. Copy the hash of the last line of this text into `brief` of your entry.
 6. Try to break the change: bad input, limits, errors, each path of `Files`, and each requirement of the delta read as a test. Write each try as an `[[attempt]]` with the outcome `held` or `broke`.
 7. Answer each invariant and each deviation that this text lists. Use `held`, `not-affected` or `violated` for an invariant, and `accepted` or `rejected` for a deviation. A `not-affected` or `violated` answer needs a `reason`.
-8. Write each defect as a `[[finding]]` with a severity, a path from the root of the repository and a text. Use `blocker` for a defect that breaks a requirement, a delta line, an invariant, a rule of the project or a command of `Proof`, loses data, or opens a security hole. Use `note` for each other defect. Do not fix a defect.
+8. Write each defect as a `[[finding]]` with a severity, a path from the root of the repository and a text. A defect is a `blocker` if it loses data or opens a security hole. It is also a `blocker` if it breaks a requirement, a delta line, an invariant, a rule of the project or a command of `Proof`. Use `note` for each other defect. Do not fix a defect.
 9. Set `result` of your entry and the top `result` to `accepted` or `rejected`. Use `rejected` only for a reason: a `blocker`, a `violated` invariant, or a `rejected` deviation. A `note` never gives `rejected`.
 10. Commit `acceptance.toml` alone. This commit is part of your task. It is no approval commit: it changes no `status` line, and it needs no go-ahead of the owner. Make it in a call of its own after the write. Edit no other file.
 
@@ -1144,7 +1144,7 @@ Work from this text only. Read the whole diff below against the requirements bel
 
 Steps:
 
-1. Run each command of `Proof`. Start each shell call with the `cd '<root>' &&` of your prompt, and stop when the `cd` fails.
+1. Run each command of `Proof`. Start each shell call with the `cd '<root>' &&` of your prompt. If the `cd` fails, stop.
 2. Run `spec-dna accept <slug> --follow-up --session \"<your session id>\"`. It adds a `[[follow-up]]` entry to `acceptance.toml`. Copy the hash of the last line of this text into `brief` of the entry.
 3. Keep in `closes` each note that the diff fixes, and remove the others.
 4. Set `result` to `rejected` when the diff changes other behavior or a command of `Proof` fails. Else set it to `accepted`.
@@ -2243,7 +2243,8 @@ mod tests {
             "Bugs:",
             "Security:",
             "Compliance:",
-            "Use `blocker` for a defect that breaks a requirement, a delta line, an invariant, a rule of the project or a command of `Proof`, loses data, or opens a security hole.",
+            "A defect is a `blocker` if it loses data or opens a security hole.",
+            "It is also a `blocker` if it breaks a requirement, a delta line, an invariant, a rule of the project or a command of `Proof`.",
             "Use `note` for each other defect.",
             "A `note` never gives `rejected`.",
             "Start each shell call with the `cd '<root>' &&` of your prompt. If the `cd` fails, stop and report it.",
@@ -2277,7 +2278,7 @@ mod tests {
         assert_eq!(brief_hash(&b).as_deref(), Some(PINNED_BRIEF_HASH_2));
     }
 
-    const PINNED_BRIEF_HASH_2: &str = "9ffc1376d24a6374";
+    const PINNED_BRIEF_HASH_2: &str = "d234f8b82bbd3e9d";
 
     #[test]
     fn toml_strings_round_trip_through_the_reader() {

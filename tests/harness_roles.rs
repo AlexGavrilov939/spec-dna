@@ -573,7 +573,7 @@ fn the_acceptor_has_the_tools_of_a_reader_and_one_write_and_no_edit() {
     for w in [
         "Tries to break a finished change from the brief of `spec-dna accept --brief`, and writes its acceptance record. It edits no code.",
         "Your prompt is one line: `cd '<root>' && spec-dna accept <slug> --brief`",
-        "7. Commit the record alone. This commit is part of your task, and it is no approval commit: it changes no `status` line, and it needs no go-ahead of the owner.",
+        "7. Commit the record alone. This commit is part of your task. It is no approval commit: it changes no `status` line, and it needs no go-ahead of the owner.",
         "Write only `acceptance.toml`",
         "Report each defect as a finding. Do not fix it.",
     ] {
@@ -591,10 +591,11 @@ fn the_acceptor_runs_the_prompt_line_and_commits_the_record_with_its_path() {
     assert_eq!(code, 0, "{out}{err}");
     let t = r.read(ACCEPTOR);
     for part in [
-        "Your prompt is one line: `cd '<root>' && spec-dna accept <slug> --brief`, or the same with `--follow-up`. Run it first, and read its output as your brief.",
-        "Start each shell call with that `cd '<root>' &&`, and stop when the `cd` fails.",
+        "Your prompt is one line: `cd '<root>' && spec-dna accept <slug> --brief`, or the same with `--follow-up`. Run it first. Read its output as your brief.",
+        "Start each shell call with that `cd '<root>' &&`. If the `cd` fails, stop.",
         "Put each test repository under your scratch folder, never in another checkout.",
-        "Make it in one call of this shape: `cd '<root>' && git add <path> && git commit -m '<text>' <path>`, with the literal path of `acceptance.toml`. A new record is not tracked, so `git commit` alone refuses its path. Join the parts with `&&` only. Use no option but `-m`, no other command in that call, and no `$`, backtick, `;`, `|` or `#` outside the single quotes of the text. The hook denies each other form.",
+        "Make the call in one shape: `cd '<root>' && git add <path> && git commit -m '<text>' <path>`. Use the literal path of `acceptance.toml` for `<path>`. A new record is not tracked, so `git commit` alone refuses its path.",
+        "Join the parts with `&&` only. Use no option but `-m` and no other command in that call. Use no `$`, backtick, `;`, `|` or `#` outside the single quotes of the text. The hook denies each other form.",
     ] {
         assert!(t.contains(part), "{part}\n{t}");
     }

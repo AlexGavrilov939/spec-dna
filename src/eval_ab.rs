@@ -11,6 +11,10 @@
 //! - The pair `agents-line` (D34) has no skill folder in each arm. `with`
 //!   has the generated line in `AGENTS.md` and `CLAUDE.md`, and `without` has
 //!   no line and denies the command.
+//! - The target `accept` (design 0.8.0, D62 and D76 item 3) runs the 5 evals
+//!   `accept-1` to `accept-5`, which have the skill `review`. `with` is as for
+//!   a skill. `without` has the text of `review` of 0.7.1, no agent file
+//!   `acceptor.md` and the same denial. Both arms have the skill `verify`.
 //!
 //! The result keeps counts, costs, names and versions. It keeps no task text,
 //! no check command and no output text of `claude`.
@@ -38,6 +42,14 @@ use std::path::Path;
 pub const PACK: &str = "pack";
 /// The command that the arm `without` denies.
 const DENIED: &str = "Bash(spec-dna skill:*)";
+/// The target of the 5 evals `accept-1` to `accept-5` (design 0.8.0, D62). Their
+/// key `skill` is `review`, so the result names the skill `review`, and the
+/// target `review` keeps the 5 evals of 0.7.1.
+pub const ACCEPT: &str = "accept";
+/// True for an eval of the target `accept`: its id is `accept-<n>`.
+fn is_accept(e: &Eval) -> bool {
+    e.id.starts_with("accept-")
+}
 /// The evals of the pair `agents-line`: the first eval of `tdd` and `debug`,
 /// the last eval of `execute` (a plain edit with a commit), and 2 evals that
 /// name the group (`skill = "agents-line"`).
@@ -93,6 +105,9 @@ impl Arm {
 enum Kind {
     Skill(Skill),
     AgentsLine,
+    /// The 5 evals `accept-1` to `accept-5` (design 0.8.0, D62). They measure
+    /// the skill `review` of this release against the text of 0.7.1.
+    Accept,
 }
 
 /// The evals of one skill, or the 5 evals of `agents-line`.
@@ -184,25 +199,68 @@ pub enum Target {
     Skill(String),
     All,
     AgentsLine,
+    /// The 5 evals of the acceptance record (`accept-1` to `accept-5`).
+    Accept,
 }
 
 impl Target {
-    /// Reads the target: a skill, `all` or `agents-line`. Anything else is a
-    /// usage error.
+    /// Reads the target: a skill, `all`, `agents-line` or `accept`. Anything
+    /// else is a usage error.
     pub fn parse(s: &str) -> Result<Target, Fatal> {
         if s == "all" {
             Ok(Target::All)
         } else if s == AGENTS_LINE {
             Ok(Target::AgentsLine)
+        } else if s == ACCEPT {
+            Ok(Target::Accept)
         } else if Skill::from_key(s).is_some() {
             Ok(Target::Skill(s.to_string()))
         } else {
             Err(Fatal::Usage(format!(
-                "`{s}` is no target of `eval run --ab`; use a skill ({}), `all` or `{AGENTS_LINE}`",
+                "`{s}` is no target of `eval run --ab`; use a skill ({}), `all`, `{AGENTS_LINE}` or `{ACCEPT}`",
                 crate::harness::skill_keys()
             )))
         }
     }
+}
+
+/// The target `accept` needs a built-in harness arm (design 0.8.0, D62). Without
+/// `--harness`, the copy has the files of the host, and the 2 arms would not have
+/// the same skills (`verify`). The arm `none` writes no skill.
+pub fn check_harness(target: &Target, harness: HarnessArm) -> Result<(), Fatal> {
+    if *target == Target::Accept && matches!(harness, HarnessArm::Project | HarnessArm::None) {
+        return Err(Fatal::Usage(
+            "the target `accept` needs `--harness lean`, `lean-no-advisor` or `full`: without a harness arm the copies have the files of the host, and the 2 arms do not have the same skills"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+/// The checks of the target `accept` read the record with `python3` and its
+/// module `tomllib` (Python 3.11 or later). A `python3` without it fails each
+/// check, so a paid run would look like 0 passes. Exit code 2, before any run.
+fn preflight_tomllib() -> Result<(), Fatal> {
+    let ok = std::process::Command::new("python3")
+        .args(["-c", "import tomllib"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success());
+    if ok {
+        return Ok(());
+    }
+    Err(Fatal::Usage(
+        "the checks of the target `accept` need `python3` with the module `tomllib` (Python 3.11 or later), and `python3 -c 'import tomllib'` fails; install it, then run the command again"
+            .into(),
+    ))
+}
+
+/// One line on the standard error: the pin that the runner writes into the
+/// `spec-dna.toml` of each copy. It is the version of this binary.
+fn announce_pin() {
+    eprintln!("eval run: pin of the copies: spec-dna = \"{VERSION}\"");
 }
 
 pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
@@ -345,6 +403,10 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
         );
     }
 
+    // The target `accept` needs `python3` with `tomllib`: stop before a run.
+    if target == Target::Accept {
+        preflight_tomllib()?;
+    }
     // A bad `--out` must stop the command before the first run spends money.
     make_out_dir(repo, &out_dir)?;
     let claude_code = claude_version()?;
@@ -352,6 +414,7 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
     if !o.json {
         println!("eval run --ab {}: {header}", o.target);
     }
+    announce_pin();
     catch_interrupts();
     let mut ctx = Ctx {
         limits,
@@ -641,7 +704,10 @@ fn sleep_unless_interrupted(seconds: u64) -> bool {
 /// proposes for the profile `standard` at the level of the harness arm (the
 /// default skills of ADR 0023), and then the edit of the arm. `with` adds the
 /// measured skill, and `without` removes it. The pair `agents-line` has no
-/// skill in each arm.
+/// skill in each arm. The target `accept` measures `review`, and both arms also
+/// have `verify`, which is off by default: the builder checks its own proof
+/// (D62). The arm `without` has no agent `acceptor`, because the role comes with
+/// the skill, and `prepare` gives it the text of 0.7.1 (D76 item 3).
 fn arm_skills(kind: Kind, arm: Arm, harness: HarnessArm) -> Vec<Skill> {
     let Some(h) = harness.harness() else {
         return Vec::new();
@@ -649,14 +715,19 @@ fn arm_skills(kind: Kind, arm: Arm, harness: HarnessArm) -> Vec<Skill> {
     if h.level == Level::None {
         return Vec::new();
     }
-    let Kind::Skill(skill) = kind else {
-        return Vec::new();
+    let skill = match kind {
+        Kind::Skill(skill) => skill,
+        Kind::Accept => Skill::Review,
+        Kind::AgentsLine => return Vec::new(),
     };
     let mut list =
         crate::init::profile_skills(crate::config::Profile::Standard, h.level, &|s: Skill| {
             s.default_on()
         });
     list.retain(|s| *s != skill);
+    if kind == Kind::Accept && !list.contains(&Skill::Verify) {
+        list.push(Skill::Verify);
+    }
     if arm == Arm::With {
         list.push(skill);
     }
@@ -974,6 +1045,25 @@ fn select(
                 evals,
             });
         }
+        Target::Accept => {
+            // The evals have the key `skill` with the value `review`, so the
+            // group has the name `review` and the result is a result of that
+            // skill. The target `accept` selects them by their ids.
+            let mut evals = Vec::new();
+            for e in all.iter().filter(|e| is_accept(e)) {
+                evals.push(plan(e.clone())?);
+            }
+            if evals.is_empty() {
+                return Err(Fatal::Config(format!(
+                    "no eval `accept-<n>` in `{pack_dir}`; run `spec-dna eval pack` to write the pack"
+                )));
+            }
+            groups.push(Group {
+                name: Skill::Review.key().to_string(),
+                kind: Kind::Accept,
+                evals,
+            });
+        }
         Target::Skill(_) | Target::All => {
             for skill in Skill::ALL {
                 let wanted = match target {
@@ -984,9 +1074,11 @@ fn select(
                     continue;
                 }
                 let mut evals = Vec::new();
+                // The evals of the target `accept` also have the skill `review`,
+                // and they have a target of their own.
                 for e in all
                     .iter()
-                    .filter(|e| e.skill.as_deref() == Some(skill.key()))
+                    .filter(|e| e.skill.as_deref() == Some(skill.key()) && !is_accept(e))
                 {
                     evals.push(plan(e.clone())?);
                 }
@@ -1026,7 +1118,11 @@ fn prepare(dir: &Path, kind: Kind, arm: Arm, keep_generated: bool) -> Result<(),
         Fatal::Io(format!("cannot change `{what}` in the copy: {e}"))
     };
     match kind {
-        Kind::Skill(skill) => {
+        Kind::Skill(_) | Kind::Accept => {
+            let skill = match kind {
+                Kind::Skill(skill) => skill,
+                _ => Skill::Review,
+            };
             let rel = skill.path();
             let file = dir.join(&rel);
             match arm {
@@ -1037,6 +1133,22 @@ fn prepare(dir: &Path, kind: Kind, arm: Arm, keep_generated: bool) -> Result<(),
                     }
                     fs::write(&file, skill_file(skill, profile_of(dir)))
                         .map_err(|e| io(&rel, e))?;
+                }
+                // The target `accept` (D62 and D76 item 3): the arm `without`
+                // has the text of `lite`, which is the text of 0.7.1, and no
+                // agent `acceptor`. The discipline line stays, because the
+                // review of 0.7.1 is a skill of the arm.
+                Arm::Without if kind == Kind::Accept => {
+                    if let Some(parent) = file.parent() {
+                        fs::create_dir_all(parent).map_err(|e| io(&rel, e))?;
+                    }
+                    let text = if keep_generated {
+                        harness::render_skill(skill, Profile::Lite)
+                    } else {
+                        skill_file(skill, Profile::Lite)
+                    };
+                    fs::write(&file, text).map_err(|e| io(&rel, e))?;
+                    let _ = fs::remove_file(dir.join(".claude/agents/acceptor.md"));
                 }
                 Arm::Without => {
                     if let Some(parent) = file.parent() {
@@ -2043,6 +2155,7 @@ pub fn run_arms(repo: &Repo, cfg: &Config, o: &ArmsOpts) -> Result<u8, Fatal> {
     if !o.json {
         println!("eval run --arms {}: {header}", names.join(","));
     }
+    announce_pin();
     catch_interrupts();
     let mut ctx = Ctx {
         limits,
