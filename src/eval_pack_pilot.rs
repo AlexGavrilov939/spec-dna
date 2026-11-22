@@ -68,6 +68,7 @@ pub static TDD: &[PackEval] = &[
         max_turns: 40,
         max_budget_usd: 1.5,
         branch: None,
+        change: None,
         checks: &[
             (
                 "behaviour",
@@ -182,6 +183,7 @@ class SlugTest(unittest.TestCase):
         max_turns: 20,
         max_budget_usd: 1.5,
         branch: None,
+        change: None,
         checks: &[
             (
                 "behaviour",
@@ -312,6 +314,7 @@ class DurationTest(unittest.TestCase):
         max_turns: 20,
         max_budget_usd: 1.5,
         branch: None,
+        change: None,
         checks: &[
             (
                 "behaviour",
@@ -450,6 +453,7 @@ class StackTest(unittest.TestCase):
         max_turns: 20,
         max_budget_usd: 1.5,
         branch: None,
+        change: None,
         checks: &[
             (
                 "behaviour",
@@ -563,6 +567,7 @@ class StatsTest(unittest.TestCase):
         max_turns: 20,
         max_budget_usd: 1.5,
         branch: None,
+        change: None,
         checks: &[
             (
                 "behaviour",
@@ -688,6 +693,7 @@ pub static DEBUG: &[PackEval] = &[
         max_turns: 40,
         max_budget_usd: 2.0,
         branch: None,
+        change: None,
         checks: &[
             (
                 "cause-fixed",
@@ -863,6 +869,7 @@ class ReportTest(unittest.TestCase):
         max_turns: 20,
         max_budget_usd: 2.0,
         branch: None,
+        change: None,
         checks: &[
             (
                 "cause-fixed",
@@ -1014,6 +1021,7 @@ class CheckoutTest(unittest.TestCase):
         max_turns: 20,
         max_budget_usd: 2.0,
         branch: None,
+        change: None,
         checks: &[
             (
                 "cause-fixed",
@@ -1168,6 +1176,7 @@ class LinksTest(unittest.TestCase):
         max_turns: 20,
         max_budget_usd: 2.0,
         branch: None,
+        change: None,
         checks: &[
             (
                 "cause-fixed",
@@ -1326,6 +1335,7 @@ class PricesTest(unittest.TestCase):
         max_turns: 20,
         max_budget_usd: 2.0,
         branch: None,
+        change: None,
         checks: &[
             (
                 "cause-fixed",

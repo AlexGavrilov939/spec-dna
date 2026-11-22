@@ -1183,7 +1183,7 @@ fn render_agent(def: &AgentDef, model: &Model, effort: Effort, deny: &[String]) 
 /// The text of a stage skill file: the front matter, the body and the marker.
 /// The text is a function of the skill and the profile (D76), so the file is
 /// the same in each project of one profile.
-fn render_skill(skill: Skill, profile: Profile) -> String {
+pub(crate) fn render_skill(skill: Skill, profile: Profile) -> String {
     let s = format!(
         "---\nname: {}\ndescription: {}\n---\n\n{}\n",
         skill.name(),

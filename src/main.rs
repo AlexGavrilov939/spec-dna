@@ -471,7 +471,7 @@ indicator. Exit codes: 2 usage, unknown group or no --sdlc, 3 configuration,
     ),
     (
         "eval",
-        "eval run [<id>...] [--runs <n>] [--min-pass-rate <r>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate] [--harness <arm>]\neval run --ab <skill|all|agents-line> [--harness <arm>] [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate | --no-isolate] [--resume <result file>] [--json]\neval run --arms <arm>,<arm>[,<arm>] [<id>...] [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--resume <result file>] [--json]\neval pack\neval verdict [--release] [--json]\neval verdict --compare <treatment>,<control> <result file> [--json]\neval records <result file>",
+        "eval run [<id>...] [--runs <n>] [--min-pass-rate <r>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate] [--harness <arm>]\neval run --ab <skill|all|agents-line|accept> [--harness <arm>] [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate | --no-isolate] [--resume <result file>] [--json]\neval run --arms <arm>,<arm>[,<arm>] [<id>...] [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--resume <result file>] [--json]\neval pack\neval verdict [--release] [--json]\neval verdict --compare <treatment>,<control> <result file> [--json]\neval records <result file>",
         "Runs the evals of [evals] dir (<id>.json) with headless Claude Code. For
 each run, it copies the fixture and the harness files into a temporary git
 repository, starts `claude -p` in it, and runs the checks of the eval. It
@@ -526,7 +526,7 @@ runner commits on the branch of `branch`, so the copy has a diff against main.
 Exit codes of --arms and --harness: 2 usage, an unknown arm, 1 arm or more than
 3, --arms with --ab, --no-isolate with them.
 
-`eval pack` writes the pack of 57 evals and their fixtures to <dir>/pack/. It
+`eval pack` writes the pack of 62 evals and their fixtures to <dir>/pack/. It
 keeps each file that exists. Exit codes: 0, 3 no [evals] table, 4 write error.
 
 `eval verdict --release` prints the table of the release, one line for each name
@@ -3905,7 +3905,7 @@ fn eval(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
             2 => a.positional[1].clone(),
             n => {
                 return Err(Fatal::Usage(format!(
-                    "`eval run --ab` takes one target (a skill, `all` or `agents-line`), got {}",
+                    "`eval run --ab` takes one target (a skill, `all`, `agents-line` or `accept`), got {}",
                     n - 1
                 )));
             }

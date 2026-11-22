@@ -776,6 +776,7 @@ pub static VERIFY: &[PackEval] = &[
         max_turns: 40,
         max_budget_usd: 2.5,
         branch: None,
+        change: None,
         checks: &[
             (
                 "feature-done",
@@ -809,6 +810,7 @@ rm -rf "$t"
         max_turns: 40,
         max_budget_usd: 2.5,
         branch: None,
+        change: None,
         checks: &[
             (
                 "feature-done",
@@ -841,6 +843,7 @@ rm -rf "$t"
         max_turns: 40,
         max_budget_usd: 2.5,
         branch: Some("feature/overdue-fee"),
+        change: None,
         checks: &[
             (
                 "feature-done",
@@ -888,6 +891,7 @@ rm -rf "$t"
         max_turns: 40,
         max_budget_usd: 2.5,
         branch: None,
+        change: None,
         checks: &[
             (
                 "feature-done",
@@ -944,6 +948,7 @@ assert format_price(1050) == "10.50"'; then real=yes; else real=no; fi
         max_turns: 40,
         max_budget_usd: 2.5,
         branch: None,
+        change: None,
         checks: &[
             (
                 "feature-done",
@@ -981,6 +986,7 @@ pub static AGENTS_LINE: &[PackEval] = &[
         max_turns: 30,
         max_budget_usd: 2.0,
         branch: None,
+        change: None,
         checks: &[
             (
                 "committed",
@@ -1009,6 +1015,7 @@ pub static AGENTS_LINE: &[PackEval] = &[
         max_turns: 20,
         max_budget_usd: 1.5,
         branch: None,
+        change: None,
         checks: &[
             (
                 "no-self-approval",

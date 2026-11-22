@@ -186,7 +186,7 @@ fn strict_prints_the_note_of_eval_pack_and_writes_no_pack() {
     let (code, out, err) = init_with(&r, "profile = \"strict\"\nharness = \"lean\"\n", &[]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(
-        out.contains("note: the profile `strict` uses the verdicts of the skills; run `spec-dna eval pack` to write the 57 evals of the pack into `evals/pack/` before `spec-dna eval run --ab` (docs/evals.md)"),
+        out.contains("note: the profile `strict` uses the verdicts of the skills; run `spec-dna eval pack` to write the 62 evals of the pack into `evals/pack/` before `spec-dna eval run --ab` (docs/evals.md)"),
         "{out}"
     );
     assert!(!r.dir.join("evals/pack").exists());

@@ -5080,7 +5080,7 @@ fn the_help_of_eval_lists_the_3_subcommands_and_the_option_ab() {
     let (code, out, err) = r.run(&["eval", "--help"]);
     assert_eq!(code, 0, "{err}");
     for part in [
-        "eval run --ab <skill|all|agents-line>",
+        "eval run --ab <skill|all|agents-line|accept>",
         "eval pack",
         "eval verdict",
         "SPEC_DNA_EVAL_BACKOFF",

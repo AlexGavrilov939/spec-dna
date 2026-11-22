@@ -27,7 +27,7 @@ echo "$n" > "$STUB_DIR/n"
     for a in "$@"; do echo "ARG $a"; done
     find .claude -type f 2>/dev/null | sort | sed 's/^/FILE /'
     [ -f eval-id.txt ] && echo "EVAL $(cat eval-id.txt)"
-    for f in AGENTS.md CLAUDE.md .claude/skills/spec-dna/SKILL.md .claude/settings.json; do
+    for f in AGENTS.md CLAUDE.md .claude/skills/spec-dna/SKILL.md .claude/skills/spec-dna-review/SKILL.md .claude/agents/acceptor.md .claude/settings.json; do
         [ -f "$f" ] && sed "s|^|TEXT $f: |" "$f"
     done
     [ -f spec-dna.toml ] && sed 's/^/TOML /' spec-dna.toml
@@ -189,17 +189,16 @@ impl Fx {
         for skill in packed {
             // The group `agents-line` has 2 evals of its own. The ids of
             // `execute` are 6 to 10, as in the pack (the pair uses `execute-10`).
+            // The group `accept` has the skill `review` (design 0.8.0, D62).
             let (first, last) = match *skill {
                 "agents-line" => (1, 2),
                 "execute" => (6, 10),
                 _ => (1, 5),
             };
+            let key = if *skill == "accept" { "review" } else { skill };
             for n in first..=last {
                 let id = format!("{skill}-{n}");
-                repo.write(
-                    &format!("evals/pack/{id}.json"),
-                    &pack_eval(&id, skill, runs),
-                );
+                repo.write(&format!("evals/pack/{id}.json"), &pack_eval(&id, key, runs));
                 repo.write(
                     &format!("evals/pack/fixtures/{id}/notes.txt"),
                     "status: draft\n",
@@ -3032,4 +3031,172 @@ fn ab_with_harness_gives_check_the_same_codes_in_with_and_without() {
         );
         assert_eq!(codes(&a), codes(&b), "pair {pair}: with {a} without {b}");
     }
+}
+
+// Design 0.8.0, D62 and D76 item 3: the target `accept`.
+
+/// The first line of the part `When to use` of the review of 0.7.1. The text of
+/// `standard` does not have it.
+const LITE_REVIEW: &str =
+    "When to use: Before a merge, or when a person asks for a review or answers one.";
+
+#[test]
+fn the_target_accept_runs_the_5_evals_of_accept_and_the_target_review_keeps_its_5() {
+    let fx = Fx::new(&["brainstorm"], &["review", "accept", "tdd"], 4);
+    let ids = |target: &str| -> Vec<String> {
+        let (code, out, err) = fx.run(&[target, "--dry-run", "--json", "--max-total-usd", "100"]);
+        assert_eq!(code, 0, "{target}: {out}{err}");
+        out.split("{\"id\":\"")
+            .skip(1)
+            .map(|p| p.split('"').next().unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(
+        ids("accept"),
+        ["accept-1", "accept-2", "accept-3", "accept-4", "accept-5"]
+    );
+    assert_eq!(
+        ids("review"),
+        ["review-1", "review-2", "review-3", "review-4", "review-5"]
+    );
+    // `all` runs the skills of 0.7.1 only: no eval of `accept`.
+    assert!(ids("all").iter().all(|id| !id.starts_with("accept-")));
+    // A dry run of `accept` prints 5 evals, 40 runs and the estimate: 5 evals,
+    // 4 runs, 2 arms, and 1 USD for each run in this fixture.
+    let (code, out, err) = fx.run(&["accept", "--dry-run", "--max-total-usd", "100"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains(
+            "eval run --ab accept (dry run): 5 evals, 40 runs, estimate 40.00 USD, cap 100.00 USD"
+        ),
+        "{out}"
+    );
+}
+
+#[test]
+fn the_arm_with_has_acceptor_md_and_the_arm_without_has_the_review_of_0_7_1() {
+    let fx = Fx::new(&["brainstorm"], &["accept"], 1);
+    let (code, out, err) = fx.run(&[
+        "accept",
+        "--harness",
+        "lean",
+        "--runs",
+        "1",
+        "--max-total-usd",
+        "100",
+        "--json",
+    ]);
+    assert_eq!(code, 0, "{out}{err}");
+    // Run 1 of `accept-1`: call 0 is `with`, call 1 is `without`.
+    let (with, without) = (0, 1);
+    let review = skill_path("review");
+    for n in [with, without] {
+        assert_eq!(fx.arm_of(n), "lean");
+        // Both arms have `verify` (D62): the builder checks its own proof.
+        assert!(
+            fx.has_file(n, &skill_path("verify")),
+            "{n}: {:?}",
+            fx.calls()[n]
+        );
+    }
+    assert!(fx.has_file(with, ".claude/agents/acceptor.md"));
+    assert!(!fx.has_file(without, ".claude/agents/acceptor.md"));
+    assert!(fx.has_file(with, &review));
+    assert!(
+        fx.has_file(without, &review),
+        "the arm without has the review of 0.7.1: {:?}",
+        fx.calls()[without]
+    );
+    let with_text = fx.text(with, &review);
+    let without_text = fx.text(without, &review);
+    assert!(with_text.contains("acceptance.toml"), "{with_text}");
+    assert!(!with_text.contains(LITE_REVIEW), "{with_text}");
+    assert!(without_text.contains(LITE_REVIEW), "{without_text}");
+    assert!(!without_text.contains("acceptance.toml"), "{without_text}");
+    // The arm without has no word of the acceptor in its instruction files.
+    for file in ["AGENTS.md", "CLAUDE.md"] {
+        let text = fx.text(without, file);
+        assert!(!text.contains("acceptor"), "{file}: {text}");
+    }
+    // The review of 0.7.1 is a skill of the arm, so its discipline stays in the
+    // line of `AGENTS.md` in both arms (the target `review` removes it).
+    for n in [with, without] {
+        let text = fx.text(n, "AGENTS.md");
+        assert!(text.contains("review is data (review)"), "{n}: {text}");
+    }
+    // Only `without` denies `spec-dna skill`, so it cannot read the new text.
+    let denies = |n: usize| fx.args(n).iter().any(|a| a == "Bash(spec-dna skill:*)");
+    assert!(!denies(with));
+    assert!(denies(without));
+    // The task is the same text in both arms.
+    let task = |n: usize| {
+        let args = fx.args(n);
+        args[args.iter().position(|a| a == "-p").unwrap() + 1].clone()
+    };
+    assert_eq!(task(with), task(without));
+    fx.assert_clean();
+}
+
+#[test]
+fn the_arm_without_of_the_target_review_keeps_no_skill_file() {
+    // The 5 evals of 0.7.1 measure the text against no text: the text of
+    // `lite` for the target `accept` must not leak into them.
+    let fx = Fx::new(&["brainstorm"], &["review"], 1);
+    let (code, out, err) = fx.run(&[
+        "review",
+        "--harness",
+        "lean",
+        "--runs",
+        "1",
+        "--max-total-usd",
+        "100",
+        "--json",
+    ]);
+    assert_eq!(code, 0, "{out}{err}");
+    let review = skill_path("review");
+    assert!(fx.has_file(0, &review));
+    assert!(!fx.has_file(1, &review), "{:?}", fx.calls()[1]);
+    assert!(!fx.has_file(1, ".claude/agents/acceptor.md"));
+}
+
+#[test]
+fn without_harness_the_target_accept_gives_the_arms_the_2_texts_of_review() {
+    let fx = Fx::new(&["brainstorm"], &["accept"], 1);
+    let (code, out, err) = fx.run(&["accept", "--runs", "1", "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let review = skill_path("review");
+    assert!(fx.text(0, &review).contains("acceptance.toml"));
+    assert!(fx.text(1, &review).contains(LITE_REVIEW));
+}
+
+#[test]
+fn the_result_of_the_target_accept_is_a_result_of_the_skill_review_that_eval_records_reads() {
+    let fx = Fx::new(&["brainstorm"], &["accept"], 1);
+    let (code, out, err) = fx.run(&[
+        "accept",
+        "--harness",
+        "lean",
+        "--runs",
+        "1",
+        "--max-total-usd",
+        "100",
+        "--json",
+    ]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("\"target\":\"accept\""), "{out}");
+    assert!(out.contains("\"name\":\"review\""), "{out}");
+    assert!(out.contains("\"harness\":\"lean\""), "{out}");
+    // Each side has the cost, the turns and the seconds (D58).
+    assert!(out.contains("\"turns\":4,\"seconds\":"), "{out}");
+    assert!(out.contains("\"cost_usd\":"), "{out}");
+    let files = fx.results();
+    assert_eq!(files.len(), 1, "{files:?}");
+    let path = format!("evals/results/{}", files[0]);
+    let (code, out, err) = fx.raw(&["eval", "records", &path], &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.starts_with("{\"skill\":\"review\",\"eval\":\"accept-1\""),
+        "{out}"
+    );
+    assert_eq!(out.lines().count(), 10, "5 evals, 1 run, 2 arms: {out}");
 }

@@ -362,6 +362,15 @@ fn the_agents_line_evals_fail_on_the_fixture_and_pass_with_the_reference_solutio
     prove_n("agents-line", 2);
 }
 
+/// Design 0.8.0, D62: the 5 evals `accept-1` to `accept-5`. The reference solution
+/// runs the real `spec-dna accept` on the copy, so a fixture that the command
+/// refuses fails here, and the record that it fills passes the oracle. A wrong
+/// record fails one named check.
+#[test]
+fn the_accept_evals_fail_on_the_fixture_and_pass_with_the_reference_solution() {
+    prove("accept");
+}
+
 /// The number after `"<key>": ` in the text of an eval file.
 fn number(text: &str, key: &str) -> f64 {
     let at = text
@@ -473,4 +482,77 @@ fn the_task_of_an_execute_eval_names_no_rule_of_its_skill() {
             assert!(task.contains("tick of its box"), "{id}: {task}");
         }
     }
+}
+
+/// The stub of the rehearsal of `eval run --ab accept`: it does the work of the
+/// reference record of the eval that its copy belongs to. The slug of the change
+/// names the eval.
+const STUB_AB: &str = r#"#!/bin/sh
+if [ "$1" = "--version" ]; then echo "2.1.325 (Claude Code)"; exit 0; fi
+slug=$(ls docs/intent | head -1)
+case "$slug" in
+    bulk-discount) id=accept-1 ;;
+    order-export) id=accept-2 ;;
+    partial-refund) id=accept-3 ;;
+    item-sync) id=accept-4 ;;
+    parcel-fee) id=accept-5 ;;
+    *) echo "unknown change $slug" >&2; exit 9 ;;
+esac
+SOL="$SOLROOT/$id/reference"
+export SOL
+sh "$SOL/solve.sh" || { echo "the solution failed" >&2; exit 9; }
+echo '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.1,"num_turns":4,"result":"ok"}'
+"#;
+
+/// Design 0.8.0, D62: the paid run of `eval run --ab accept --harness lean` has
+/// 10 sides for 1 run. With the real pack and the reference record of each eval,
+/// each side of each arm passes each check, so a paid run measures the agent and
+/// not the copy. The arm `without` has the review of 0.7.1 and no agent file.
+#[test]
+fn the_real_pack_runs_in_both_arms_of_ab_accept_and_the_reference_record_passes_each_check() {
+    let lab = Lab::new();
+    let bin = stub_bin(&lab.tmp.dir.join("bin-ab"), "claude", STUB_AB);
+    let path = path_with(bin.parent().unwrap());
+    let tmp = lab.tmp.dir.join("tmp-ab");
+    fs::create_dir_all(&tmp).unwrap();
+    let tmp = tmp.to_string_lossy().into_owned();
+    let root = solutions().to_string_lossy().into_owned();
+    let set = [
+        ("PATH", path.as_str()),
+        ("TMPDIR", tmp.as_str()),
+        ("SOLROOT", root.as_str()),
+        ("SPEC_DNA_EVAL_BACKOFF", "0"),
+        ("GIT_AUTHOR_NAME", "agent"),
+        ("GIT_AUTHOR_EMAIL", "agent@example.invalid"),
+        ("GIT_COMMITTER_NAME", "agent"),
+        ("GIT_COMMITTER_EMAIL", "agent@example.invalid"),
+        ("GIT_CONFIG_GLOBAL", "/dev/null"),
+        ("GIT_CONFIG_NOSYSTEM", "1"),
+    ];
+    let (code, out, err) = lab.repo.run_env(
+        &[
+            "eval",
+            "run",
+            "--ab",
+            "accept",
+            "--harness",
+            "lean",
+            "--runs",
+            "1",
+            "--max-total-usd",
+            "50",
+            "--json",
+        ],
+        &set,
+        &[],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("\"target\":\"accept\""), "{out}");
+    assert!(!out.contains("\"passed\":false"), "{out}");
+    assert!(!out.contains("\"claude_exit\":9"), "{out}{err}");
+    // 5 evals, 2 arms: a side passes, and so does each of its checks: 4 checks
+    // in the evals 1 to 4 and 2 in the control.
+    let passed = out.matches("\"passed\":true").count();
+    assert_eq!(passed, 2 * (4 * (1 + 4) + (1 + 2)), "{out}");
+    assert_eq!(out.matches("\"claude_exit\":0").count(), 10, "{out}");
 }

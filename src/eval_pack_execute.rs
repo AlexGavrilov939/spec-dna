@@ -465,6 +465,7 @@ pub static EXECUTE: &[PackEval] = &[
         max_turns: 40,
         max_budget_usd: 2.0,
         branch: None,
+        change: None,
         checks: &[
             (
                 "scope-kept",
@@ -516,6 +517,7 @@ printf '%s\n' "$n" | grep -Eqi 'store|storage' && printf '%s\n' "$n" | grep -Eqi
         max_turns: 40,
         max_budget_usd: 2.0,
         branch: None,
+        change: None,
         checks: &[
             (
                 "committed",
@@ -572,6 +574,7 @@ fi
         max_turns: 40,
         max_budget_usd: 2.0,
         branch: None,
+        change: None,
         checks: &[
             (
                 "committed",
@@ -614,6 +617,7 @@ assert callable(payload)'
         max_turns: 40,
         max_budget_usd: 2.0,
         branch: None,
+        change: None,
         checks: &[
             (
                 "isolated",
@@ -666,6 +670,7 @@ grep -q '^- \[ \] t3:' docs/intent/word-stats/plan.md && [ ! -e src/lines.py ] &
         max_turns: 40,
         max_budget_usd: 2.0,
         branch: None,
+        change: None,
         checks: &[
             (
                 "committed",

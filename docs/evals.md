@@ -242,12 +242,13 @@ spec-dna eval verdict --compare <treatment>,<control> <result file> [--json]
 
 ### The pack
 
-`spec-dna eval pack` writes the shipped evals to `<[evals] dir>/pack/`. The pack has 5 evals for each of 11 skills and 2 evals of the pair `agents-line` (57 in total). Each eval has the key `skill`, and its id is `<group>-<n>`, with `n` from 1. The group is a skill, or `agents-line`. The ids of `verify`, `brainstorm` and `execute` are `<skill>-6` to `<skill>-10`. Both arms passed each run of the first 5 evals of each of these skills, so they could not show a gain, and 5 new evals replace them. A task of a new eval does not name a rule of its skill. Each new eval has one trap that an agent with no skill text falls into, and a shell check that finds it. [The traps](#the-traps-of-the-harder-evals) lists them. Each eval runs 4 times (`"runs": 4`). The files are these:
+`spec-dna eval pack` writes the shipped evals to `<[evals] dir>/pack/`. The pack has 5 evals for each of 11 skills, 2 evals of the pair `agents-line` and the 5 evals `accept-1` to `accept-5` of [the acceptance record](#the-evals-of-the-acceptance-record) (62 in total). Each eval has the key `skill`, and its id is `<group>-<n>`, with `n` from 1. The group is a skill, `agents-line` or `accept`. The 5 evals of the group `accept` have the key `skill` with the value `review`. The ids of `verify`, `brainstorm` and `execute` are `<skill>-6` to `<skill>-10`. Both arms passed each run of the first 5 evals of each of these skills, so they could not show a gain, and 5 new evals replace them. A task of a new eval does not name a rule of its skill. Each new eval has one trap that an agent with no skill text falls into, and a shell check that finds it. [The traps](#the-traps-of-the-harder-evals) lists them. Each eval runs 4 times (`"runs": 4`). The files are these:
 
 | File | Content |
 | --- | --- |
 | `<dir>/pack/<id>.json` | The eval. A JSON file in a subfolder is not an eval of `eval run`, so the pack stays out of the normal runs and out of SD506 |
 | `<dir>/pack/fixtures/<id>/` | The fixture of the eval: a small project with no data of a consumer project. Its `spec-dna.toml` pins the version of the binary that wrote it |
+| `<dir>/pack/changes/<id>/` | Only for the evals of the group `accept`: the files of the key `change`. The runner copies them over the copy and commits them on the branch of the eval |
 
 The command writes each file once. If a file exists, the command keeps it, and the output names it (`kept <path>`). Thus a project can edit its copy of an eval. The command needs `[evals]`. Without it, the exit code is 3. A write error gives exit code 4. With `--json`, it prints `{"written":[...],"kept":[...]}`.
 
@@ -281,16 +282,49 @@ The reference solution of each eval passes, and a wrong solution that falls into
 - Expect a pass rate near the ceiling in both arms, so no gain: `execute-10` (plain by design), `brainstorm-6` (`spec-dna new --help` names the `rfc` template), `brainstorm-10` (a model seldom invents an address when it has a file for questions), `brainstorm-8` (the old class evals were at the ceiling in the arm `without`), and `execute-8` (an agent that sees the missing tool seldom ticks the box).
 - Expect a gap, if any, in `brainstorm-7`, `brainstorm-9`, `execute-6`, `execute-7` and `execute-9`. This is a guess until a paid run.
 
+### The evals of the acceptance record
+
+The 5 evals `accept-1` to `accept-5` measure the steps of the acceptance record that the skill `review` has in `standard` and `strict` ([ADR 0032](adr/0032-acceptance-in-one-pass.md)). Each has the key `skill` with the value `review`, and its target is `accept`. The target `review` keeps the 5 evals of 0.7.1.
+
+Each fixture is a project with a change that is built and not checked. The base commit has the intent with `class: higher-risk` (so a record is needed in `standard`), the approved spec and the approved plan, and `[change] approval = "base"`. The commit of the change (the key `change`) is on the branch of the eval. It adds the code and the tests, and it ticks the box of the task. The task is the same in both arms: "The change `<slug>` is built. Before `spec-dna finish`, check it. Run `spec-dna accept <slug>` for the skeleton of the acceptance record, and fill it in." It does not name `--brief` or a step of the skill. The agent did not build the change, so the eval measures an acceptor in a new session. Both arms have `Bash(spec-dna accept:*)` in `allowed-tools`, so both write a record of the same form. The tests of each change pass, and a defect is in a place that they do not reach:
+
+| Eval | The planted defect | The planted paths |
+| --- | --- | --- |
+| `accept-1` | The spec says "100 units or more", and the code has `> 100`. The tests use 50 and 150 | `src/discount.py` |
+| `accept-2` | The only test of the requirement asserts that the function exists. The function gives no line | `src/export.py`, `tests/test_export.py` |
+| `accept-3` | The rule `whole-cents` of `docs/rules/money.md` needs an integer number of cents, and the code divides with `/`. The test uses 1000 and 50, which gives the same number as an integer and as a float | `src/refund.py` |
+| `accept-4` | The spec says "report the failure", and the code drops the exception. The tests cover only success | `src/sync.py` |
+| `accept-5` | None. The change is correct, and it obeys the same rule. This is the control | none |
+
+The checks read the record only: `docs/intent/<slug>/acceptance.toml`, with `python3` and its module `tomllib` (Python 3.11 or later). They do not read SD928, so the pass rate measures the catch and not the form of the record.
+
+| Check | The eval | It passes when |
+| --- | --- | --- |
+| `record-read` | each | The file is TOML |
+| `rejected` | 1 to 4 | The top `result` is `rejected` |
+| `blocker-found` | 1 to 4 | A `[[finding]]` has the severity `blocker` and a planted path. A suffix `:<line>` of the path is allowed |
+| `focused` | 1 to 4 | The findings name at most 3 different paths. A record that names each file does not pass |
+| `accepted` | 5 | The top `result` is `accepted` |
+
+A record that has `result = "accepted"` fails the evals 1 to 4. A record that rejects the control fails `accepted`. The reference record of each eval passes, and each wrong record fails the check that its name gives. `tests/eval_pack_pilot/mod.rs` runs them with a stub `claude`. The reference record comes from the real `spec-dna accept`, so a fixture that the command refuses fails the test, and `spec-dna check --base main` finds no SD928 in it.
+
+#### The limits of the acceptance evals
+
+- A catch rate of N of M is the rate for these 4 planted defects, with this model and this text. The bootstrap resamples 4 evals that have a defect, so the interval is wide. The rate is not a rate for real defects.
+- 16 of 16 can mean that the defects are too easy. 0 of 16 can mean that they are too hard.
+- The comparison shows the value of the text and the agent `acceptor` over the review of 0.7.1. It does not show the value over a person.
+
 ### Run the arms
 
 ```text
-spec-dna eval run --ab <skill|all|agents-line> [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate | --no-isolate] [--resume <result file>] [--json]
+spec-dna eval run --ab <skill|all|agents-line|accept> [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate | --no-isolate] [--resume <result file>] [--json]
 ```
 
 `--ab` takes one target:
 
 - a skill, such as `tdd`, to run the 5 evals of that skill;
-- `all`, to run each skill that the pack has (the 11 skills that a full pack has, 440 runs). It does not include `agents-line`;
+- `all`, to run each skill that the pack has (the 11 skills that a full pack has, 440 runs). It includes neither `agents-line` nor `accept`;
+- `accept`, the 5 evals `accept-1` to `accept-5` of [the acceptance record](#the-evals-of-the-acceptance-record) (40 runs; the estimate is 100 USD, at the budget of 2.5 USD for a run). They have the key `skill` with the value `review`, so the result has one item with the name `review`. The target `review` does not run them. With `--harness lean`, both arms have the skill `verify` too (off by default). The arm `without` has the text of `review` of 0.7.1 (the text of the profile `lite`) and no agent file `acceptor.md`. The arm `with` has the text of this release and `acceptor.md`. Both arms keep the other skills of the level;
 - `agents-line`, the pair of D34 for the line of `AGENTS.md`. It runs `tdd-1`, `debug-1` and `execute-10` (a plain edit of a task of a plan, with a commit; the pair used `execute-1` until 0.7.0, and uses `execute-10` since 0.7.1), and the 2 evals `agents-line-1` and `agents-line-2` (they have the key `skill` with the value `agents-line`). `agents-line-1` is a long task that moves a document, and the line tells the agent to run `spec-dna check` before a commit. `agents-line-2` has a plan that is a draft, and the line says that an agent writes an approval only when the owner says so.
 
 `--ab` reads `<dir>/pack/*.json` and checks each file with the rules of SD506. An invalid file, or a pack with no eval for the target, gives exit code 3. `--ab` also needs `<dir>/check.sh`, as `eval run` does. `--min-pass-rate` with `--ab` is a usage error, because the verdict has its own rules. The options `--runs`, `--max-total-usd`, `--out`, `--dry-run` and `--json` work as for `eval run`. `--runs` replaces the 4 runs of each eval. An eval of `execute`, the evals `verify-6` to `verify-10`, and `tdd-1` and `debug-1`, have `max-turns` 40 (the confirmation run of `tdd` uses `tdd-1` with this higher cap too, because the cap is one value of the eval and the pair `agents-line` shares `tdd-1` with `tdd`): the pilot showed that the line of `AGENTS.md` costs 3 to 7 turns that only run `spec-dna`, and a cap of 25 turns stopped correct work.

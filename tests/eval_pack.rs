@@ -1,7 +1,7 @@
 //! Tests of `spec-dna eval pack` (ADR 0016, 0.7.0 slice 5). The command
 //! writes the shipped evals and their small fixtures to `<[evals] dir>/pack/`.
-//! A test checks that the pack holds the 57 evals of the 11 skills and of
-//! `agents-line`. The other
+//! A test checks that the pack holds the 62 evals of the 11 skills, of
+//! `agents-line` and of the target `accept`. The other
 //! tests read the
 //! files that the binary writes, whatever their number, and check the rules
 //! that hold for each of them. No test starts an agent.
@@ -93,9 +93,14 @@ fn eval_pack_writes_the_evals_and_their_fixtures_below_the_pack_folder() {
         let id = name.strip_suffix(".json").unwrap();
         let text = r.read(&format!("evals/pack/{name}"));
         assert!(text.contains(&format!("\"id\": \"{id}\"")), "{name}");
-        // Each file has the key `skill`, and the id is `<skill>-<n>`.
-        let skill = id.rsplit_once('-').unwrap().0;
-        assert!(SKILLS.contains(&skill) || skill == "agents-line", "{id}");
+        // Each file has the key `skill`, and the id is `<group>-<n>`. The group
+        // `accept` has the skill `review` (design 0.8.0, D62).
+        let group = id.rsplit_once('-').unwrap().0;
+        assert!(
+            SKILLS.contains(&group) || ["agents-line", "accept"].contains(&group),
+            "{id}"
+        );
+        let skill = if group == "accept" { "review" } else { group };
         assert!(text.contains(&format!("\"skill\": \"{skill}\"")), "{name}");
         assert!(
             text.contains("\"runs\": 4"),
@@ -122,11 +127,13 @@ fn each_file_of_the_pack_is_valid_for_the_runner() {
     let r = project("[evals]\n");
     let (code, out, err) = pack(&r);
     assert_eq!(code, 0, "{out}{err}");
-    let skills: Vec<String> = packed(&r)
+    let mut skills: Vec<String> = packed(&r)
         .iter()
         .map(|n| n.rsplit_once('-').unwrap().0.to_string())
         .collect();
+    skills.dedup();
     assert!(!skills.is_empty());
+    assert!(skills.iter().any(|s| s == "accept"), "{skills:?}");
     for skill in skills {
         // A dry run reads each file with the rules of SD506.
         let (code, out, err) = r.run(&[
@@ -264,7 +271,7 @@ fn the_fixture_names_no_consumer_project_and_pins_the_version_of_the_binary() {
     }
 }
 
-// The tests that need the 57 evals of the pack.
+// The tests that need the 62 evals of the pack.
 
 /// The ids of each skill: `verify`, `brainstorm` and `execute` have the ids 6
 /// to 10, the others 1 to 5.
@@ -278,16 +285,24 @@ fn ids_of(skill: &str) -> Vec<String> {
 }
 
 #[test]
-fn the_pack_has_5_evals_for_each_skill_and_2_of_agents_line() {
+fn the_pack_has_5_evals_for_each_skill_2_of_agents_line_and_5_of_accept() {
     let r = project("[evals]\n");
     let (code, out, err) = pack(&r);
     assert_eq!(code, 0, "{out}{err}");
     let names = packed(&r);
-    assert_eq!(names.len(), 57, "{names:?}");
+    assert_eq!(names.len(), 62, "{names:?}");
     for skill in SKILLS {
         for id in ids_of(skill) {
             assert!(names.contains(&format!("{id}.json")), "{id}");
         }
+    }
+    // The 5 evals of the acceptance record have the skill `review`, and
+    // their own target (design 0.8.0, D62).
+    for n in 1..=5 {
+        let id = format!("accept-{n}");
+        let text = r.read(&format!("evals/pack/{id}.json"));
+        assert!(names.contains(&format!("{id}.json")), "{id}");
+        assert!(text.contains("\"skill\": \"review\""), "{id}");
     }
     for id in ["agents-line-1", "agents-line-2"] {
         let text = r.read(&format!("evals/pack/{id}.json"));
@@ -309,7 +324,10 @@ fn the_pack_has_5_evals_for_each_skill_and_2_of_agents_line() {
             .rsplit_once('-')
             .unwrap();
         assert!(n.parse::<u32>().is_ok_and(|n| n >= 1), "{name}");
-        assert!(SKILLS.contains(&group) || group == "agents-line", "{name}");
+        assert!(
+            SKILLS.contains(&group) || ["agents-line", "accept"].contains(&group),
+            "{name}"
+        );
     }
     // Each eval is valid for SD506 and for the runner.
     for skill in SKILLS {
@@ -538,4 +556,194 @@ fn finish_1_and_finish_3_have_the_check_hours_line_that_a_result_lists_by_name()
         assert!(text.contains("\"name\": \"hours-line\""), "{id}");
         assert!(text.contains("^Hours: 4\\\\.5( |$)"), "{id}");
     }
+}
+
+// The 5 evals `accept-1` to `accept-5` (design 0.8.0, D62).
+
+/// The slug, the planted paths and the probe of each eval. A probe is Python
+/// code that exits 0 when the behavior is right. It exits 1 for each eval with a
+/// planted defect, and 0 for the control, `accept-5`.
+const ACCEPT: [(&str, &str, &[&str], &str); 5] = [
+    (
+        "accept-1",
+        "bulk-discount",
+        &["src/discount.py"],
+        "from discount import discount_percent\nassert discount_percent(100) == 10\n",
+    ),
+    (
+        "accept-2",
+        "order-export",
+        &["src/export.py", "tests/test_export.py"],
+        "from export import export_lines\nassert len(export_lines([{'id': 2, 'total': 300}, {'id': 1, 'total': 250}])) == 2\n",
+    ),
+    (
+        "accept-3",
+        "partial-refund",
+        &["src/refund.py"],
+        "from refund import refund_cents\nassert isinstance(refund_cents(999, 50), int)\n",
+    ),
+    (
+        "accept-4",
+        "item-sync",
+        &["src/sync.py"],
+        "from sync import sync_items\n\n\ndef send(item):\n    raise OSError('down')\n\n\ntry:\n    result = sync_items(['a'], send)\nexcept OSError:\n    result = ['raised']\nassert result not in ([], None)\n",
+    ),
+    (
+        "accept-5",
+        "parcel-fee",
+        &[],
+        "from parcel import parcel_fee_cents\nassert [parcel_fee_cents(w) for w in (19, 20, 21)] == [0, 500, 500]\n",
+    ),
+];
+
+fn copy_over(from: &Path, to: &Path) {
+    fs::create_dir_all(to).unwrap();
+    for entry in fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_over(&entry.path(), &target);
+        } else {
+            fs::copy(entry.path(), &target).unwrap();
+        }
+    }
+}
+
+#[test]
+fn an_accept_eval_is_a_built_change_of_a_higher_risk_intent_with_the_same_task_in_both_arms() {
+    let r = project("[evals]\n");
+    pack(&r);
+    for (id, slug, planted, _) in ACCEPT {
+        let text = r.read(&format!("evals/pack/{id}.json"));
+        // The change is a commit on a branch (D60), after the base commit.
+        assert!(
+            text.contains(&format!("\"branch\": \"feature/{slug}\"")),
+            "{id}"
+        );
+        assert!(
+            text.contains(&format!("\"change\": \"evals/pack/changes/{id}\"")),
+            "{id}"
+        );
+        assert!(text.contains("Bash(spec-dna accept:*)"), "{id}");
+        assert_eq!(number(&text, "max-budget-usd"), 2.5, "{id}");
+        assert_eq!(number(&text, "max-turns"), 40.0, "{id}");
+        // The task is the text of D62. It names no step of the skill, and no
+        // option of `accept`: the arm with the skill gets the brief from it.
+        assert!(
+            text.contains(&format!(
+                "\"task\": \"The change `{slug}` is built. Before `spec-dna finish`, check it. Run `spec-dna accept {slug}` for the skeleton of the acceptance record, and fill it in.\""
+            )),
+            "{id}: {text}"
+        );
+        for word in ["--brief", "acceptor", "review", "skill", "blocker"] {
+            let task = text.split("\"task\": \"").nth(1).unwrap();
+            let task = task.split("\",\n").next().unwrap();
+            assert!(!task.contains(word), "{id}: the task names `{word}`");
+        }
+        // The oracle: the checks name the planted paths, and the control has no
+        // check of a blocker.
+        let checks = text.split("\"checks\"").nth(1).unwrap();
+        for path in planted {
+            assert!(checks.contains(path), "{id}: {path}");
+        }
+        assert_eq!(
+            checks.contains("\"name\": \"blocker-found\""),
+            !planted.is_empty()
+        );
+        assert_eq!(
+            checks.contains("\"name\": \"accepted\""),
+            planted.is_empty()
+        );
+        // The base commit has the approved change with the class `higher-risk`,
+        // and the commit of the change ticks the box and adds the code.
+        let fixture = format!("evals/pack/fixtures/{id}");
+        let change = format!("evals/pack/changes/{id}");
+        let intent = r.read(&format!("{fixture}/docs/intent/{slug}/intent.md"));
+        assert!(intent.contains("\nclass: higher-risk\n"), "{id}");
+        for doc in ["spec", "plan"] {
+            let text = r.read(&format!("{fixture}/docs/intent/{slug}/{doc}.md"));
+            assert!(text.starts_with("---\nstatus: approved\n"), "{id} {doc}");
+        }
+        let toml = r.read(&format!("{fixture}/spec-dna.toml"));
+        assert!(toml.contains("approval = \"base\""), "{id}");
+        assert!(toml.contains("profile = \"standard\""), "{id}");
+        assert!(
+            r.read(&format!("{fixture}/docs/intent/{slug}/plan.md"))
+                .contains("- [ ] t1:"),
+            "{id}"
+        );
+        assert!(
+            r.read(&format!("{change}/docs/intent/{slug}/plan.md"))
+                .contains("- [x] t1:"),
+            "{id}"
+        );
+        assert!(
+            !r.dir
+                .join(format!("{fixture}/docs/intent/{slug}/acceptance.toml"))
+                .exists(),
+            "{id}: the record is the work of the agent"
+        );
+    }
+}
+
+#[test]
+fn the_suite_of_each_accept_fixture_passes_and_the_planted_defect_is_there_except_in_the_control() {
+    // The change is correct for its own tests, so a run with no review passes
+    // `sh test.sh`. A probe of the requirement exposes the defect in evals 1 to
+    // 4, and it passes in the control.
+    let r = project("[evals]\n");
+    pack(&r);
+    let work = Repo::empty();
+    for (id, _, planted, probe) in ACCEPT {
+        let dir = work.dir.join(id);
+        copy_over(&r.dir.join(format!("evals/pack/fixtures/{id}")), &dir);
+        copy_over(&r.dir.join(format!("evals/pack/changes/{id}")), &dir);
+        let suite = std::process::Command::new("sh")
+            .arg("test.sh")
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(
+            suite.status.success(),
+            "{id}: the suite fails: {}",
+            String::from_utf8_lossy(&suite.stderr)
+        );
+        let probe = std::process::Command::new("python3")
+            .args(["-B", "-c", probe])
+            .current_dir(&dir)
+            .env("PYTHONPATH", dir.join("src"))
+            .output()
+            .unwrap();
+        assert_eq!(
+            probe.status.success(),
+            planted.is_empty(),
+            "{id}: {}",
+            String::from_utf8_lossy(&probe.stderr)
+        );
+        for path in planted {
+            assert!(dir.join(path).is_file(), "{id}: {path}");
+        }
+    }
+}
+
+#[test]
+fn a_second_eval_pack_writes_the_accept_evals_that_an_older_pack_lacks_and_keeps_the_others() {
+    // Design 0.8.0, D62, "Upgrade": a project that ran `eval pack` with 0.7.1
+    // has no file of the evals `accept-1` to `accept-5`.
+    let r = project("[evals]\n");
+    pack(&r);
+    for n in 1..=5 {
+        fs::remove_file(r.dir.join(format!("evals/pack/accept-{n}.json"))).unwrap();
+        fs::remove_dir_all(r.dir.join(format!("evals/pack/fixtures/accept-{n}"))).unwrap();
+    }
+    fs::remove_dir_all(r.dir.join("evals/pack/changes")).unwrap();
+    let (code, out, err) = r.run(&["eval", "pack", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let (written, kept) = out.split_once("\"kept\":").unwrap();
+    assert!(written.contains("evals/pack/accept-1.json"), "{out}");
+    assert!(written.contains("evals/pack/fixtures/accept-5/spec-dna.toml"));
+    assert!(written.contains("evals/pack/changes/accept-3/src/refund.py"));
+    assert!(!written.contains("tdd-1"), "{written}");
+    assert!(kept.contains("evals/pack/tdd-1.json"), "{kept}");
+    assert!(!kept.contains("accept-"), "{kept}");
 }
