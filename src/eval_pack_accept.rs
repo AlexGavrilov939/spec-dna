@@ -63,6 +63,7 @@ const ACCEPT_TOOLS: &[&str] = &[
     "Bash(spec-dna accept:*)",
     "Bash(spec-dna next:*)",
     "Bash(spec-dna show:*)",
+    "Bash(spec-dna status:*)",
     "Bash(spec-dna context:*)",
     "Bash(spec-dna check:*)",
     "Bash(git status:*)",

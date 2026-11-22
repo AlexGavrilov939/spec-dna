@@ -656,6 +656,7 @@ fn an_accept_eval_is_a_built_change_of_a_higher_risk_intent_with_the_same_task_i
                 "Bash(spec-dna accept:*)",
                 "Bash(spec-dna next:*)",
                 "Bash(spec-dna show:*)",
+                "Bash(spec-dna status:*)",
                 "Bash(spec-dna context:*)",
                 "Bash(spec-dna check:*)",
                 "Bash(git status:*)",
