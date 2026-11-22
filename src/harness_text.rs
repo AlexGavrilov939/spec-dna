@@ -1,4 +1,5 @@
-//! The text of the 11 skills of the workflow pack and of `REVIEW.md` (ADR
+//! The text of the 11 skills of the workflow pack, of `REVIEW.md` and the frozen
+//! body of an agent file (ADR
 //! 0008, step 4 S3; ADR 0010; design 0.8.0, D71 and D76). The text is static: no
 //! value of the configuration goes into it, so its hash is the same in each
 //! project of one profile.
@@ -16,14 +17,17 @@
 //!   constants `V071_*` instead: the text of 0.7.1, byte for byte (D76).
 //! - `skill_body(name, profile)`: `body` for a bare name (`write-plan`), for the
 //!   command `spec-dna skill show`.
+//! - `agent_body(role, profile, current)`: the body of an agent file. The profile
+//!   `lite` gets the frozen body of `code-simplifier` of 0.7.1 (D76).
 //!
 //! The golden file of a skill is `tests/golden/harness/skills/spec-dna-<name>.md`
 //! for `standard` and `strict`, and `tests/golden/harness/skills-0.7.1/` holds the
-//! files of `lite`.
+//! files of `lite`. `tests/golden/harness/agents-0.7.1/` holds the 5 agent files
+//! of `lite`.
 
 use crate::adapters::approval_sentence;
 use crate::config::Profile;
-use crate::harness::Skill;
+use crate::harness::{Role, Skill};
 
 /// The rule of Q5. Each skill body ends with it, in the same words. The line
 /// of `AGENTS.md` and `CONTRIBUTING.md` of the build state the same rule. The
@@ -539,6 +543,32 @@ pub fn review_md() -> String {
     format!(
         "# Review policy\n\n{REVIEW_POLICY}\n\nspec-dna generates this file. Change `[harness]` in `spec-dna.toml` and run `spec-dna init --reconfigure`.\n"
     )
+}
+
+/// The body of the agent `code-simplifier` as 0.7.1 wrote it (design 0.8.0,
+/// D76). 0.8.0 put the body in Simplified Technical English, and the profile
+/// `lite` does not take that change. The golden file
+/// `tests/golden/harness/agents-0.7.1/code-simplifier.md` holds the file of the
+/// tag `v0.7.1`. Never change this constant: a change of `lite` needs a decision
+/// of the owner. The other 4 agent files of 0.7.1 have the text of this release.
+const V071_CODE_SIMPLIFIER_BODY: &str = r"You simplify the code of the diff that the brief names. Keep the behavior. Do not change a test. Do not add a feature.
+
+1. Read the diff: `git status` and `git diff`. Edit only the files of the diff.
+2. Find needless complexity: dead code, a layer that gives no value, a copy of code that exists, a name that is not clear.
+3. Make each simplification small. Keep the interface of each public function.
+4. Run the tests and checks that the project instruction files name. If a check fails, undo the edit that caused it.
+5. If you find no simplification, change nothing and say so.
+
+Report: the files that you changed, the commands that you ran with their result, and each simplification that you did not make, with the reason. Do not commit.";
+
+/// The body of an agent file: `current`, the text of this release, or the
+/// frozen text of 0.7.1 for the profile `lite` (D76), when 0.8.0 changed the
+/// text of the role.
+pub fn agent_body(role: Role, profile: Profile, current: &'static str) -> &'static str {
+    match (profile, role) {
+        (Profile::Lite, Role::CodeSimplifier) => V071_CODE_SIMPLIFIER_BODY,
+        _ => current,
+    }
 }
 
 #[cfg(test)]

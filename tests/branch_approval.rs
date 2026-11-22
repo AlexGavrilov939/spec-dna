@@ -2623,3 +2623,194 @@ fn approve_with_no_git_identity_says_to_set_user_email() {
         assert!(!err.contains("panicked"), "{artifact}: {err}");
     }
 }
+
+// D80 item 1: SD932 reads only the commits of the current life of the record. One
+// fix clears it with no rewrite of the history: delete the record in a commit of
+// its own, and accept again.
+
+/// The honest flow up to the commit of `finish`: the artifacts and their approvals
+/// merge in a pull request, and the next one holds the code, the record, its
+/// approval and the commit of `finish`.
+fn finished_and_committed() -> Repo {
+    let r = start_branch_all();
+    ok_flow_to_plan(&r);
+    r.git(&["checkout", "-q", "main"]);
+    r.git(&["merge", "-q", "--ff-only", "feature"]);
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "work"]);
+    step_code(&r);
+    record_commit(&r);
+    let (code, out, err) = approve_acceptance(&r, APPROVER);
+    assert_eq!(code, 0, "{out}{err}");
+    let (code, out) = finish_run(&r);
+    assert_eq!(code, 0, "{out}");
+    r.commit_as("finish", AGENT);
+    let (code, out) = check_base(&r);
+    assert_eq!(code, 0, "{out}");
+    r
+}
+
+fn ok_flow_to_plan(r: &Repo) {
+    first_four(r);
+    step_plan_draft(r);
+    step_plan_approved(r, APPROVER);
+}
+
+/// A second honest run of the record: accept, commit, approve.
+fn accepted_again(r: &Repo) {
+    record_commit(r);
+    let (code, out, err) = approve_acceptance(r, APPROVER);
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+fn delete_record_commit(r: &Repo) {
+    r.git(&["rm", "-q", RECORD]);
+    r.commit_as("delete the record", AGENT);
+}
+
+#[test]
+fn a_plain_revert_of_finish_gives_sd932_and_deleting_the_record_then_accepting_again_clears_it() {
+    let r = finished_and_committed();
+    r.git(&["revert", "--no-edit", "HEAD"]);
+    // The revert commit holds the record and the deletion of the archive file.
+    let (code, out) = check_base(&r);
+    assert_eq!(code, 1, "{out}");
+    let line = out
+        .lines()
+        .find(|l| l.contains(" SD932 "))
+        .unwrap_or_else(|| panic!("{out}"));
+    assert!(
+        line.contains("delete the record in a commit of its own, then accept again"),
+        "{line}"
+    );
+    assert!(!line.contains("split it"), "{line}");
+    // The fix: the record goes in a commit of its own, and the acceptor runs again.
+    delete_record_commit(&r);
+    let (_, out) = check_base(&r);
+    assert!(!has(&out, "SD932"), "{out}");
+    accepted_again(&r);
+    let (code, out) = check_base(&r);
+    assert_eq!(code, 0, "{out}");
+    assert!(!has(&out, "SD932"), "{out}");
+    let (code, out) = finish_run(&r);
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn a_revert_that_holds_no_record_gives_no_sd932_and_the_run_can_finish_again() {
+    let r = finished_and_committed();
+    // The steps of D80 item 2.
+    r.git(&["revert", "--no-commit", "HEAD"]);
+    r.git(&["rm", "-q", "-f", RECORD]);
+    r.commit_as("revert finish, with no record", AGENT);
+    let (_, out) = check_base(&r);
+    assert!(!has(&out, "SD932"), "{out}");
+    // The base moves on, and the branch merges it.
+    r.git(&["checkout", "-q", "main"]);
+    r.write("src/other.py", "y = 2\n");
+    r.commit("main moves on");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "work"]);
+    r.git(&["merge", "-q", "--no-ff", "-m", "merge the base", "main"]);
+    accepted_again(&r);
+    let (code, out) = check_base(&r);
+    assert_eq!(code, 0, "{out}");
+    let (code, out) = finish_run(&r);
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn a_mixed_commit_of_an_earlier_life_gives_no_sd932_after_the_record_is_deleted_and_accepted_again()
+{
+    let r = ack_repo(&[APPROVER]);
+    write_record(&r, "s1");
+    r.write("README.md", "# Valves, edited\n");
+    r.commit_as("record and readme", AGENT);
+    let (_, out) = check_base(&r);
+    assert!(has(&out, "SD932"), "{out}");
+    // The same mixed commit is in the current life until the record is deleted.
+    delete_record_commit(&r);
+    let (_, out) = check_base(&r);
+    assert!(!has(&out, "SD932"), "{out}");
+    accepted_again(&r);
+    let (code, out) = check_base(&r);
+    assert_eq!(code, 0, "{out}");
+    let (code, out) = finish_run(&r);
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn a_mixed_commit_stays_in_the_life_when_the_record_moves_to_the_archive_by_hand() {
+    // The move of the record to the archive ends no life: the archive file is the
+    // same record, so the mixed commit before it still gives SD932.
+    let r = ack_repo(&[APPROVER]);
+    let t = write_record(&r, "s1");
+    r.write("README.md", "# Valves, edited\n");
+    r.commit_as("record and readme", AGENT);
+    r.write(".spec-dna/accepted/valve-timeout.toml", &t);
+    r.git(&["rm", "-q", "-r", DIR]);
+    r.commit_as("move the record by hand", AGENT);
+    let (code, out) = check_base(&r);
+    assert_eq!(code, 1, "{out}");
+    assert!(has(&out, "SD932"), "{out}");
+}
+
+#[test]
+fn the_staged_deletion_of_the_record_ends_the_life_for_the_hook() {
+    let r = ack_repo(&[APPROVER]);
+    write_record(&r, "s1");
+    r.write("README.md", "# Valves, edited\n");
+    r.commit_as("record and readme", AGENT);
+    let (_, out, err) = r.run(&["check", "--staged"]);
+    assert!(has(&out, "SD932"), "{out}{err}");
+    r.git(&["rm", "-q", RECORD]);
+    let (_, out, err) = r.run(&["check", "--staged"]);
+    assert!(!has(&out, "SD932"), "{out}{err}");
+}
+
+#[test]
+fn the_draft_commit_of_the_fix_of_sd941_gives_sd401_and_sd910_reason_9_until_the_approval() {
+    // D80 item 3, the claim of the message of SD941: with `branch`, the hook
+    // `check --staged` refuses the commit that sets the plan back to `draft` with
+    // SD401, and the later checks give SD910 reason 9. The approval commit clears both.
+    let r = ack_repo(&[APPROVER]);
+    let approved = r.read(PLAN);
+    r.write(PLAN, &approved.replace("status: approved", "status: draft"));
+    r.git(&["add", PLAN]);
+    let (code, out, err) = r.run(&["check", "--staged"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(has(&out, "SD401"), "{out}");
+    r.commit_as("plan back to draft; the commit hook is skipped here", AGENT);
+    let (code, out) = check_base(&r);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.lines()
+            .any(|l| l.contains(" SD910 ") && l.contains("reason 9")),
+        "{out}"
+    );
+    r.write(PLAN, &approved);
+    r.commit_as("approve the plan", APPROVER);
+    let (_, out) = check_base(&r);
+    assert!(!has(&out, "SD401") && !has(&out, "SD910"), "{out}");
+}
+
+#[test]
+fn the_revert_of_a_move_with_the_record_deleted_ends_the_life_too() {
+    // A mixed commit, a move of the record to the archive by hand, and the revert of
+    // the move with no record in it (the steps of D80 item 2): the life is over, so
+    // the mixed commit gives no SD932 for the next record.
+    let r = ack_repo(&[APPROVER]);
+    let t = write_record(&r, "s1");
+    r.write("README.md", "# Valves, edited\n");
+    r.commit_as("record and readme", AGENT);
+    r.write(".spec-dna/accepted/valve-timeout.toml", &t);
+    r.git(&["rm", "-q", "-r", DIR]);
+    r.commit_as("move the record by hand", AGENT);
+    r.git(&["revert", "--no-commit", "HEAD"]);
+    r.git(&["rm", "-q", "-f", RECORD]);
+    r.commit_as("revert the move, with no record", AGENT);
+    accepted_again(&r);
+    let (code, out) = check_base(&r);
+    assert_eq!(code, 0, "{out}");
+    assert!(!has(&out, "SD932"), "{out}");
+}

@@ -122,6 +122,7 @@ protect-approvals = true        # the hook `protect-approvals` denies an approva
 orchestrator = { claude-code = "opus", effort = "xhigh", fallback = ["opus", "sonnet"] }
 advisor = { claude-code = "fable", agent = "opus", effort = "xhigh" }
 verifier = { claude-code = "opus", effort = "high" }
+acceptor = { claude-code = "opus", effort = "high" }  # only with the skill `review`; no role in `lite`
 researcher = { claude-code = "haiku", effort = "high" }
 helper = { claude-code = "haiku" }
 
@@ -133,10 +134,10 @@ sonnet = "high"
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `spec-dna` | string | required | The pinned version. If the binary has a different version, `check`, `finish`, `init` and `eval run` do not run. They print the install command and exit with code 3. The other commands print a warning. To move the pin, run `spec-dna upgrade`. In the checkout of spec-dna itself (a tree binary), SD503 does not count a change of the pin line. See [the tree binary](diagnostics.md#files-that-sd503-counts). |
+| `spec-dna` | string | required | The pinned version. If the binary has a different version, `check`, `finish`, `accept`, `approve`, `refresh`, `evidence stamp`, `eval run`, `import` and `init` do not run. They print the install command and exit with code 3. The other commands print a warning. To move the pin, run `spec-dna upgrade`. In the checkout of spec-dna itself (a tree binary), SD503 does not count a change of the pin line. See [the tree binary](diagnostics.md#files-that-sd503-counts). |
 | `spec-dna-sha256` | table | none | The SHA-256 sums of the release assets of the pin. Each key is an asset name: `spec-dna-<version>-<target>`, with the suffix `.exe` for a Windows target. Each value is its sum. See [The table `spec-dna-sha256`](#the-table-spec-dna-sha256). |
 | `profile` | string | `"standard"` | The default severity of each diagnostic code: `"lite"`, `"standard"` or `"strict"`. [docs/profiles.md](profiles.md) gives the table. |
-| `rules` | table | `{}` | Severity overrides for every root. A key is a rule group (`references`, `ids`, `budgets`, `area-budget`, `drift`, `evidence`, `reports`, `proof`, `acceptance`, `rollup`, `lint`, `layers`, `changes`) or a code (`SD704`). A value is `"off"`, `"warning"` or `"error"`. A code rule has priority over a group rule. The group `evidence` holds SD103, SD105 and SD608. The group `reports` holds SD613 to SD617. The group `proof` holds SD618 to SD620. The group `acceptance` holds SD927 to SD931, SD933 and SD935 to SD941. The group `rollup` holds SD641 to SD645. The group `area-budget` holds SD705 to SD707. A rule for the group `budgets` does not change the groups `rollup` and `area-budget`. No rule for the group `evidence` changes the groups `reports` and `proof`. No rule for the group `changes` changes the group `acceptance`. The group `layers` holds SD901 to SD904. The group `changes` holds SD905 and SD910 to SD926. The word `rules` in `[layers.rules]` is a layer name, not the `[rules]` table: the key path shows which one. |
+| `rules` | table | `{}` | Severity overrides for every root. A key is a rule group (`references`, `ids`, `budgets`, `area-budget`, `drift`, `evidence`, `reports`, `proof`, `acceptance`, `rollup`, `lint`, `layers`, `changes`) or a code (`SD704`). A value is `"off"`, `"warning"` or `"error"`. A code rule has priority over a group rule. The group `evidence` holds SD103, SD105 and SD608. The group `reports` holds SD613 to SD617. The group `proof` holds SD618 to SD620. The group `acceptance` holds SD927 to SD941. The group `rollup` holds SD641 to SD645. The group `area-budget` holds SD705 to SD707. A rule for the group `budgets` does not change the groups `rollup` and `area-budget`. No rule for the group `evidence` changes the groups `reports` and `proof`. No rule for the group `changes` changes the group `acceptance`. The group `layers` holds SD901 to SD904. The group `changes` holds SD905 and SD910 to SD926. The word `rules` in `[layers.rules]` is a layer name, not the `[rules]` table: the key path shows which one. |
 | `language` | string | `"en"` | The language of the normative text: a BCP 47 language tag, such as `en`, `en-GB` or `de`. It is a top-level key only. The form is a primary subtag of 2 or 3 letters, then subtags of 1 to 8 letters or digits, separated by `-`. spec-dna does not check a tag against the language registry. A tag in another form, such as `english`, `en_GB` or `x-private`, is an error (exit code 3). The primary subtag `en` (in any case) means English. Another primary subtag disables the checks that read English word lists (SD801 to SD805 and SD904). |
 | `change` | table | none | The change process. See [The table `change`](#the-table-change). |
 | `change.policy` | string | required in the table | `"three-class"`, `"two-class"` or `"none"`. Without the `[change]` table the policy is `"none"`. With `"none"`, the codes SD905 and SD910 to SD926 are off, and no rule can enable them. |
@@ -212,7 +213,7 @@ sonnet = "high"
 | `evals.max-total-usd` | number | `20` | The maximum spend of `eval run`, in USD. A number above 0. |
 | `conventions` | table | `{}` | For each type, pointers to the sections of project documents that state the conventions for documents of that type. See [Conventions](#conventions). |
 | `harness` | table | none | The agent harness. No table is the same as level `none`. See [The table `harness`](#the-table-harness). |
-| `harness.level` | string | required in the table | `none` installs nothing. `lean` installs the orchestrator, the advisor, the verifier, the researcher and the helper. `full` also installs the implementer and the code-simplifier. With `none`, spec-dna reads the other keys and ignores them. |
+| `harness.level` | string | required in the table | `none` installs nothing. `lean` installs the orchestrator, the advisor, the verifier, the researcher and the helper, and the acceptor when `skills` has `review` (the profile `lite` has no acceptor). `full` also installs the implementer and the code-simplifier. With `none`, spec-dna reads the other keys and ignores them. |
 | `harness.deny` | list of strings | `[]` | Claude Code adapter. Tool names. spec-dna removes each one from the `tools` list of every generated agent, and adds it to `permissions.deny` of `.claude/settings.json`. A rule for the whole tool, `<Tool>(*)` or `<Tool>(**)`, counts as the tool name. A list that removes each tool of a generated agent is an error that names the agent. |
 | `harness.context-meter` | list of integers | `[300000, 600000]` | The context sizes, in tokens, at which the hook `context-meter` tells the main session its size. The values are greater than 0 and in ascending order. `[]` disables the main-session meter. |
 | `harness.subagent-meter` | integer | `250000` | The context size of a subagent, in tokens, for the same hook. `0` disables it. |
@@ -544,7 +545,7 @@ These keys select the parts of the harness that `init` writes besides the agents
 
 ### Roles
 
-`[harness.roles.<role>]` has these keys. The roles are `orchestrator`, `advisor`, `verifier`, `researcher`, `implementer`, `code-simplifier` and `helper`. The keys `reviewer` and `spec-writer` of spec-dna 0.5 give exit code 3. The role `reviewer` is now `verifier`. The role `spec-writer` ended.
+`[harness.roles.<role>]` has these keys. The roles are `orchestrator`, `advisor`, `verifier`, `acceptor`, `researcher`, `implementer`, `code-simplifier` and `helper`. The keys `reviewer` and `spec-writer` of spec-dna 0.5 give exit code 3. The role `reviewer` is now `verifier`. The role `spec-writer` ended.
 
 | Key | Roles | Meaning |
 | --- | --- | --- |
@@ -560,12 +561,13 @@ The defaults:
 | `orchestrator` | `opus` | `xhigh` | `lean`, `full` |
 | `advisor` | `fable` (agent: `opus`) | `xhigh` (agent) | `lean`, `full` |
 | `verifier` | `opus` | `high` | `lean`, `full` |
+| `acceptor` | `opus` | `high` | `lean`, `full`, only with the skill `review`, and never in the profile `lite` |
 | `researcher` | `haiku` | `high` | `lean`, `full` |
 | `implementer` | `sonnet` | `high` | `full` |
 | `code-simplifier` | `sonnet` | `high` | `full` |
 | `helper` | `haiku` | none | `lean`, `full` |
 
-A role that the level does not include is an error, for example `harness.roles.implementer`: the role is in the level `full`. These rules apply to the values:
+A role that the level does not include is an error, for example `harness.roles.implementer`: the role is in the level `full`. The role `acceptor` is in each level, but a configuration has it only with the skill `review`, and the profile `lite` has it never. A configuration that has no such role (no skill `review`, or the profile `lite`) keeps the entry of `acceptor` that a person set, and it writes no agent file. A new project with the default value writes no entry for it. These rules apply to the values:
 
 - A model is a string that is not empty and has no spaces.
 - The orchestrator cannot be `none`, and its effort cannot be `max`. The advisor model cannot be `inherit`, and cannot be `haiku` in any letter case.
@@ -696,7 +698,7 @@ How it works:
 
 The code tree is one hash of the code as it was when the tests ran. It covers each file that git tracks, with the bytes on the disk. A symbolic link counts with the text that it names, as git stores it, and a submodule counts with its entry in the git index (the tree does not look into it). It leaves out these paths: the files that `tree-exclude` matches (default: each Markdown file), the folders of the `intent` layer, `.spec-dna/`, the files that `init` writes with `spec-dna.toml` and the report files with their stamps. Thus a change of documents never makes a report stale, and a change of code does.
 
-An untracked file does not count. A file that git does not track yet is not in the tree, so a `git add` of a new file after the stamp makes the report stale. Stage new files before the stamp.
+An untracked file does not count. A file that git does not track yet is not in the tree, so a `git add` of a new file after the stamp makes the report stale. A test file that git does not track yet is not in the tree hash, but `check`, `finish` and `accept` read it for its `classname`. A test file that git ignores and does not track stays unread, as before. Stage new files before the stamp.
 
 A tag binds to a test case in these ways:
 

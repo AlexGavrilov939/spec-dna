@@ -30,6 +30,7 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | concern | An item of the task list in the `Concerns` section of a spec. An approved spec has no open concern (SD919) | | [change guide](guides/change.md) |
 | cost per correct outcome | The cost of the runs of one arm, divided by its passes. The verdict of a skill uses the ratio of this value with the skill and without it | | [evals](evals.md#the-verdict) |
 | `covers:` tag | A comment in a test, such as `# covers: valves#shutoff`, that links the test to a requirement | | [concepts](concepts.md#ids-and-requirements) |
+| current life | The life of the record that the head holds. SD932 reads only the commits of this life, so a mixed commit of an earlier life gives no finding. A commit that deletes the record and moves it nowhere ends the life. The commit of `finish` and its revert continue it for SD932 | | [diagnostics](diagnostics.md) |
 | current truth | The requirements, rules and interfaces of the project, in `requirements/`, `rules/` and `interfaces/`. A delta changes them, and SD921 guards them | | [concepts](concepts.md#layers-and-the-graph) |
 | decision | A MADR record of a choice. After the acceptance, its text is locked, except its amendment, history and live sections | | [types](types.md) |
 | delta | The list of `ADD`, `CHANGE` and `REMOVE` lines in a spec. Each line names a requirement id | | [change guide](guides/change.md) |

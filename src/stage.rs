@@ -413,6 +413,15 @@ fn prompt_line(root: &std::path::Path, slug: &str, follow_up: bool) -> String {
     format!("cd '{root}' && spec-dna accept {slug}{form} --brief")
 }
 
+/// The paths of a refusal, each in backticks, with a comma between them.
+fn quote_paths(paths: &[String]) -> String {
+    paths
+        .iter()
+        .map(|p| format!("`{p}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// Who runs the prompt: the agent `acceptor` where the harness writes it, else any
 /// agent that did not build the change (D71 item 4).
 fn acceptor_phrase(cfg: &Config) -> &'static str {
@@ -470,6 +479,18 @@ fn accept_item_of_record(
     };
     let text = match (committed, on_disk) {
         (None, None) => {
+            // `accept` refuses while the work has an edit that `HEAD` does not have
+            // (D80 item 4), so the prompt line would end with exit code 1.
+            let intent_dirs = lifecycle::intent_dirs(head_cfg);
+            let is_code = |p: &str| crate::tree::is_code_path(head_cfg, p, &intent_dirs);
+            let scope = crate::accept::scope_of(head_cfg, ch, head);
+            let edited = crate::accept::refused_paths(repo, &ch.dir, &scope, &is_code)?;
+            if !edited.is_empty() {
+                return Ok(open(format!(
+                    "the work has an edit that `HEAD` does not have: {}: commit the work, then run `spec-dna next` again",
+                    quote_paths(&edited)
+                )));
+            }
             return Ok(open(format!(
                 "start {} with the prompt `{}`, and add no word; it writes and commits the record",
                 acceptor_phrase(head_cfg),
@@ -569,12 +590,17 @@ fn accept_item_of_record(
         Code::AcceptanceStale => {
             let cause = acceptance::stale_cause(messages.first().map_or("", String::as_str));
             let who = acceptor_phrase(head_cfg);
+            let intent_dirs = lifecycle::intent_dirs(head_cfg);
+            let is_code = |p: &str| crate::tree::is_code_path(head_cfg, p, &intent_dirs);
+            let scope = crate::accept::scope_of(head_cfg, ch, head);
+            // `accept` refuses while the work has an edit that `HEAD` does not have,
+            // so each form of the item asks for the commit first (D80 item 4).
+            let edited = crate::accept::refused_paths(repo, &ch.dir, &scope, &is_code)?;
             // A fix of a note after the record needs no full run (D73 item 10). The
             // item names the follow-up only when `accept --follow-up` does not refuse.
-            let follow = if cause == "the code changed after the acceptance" {
-                let intent_dirs = lifecycle::intent_dirs(head_cfg);
-                let is_code = |p: &str| crate::tree::is_code_path(head_cfg, p, &intent_dirs);
-                let scope = crate::accept::scope_of(head_cfg, ch, head);
+            let follow = if !edited.is_empty() {
+                crate::accept::FollowCheck::Uncommitted(edited)
+            } else if cause == "the code changed after the acceptance" {
                 let changed: Vec<String> = diff
                     .map(|d| d.files.iter().map(|f| f.0.clone()).collect())
                     .unwrap_or_default();
@@ -596,8 +622,9 @@ fn accept_item_of_record(
                     "the record is stale after a fix of an open note: start {who} with the prompt `{}`, and add no word; it writes and commits the follow-up",
                     prompt_line(&repo.root, slug, true)
                 ),
-                crate::accept::FollowCheck::Uncommitted => format!(
-                    "the record `{path}` is stale, because {cause}: commit the work, then run `spec-dna next` again"
+                crate::accept::FollowCheck::Uncommitted(paths) => format!(
+                    "the record `{path}` is stale, because {cause}; the work has an edit that `HEAD` does not have: {}: commit the work, then run `spec-dna next` again",
+                    quote_paths(&paths)
                 ),
                 crate::accept::FollowCheck::Refused(_) => format!(
                     "the record `{path}` is stale, because {cause}: delete it, commit, and start {who} with the prompt `{}` again",

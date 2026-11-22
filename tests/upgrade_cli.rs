@@ -2438,6 +2438,49 @@ fn the_first_upgrade_of_the_fixture_of_0_7_1_writes_the_files_of_its_profile() {
     }
 }
 
+/// D76: a project of 0.7.1 in the profile `lite` at the level `full` keeps the
+/// 2 agent files of that level. The fixture has the level `lean`, so the test
+/// moves it to `full` and adds the 2 files as 0.7.1 wrote them (the golden
+/// files of the tag). `upgrade` changes only the version in their markers.
+#[test]
+fn upgrade_of_lite_at_full_changes_the_marker_of_the_2_agent_files_only() {
+    let repo = Repo::from_fixture("v071-lite", &[]);
+    let toml = repo.read("spec-dna.toml");
+    assert!(toml.contains("level = \"lean\""));
+    repo.write(
+        "spec-dna.toml",
+        &toml.replace("level = \"lean\"", "level = \"full\""),
+    );
+    let golden = |name: &str| {
+        let p = format!(
+            "{}/tests/golden/harness/agents-0.7.1/{name}.md",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        fs::read_to_string(&p)
+            .unwrap_or_else(|e| panic!("{p}: {e}"))
+            .replace("{VERSION}", "0.7.1")
+    };
+    let files = [
+        ".claude/agents/implementer.md",
+        ".claude/agents/code-simplifier.md",
+    ];
+    for f in files {
+        let name = f.rsplit('/').next().unwrap().trim_end_matches(".md");
+        repo.write(f, &golden(name));
+    }
+    repo.commit("level full");
+    let (code, out, err) = upgrade(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    for f in files {
+        let name = f.rsplit('/').next().unwrap().trim_end_matches(".md");
+        assert_eq!(
+            repo.read(f),
+            golden(name).replace("harness v0.7.1", &format!("harness v{VERSION}")),
+            "{f}: only the version of the marker changes"
+        );
+    }
+}
+
 const VALVE_TIMEOUT_INTENT: &str = "# Valve timeout\n\n## Intent\n\nClose the valve on a timeout.\n\n## Why now\n\nA valve stayed open.\n\n## Out of scope\n\n- An alarm.\n";
 const VALVE_TIMEOUT_SPEC: &str = "---\nstatus: approved\n---\n# Valve timeout\n\n## Delta\n\n- ADD requirements/valves#sensor-timeout: When a sensor gives no value for 60 seconds, the controller SHALL close the valve of its bed.\n\n## Interfaces\n\nNone.\n\n## Decisions\n\nNone.\n\n## Concerns\n\n- [x] A slow sensor. Resolved: 60 seconds.\n\n## Open questions\n\n- [x] Does the valve reopen? Answer: no.\n";
 const VALVE_TIMEOUT_PLAN: &str = "---\nstatus: approved\n---\n# Valve timeout\n\n## Files\n\n- `src/schedule.sh`\n- `tests/schedule_test.sh`\n\n## Order\n\n- [x] t1: Close the valve. Files: `src/schedule.sh`. Verify: `tests/schedule_test.sh` passes. Hours: 1.\n\n## Risks\n\n- A slow sensor.\n\n## Proof\n\n`tests/schedule_test.sh` covers `requirements/valves#sensor-timeout`.\n";

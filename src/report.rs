@@ -696,7 +696,8 @@ pub struct Reads {
     pub cases: Vec<Case>,
     /// The number of reports that are fresh.
     pub fresh: usize,
-    /// The tracked test files of the code tree, for the bind by `classname`.
+    /// The test files of the code tree, and the files that git does not track
+    /// yet, for the bind by `classname`.
     pub test_files: Vec<String>,
     pub problems: Vec<Problem>,
 }
@@ -726,6 +727,38 @@ pub fn read(repo: &Repo, config: &Config) -> Result<Reads, Fatal> {
         .into_iter()
         .filter(|p| config.is_test_file(p))
         .collect();
+    // A test file that git does not track yet is not in the code tree, but it
+    // is a test file: it must name its `classname` as any other test file does.
+    // Else a case of a new file would bind to a tag of any file, and a skipped
+    // test could count as proven by a passed case of the same name. The tree
+    // hash does not change. More names only narrow a bind. (`--reports` does not
+    // combine with `--staged`, so the read always sees the working tree.)
+    let usable = config.evidence_tests.iter().all(|g| {
+        let g = g.trim_matches('/');
+        !g.is_empty() && !g.split('/').any(|s| s == ".." || s == ".")
+    });
+    // A glob that git does not accept as a pathspec turns the limit off. The
+    // filter below keeps only the test files.
+    let specs: Vec<String> = if usable {
+        config
+            .evidence_tests
+            .iter()
+            .map(|g| format!(":(glob){}", g.trim_matches('/')))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let known: std::collections::HashSet<String> = out.test_files.iter().cloned().collect();
+    let intent = crate::lifecycle::intent_dirs(config);
+    for p in repo.git.list_worktree(&specs).map_err(Fatal::Io)? {
+        if !known.contains(&p)
+            && config.is_test_file(&p)
+            && tree::is_code_path(config, &p, &intent)
+            && repo.root.join(&p).is_file()
+        {
+            out.test_files.push(p);
+        }
+    }
     let tracked = tree::tracked_reports(repo, config).map_err(Fatal::Io)?;
     for t in &tracked {
         out.problems.push(Problem {

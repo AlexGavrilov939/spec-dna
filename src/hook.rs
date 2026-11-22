@@ -2330,7 +2330,10 @@ fn moved_to_approval(
         let old = old.map(|s| lf(&s));
         match old {
             Some(old) => {
-                // A delete is no edit: a person can revert the commit of `finish`.
+                // A delete is no edit, so the fix of SD929 after `finish` passes: `git
+                // revert --no-commit` the commit of `finish`, delete
+                // `<folder>/acceptance.toml`, commit, merge the base, accept again, and
+                // run `finish` again.
                 if new.iter().any(|n| *n != old) {
                     return Some(format!(
                         "{path} edits an archive file in this commit. An archive file never changes. Restore the file."

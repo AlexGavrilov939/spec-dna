@@ -291,7 +291,11 @@ fn with_branch_the_item_adds_the_way_to_the_word_of_the_owner() {
     let item = accept_item(&next_text(&r));
     assert!(item.contains(WAIT), "{item}");
     assert!(
-        item.contains(": set `status: draft` in plan.md, then the approver runs `spec-dna approve valve-timeout plan`"),
+        item.contains("; a third run needs the word of the owner: commit `status: draft` of plan.md on its own")
+            && item.contains("skipping the commit hook for that commit only")
+            && item.contains("naming the skip in the body of the commit")
+            && item.contains("SD401 and SD910 reason 9")
+            && item.contains("then the approver runs `spec-dna approve valve-timeout plan`"),
         "{item}"
     );
 }
@@ -430,6 +434,30 @@ fn with_branch_a_third_record_after_2_rejected_gives_sd941_in_check_staged_check
     assert!(has(&out, "SD941"), "{out}");
     assert!(
         out.contains("2 rejected records") && out.contains("spec-dna approve valve-timeout plan"),
+        "{out}"
+    );
+    // D80 item 3: the message names the skip of the commit hook for the draft
+    // commit, and the 2 codes that the draft commit gives.
+    let line = out
+        .lines()
+        .find(|l| l.contains(" SD941 "))
+        .unwrap_or_else(|| panic!("{out}"));
+    assert!(
+        line.contains("commit `status: draft` of plan.md on its own")
+            && line.contains("skipping the commit hook for that commit only")
+            && line.contains("naming the skip in the body of the commit")
+            && line.contains("SD401 and SD910 reason 9")
+            && line.contains("`spec-dna approve valve-timeout plan` (both codes are gone)"),
+        "{line}"
+    );
+    let fix = out
+        .lines()
+        .find(|l| l.starts_with("SD941 fix:"))
+        .unwrap_or("");
+    assert!(
+        fix.contains("skip the commit hook for that commit only")
+            && fix.contains("SD401 and SD910 reason 9")
+            && fix.contains("`spec-dna approve <slug> plan`"),
         "{out}"
     );
     // Committed, with a full record: `check` and `finish`.

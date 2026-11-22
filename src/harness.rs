@@ -627,6 +627,14 @@ impl Harness {
                 || (self.profile != Profile::Lite && self.skills.contains(&Skill::Review)))
     }
 
+    /// Returns true for the entry of the role `acceptor` that a person set, in a
+    /// configuration that has no such role (the skill `review` is off, or the
+    /// profile is `lite`). The entry has no effect there, and `init` writes it
+    /// again, so that the value is back when the skill `review` returns.
+    fn keeps_entry(&self, role: Role) -> bool {
+        role == Role::Acceptor && self.level.includes(role) && *self.cfg(role) != RoleCfg::new(role)
+    }
+
     /// Returns true if the level includes the role and the role is not off.
     pub fn on(&self, role: Role) -> bool {
         self.has_role(role) && self.cfg(role).model != Model::None
@@ -853,7 +861,10 @@ impl Harness {
             s += &format!("protect-approvals = {b}\n");
         }
         s += "\n[harness.roles]\n";
-        for r in Role::ALL.into_iter().filter(|r| self.has_role(*r)) {
+        for r in Role::ALL
+            .into_iter()
+            .filter(|r| self.has_role(*r) || self.keeps_entry(*r))
+        {
             let c = self.cfg(r);
             let mut parts = vec![format!("claude-code = {}", quote(c.model.name()))];
             if r == Role::Advisor {
@@ -1159,7 +1170,13 @@ fn line_of(text: &str, pos: usize) -> u32 {
 /// parent session and from the repository.
 const SCRATCH_RULES: &str = "Scratch folder: These rules cover temporary files only. They never limit an edit of the repository that your task needs. A temporary file is the one write that a read-only role may make, and only in the folder below. Make your own new subfolder in the scratchpad folder that the session names. If the session names none, make a new folder with `mktemp -d`. Put each temporary file in that subfolder. Put there also each screenshot and each file of a browser tool. Never write them into the repository. Delete only the files that you put in the scratchpad, and the subfolder that you made. Never delete or change another file of the scratchpad. Never delete the scratchpad folder itself.";
 
-fn render_agent(def: &AgentDef, model: &Model, effort: Effort, deny: &[String]) -> String {
+fn render_agent(
+    def: &AgentDef,
+    model: &Model,
+    effort: Effort,
+    deny: &[String],
+    profile: Profile,
+) -> String {
     let mut s = format!(
         "---\nname: {}\ndescription: {}\nmodel: {}\n",
         def.name,
@@ -1179,7 +1196,8 @@ fn render_agent(def: &AgentDef, model: &Model, effort: Effort, deny: &[String]) 
     if def.omit_claude_md {
         s += "omitClaudeMd: true\n";
     }
-    s += &format!("---\n\n{}\n\n{SCRATCH_RULES}\n", def.body);
+    let body = harness_text::agent_body(def.role, profile, def.body);
+    s += &format!("---\n\n{body}\n\n{SCRATCH_RULES}\n");
     format!("{s}\n{}\n", marker_text(&s))
 }
 
@@ -1403,7 +1421,7 @@ pub fn generated_files(h: &Harness) -> Vec<Generated> {
         };
         out.push(Generated {
             path: def.path(),
-            text: render_agent(def, model, c.effort, &h.deny),
+            text: render_agent(def, model, c.effort, &h.deny, h.profile),
             agent: Some(def.name),
             skill: None,
             note,

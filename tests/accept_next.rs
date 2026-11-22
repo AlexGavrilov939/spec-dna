@@ -800,6 +800,80 @@ fn an_edit_that_head_does_not_have_asks_for_the_commit_before_a_follow_up() {
 }
 
 #[test]
+fn a_stale_record_with_an_uncommitted_edit_names_the_paths_and_prints_no_prompt_line() {
+    // D80 item 4: the follow-up case and the full-run case read the same refusal.
+    let r = built_with_config(&with_agent("standard"));
+    commit_record_with_note(&r);
+    r.write(CODE, &format!("{CODE_NEW}\n# the unit is seconds\n"));
+    let item = record_item(&r);
+    assert!(
+        item.contains(&format!("`{CODE}`"))
+            && item.contains("commit the work, then run `spec-dna next` again"),
+        "{item}"
+    );
+    // Another edit on a path that no open note names: a full run is next, but the
+    // work is not committed, and `accept` refuses.
+    let r = built_with_config(&with_agent("standard"));
+    commit_record_with_note(&r);
+    r.write(TEST, &format!("{TEST_NEW}\n# an edit\n"));
+    let (code, _, _) = r.run(&["accept", SLUG, "--brief"]);
+    assert_eq!(code, 1);
+    let item = record_item(&r);
+    assert!(
+        item.contains("is stale")
+            && item.contains(&format!("`{TEST}`"))
+            && item.contains("commit the work, then run `spec-dna next` again"),
+        "{item}"
+    );
+    assert!(
+        !item.contains("prompt") && !item.contains("spec-dna accept"),
+        "{item}"
+    );
+}
+
+// D80 item 4: `next` reads the refusal of `accept` before it prints the prompt line.
+
+#[test]
+fn an_uncommitted_edit_with_no_record_asks_for_the_commit_and_names_the_path() {
+    let r = built("standard");
+    // A code path of the scope, and the plan of the change: each edit is one case.
+    for (path, extra) in [(CODE, "\n# the unit is seconds\n"), (PLAN, "\nA line.\n")] {
+        let old = r.read(path);
+        r.write(path, &format!("{old}{extra}"));
+        // The command that the prompt runs refuses.
+        let (code, _, err) = r.run(&["accept", SLUG, "--brief"]);
+        assert_eq!(code, 1, "{err}");
+        let item = record_item(&r);
+        assert!(
+            item.contains(&format!("`{path}`"))
+                && item.contains("commit the work, then run `spec-dna next` again"),
+            "{item}"
+        );
+        assert!(
+            !item.contains("prompt") && !item.contains("spec-dna accept"),
+            "{item}"
+        );
+        let json = next_json(&r);
+        assert!(
+            json.contains(&format!("`{path}`")) && !json.contains("spec-dna accept"),
+            "{json}"
+        );
+        // The commit brings the prompt line back.
+        r.commit("the edit");
+        let item = record_item(&r);
+        assert!(item.contains("with the prompt `cd '"), "{item}");
+    }
+}
+
+#[test]
+fn an_edit_outside_the_scope_does_not_hide_the_prompt_line() {
+    let r = built("standard");
+    r.write("README.md", "# Project, edited\n");
+    let item = record_item(&r);
+    assert!(item.contains("with the prompt `cd '"), "{item}");
+}
+
+#[test]
 fn a_branch_that_turns_sd927_off_does_not_change_the_gate_of_the_open_task() {
     // The base has the acceptance on. The branch turns SD927 off in its own
     // `spec-dna.toml`. The need rule reads the stricter of the head and the base

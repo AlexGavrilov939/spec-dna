@@ -538,7 +538,11 @@ fn follow_up_record(c: &FollowCtx) -> Result<(String, Record, String), Fatal> {
     ) {
         crate::git::Limited::Bytes(b) => String::from_utf8_lossy(&b).into_owned(),
         crate::git::Limited::Absent => {
-            return Err(full_run(c.slug, format!("`{record_path}` does not exist")));
+            // The file does not exist, so there is nothing to delete (D80 item 5).
+            return Err(Fatal::Refused(format!(
+                "the change `{slug}` has no record; run `spec-dna accept {slug} --brief` for a full run",
+                slug = c.slug
+            )));
         }
         other => {
             return Err(Fatal::Refused(crate::acceptance::unreadable_message(
@@ -671,8 +675,9 @@ fn prepare_follow_up<'a>(
 pub enum FollowCheck {
     /// `accept --follow-up` does not refuse.
     Callable,
-    /// An edit that `HEAD` does not have: the agent commits the work first.
-    Uncommitted,
+    /// An edit that `HEAD` does not have: the agent commits the work first. The
+    /// paths are those of [`refused_paths`].
+    Uncommitted(Vec<String>),
     /// The command refuses, and names a full run. The text is its message.
     Refused(String),
 }
@@ -682,13 +687,9 @@ pub enum FollowCheck {
 /// the command does not refuse, and else a full run. It makes the checks of the
 /// command: the dirty tree and the chain.
 pub fn follow_up_check(c: &FollowCtx) -> Result<FollowCheck, Fatal> {
-    let dirty = match refuse_uncommitted(c.repo, c.folder) {
-        Ok(d) => d,
-        Err(Fatal::Refused(_)) => return Ok(FollowCheck::Uncommitted),
-        Err(e) => return Err(e),
-    };
-    if refuse_dirty_code(&dirty, c.scope, c.is_code).is_err() {
-        return Ok(FollowCheck::Uncommitted);
+    let edited = refused_paths(c.repo, c.folder, c.scope, c.is_code)?;
+    if !edited.is_empty() {
+        return Ok(FollowCheck::Uncommitted(edited));
     }
     let (_, rec, record_path) = match follow_up_record(c) {
         Ok(r) => r,
@@ -927,6 +928,29 @@ fn refuse_uncommitted(repo: &Repo, folder: &str) -> Result<Vec<String>, Fatal> {
             "the repository has no commit; commit the work, then accept".to_string(),
         ));
     }
+    let (all, dirty) = edited_paths(repo, folder)?;
+    if dirty.is_empty() {
+        return Ok(all);
+    }
+    Err(Fatal::Refused(format!(
+        "{} has an edit that HEAD does not have: {}; commit the work, then accept",
+        if dirty.iter().all(|p| p == crate::config::FILE_NAME) {
+            "`spec-dna.toml`".to_string()
+        } else {
+            format!("the folder `{folder}` or `spec-dna.toml`")
+        },
+        dirty
+            .iter()
+            .map(|p| format!("`{p}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )))
+}
+
+/// The paths that `accept` reads for its refusal: each path with an edit that
+/// `HEAD` does not have, in the index or in the working tree, and among them the
+/// paths of the folder (except the record) and `spec-dna.toml`.
+fn edited_paths(repo: &Repo, folder: &str) -> Result<(Vec<String>, Vec<String>), Fatal> {
     let prefix = format!("{folder}/");
     let record = format!("{prefix}{}", record::FILE_NAME);
     let mut all: Vec<String> = Vec::new();
@@ -946,22 +970,33 @@ fn refuse_uncommitted(repo: &Repo, folder: &str) -> Result<Vec<String>, Fatal> {
             all.push(p);
         }
     }
-    if dirty.is_empty() {
-        return Ok(all);
+    Ok((all, dirty))
+}
+
+/// The paths for which `accept` refuses: the edits of the folder of the change
+/// (except the record) and of `spec-dna.toml`, and the code paths that `scope`
+/// matches and that have an edit or are untracked. They are the same paths as in
+/// the refusals of [`refuse_uncommitted`] and [`refuse_dirty_code`]. The list is
+/// empty when `accept` does not refuse for them, and with no commit in the
+/// repository (`next` needs a base, so it has one). `next` reads it before it
+/// prints the prompt line of the acceptor (design 0.8.0, D80 item 4).
+pub fn refused_paths(
+    repo: &Repo,
+    folder: &str,
+    scope: &[String],
+    is_code: &dyn Fn(&str) -> bool,
+) -> Result<Vec<String>, Fatal> {
+    if repo.head_commit().is_none() {
+        return Ok(Vec::new());
     }
-    Err(Fatal::Refused(format!(
-        "{} has an edit that HEAD does not have: {}; commit the work, then accept",
-        if dirty.iter().all(|p| p == crate::config::FILE_NAME) {
-            "`spec-dna.toml`".to_string()
-        } else {
-            format!("the folder `{folder}` or `spec-dna.toml`")
-        },
-        dirty
-            .iter()
-            .map(|p| format!("`{p}`"))
-            .collect::<Vec<_>>()
-            .join(", ")
-    )))
+    let (all, mut paths) = edited_paths(repo, folder)?;
+    for p in record::select_paths(scope, &all, is_code) {
+        if !paths.contains(&p) {
+            paths.push(p);
+        }
+    }
+    paths.sort();
+    Ok(paths)
 }
 
 /// Refuses while a code path that `scope` matches is in `dirty`: it has an edit

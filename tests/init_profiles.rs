@@ -747,3 +747,162 @@ fn reconfigure_keeps_the_area_budget_and_adds_none() {
     assert_eq!(code, 0, "{out}{err}");
     assert_eq!(area_budget(&r), None, "{}", r.read("spec-dna.toml"));
 }
+
+/// The key `[change] acceptance-for` (design 0.8.0, D70). `init` writes none,
+/// so `--reconfigure` keeps the value that the file sets, also a value that is
+/// the default of the profile. It never writes the key twice.
+#[test]
+fn reconfigure_keeps_the_key_acceptance_for_in_each_profile() {
+    for profile in ["lite", "standard", "strict"] {
+        for value in ["none", "higher-risk", "all"] {
+            let r = repo();
+            let answers = format!("profile = \"{profile}\"\nharness = \"lean\"\n");
+            let (code, out, err) = init_with(&r, &answers, &[]);
+            assert_eq!(code, 0, "{profile} {value}: {out}{err}");
+            assert!(!r.read("spec-dna.toml").contains("acceptance-for"));
+            let text = r.read("spec-dna.toml").replace(
+                "\nmax-fanout = 8",
+                &format!("\nacceptance-for = \"{value}\"\nmax-fanout = 8"),
+            );
+            r.write("spec-dna.toml", &text);
+            r.commit("set the key");
+            for round in 1..=2 {
+                let (code, out, err) = init_with(&r, &answers, &["--reconfigure"]);
+                assert_eq!(code, 0, "{profile} {value} {round}: {out}{err}");
+                assert_eq!(
+                    table(&r)["change"]["acceptance-for"].as_str(),
+                    Some(value),
+                    "{profile} {value} {round}: {}",
+                    r.read("spec-dna.toml")
+                );
+                assert_eq!(
+                    r.read("spec-dna.toml").matches("acceptance-for").count(),
+                    1,
+                    "{profile} {value} {round}"
+                );
+            }
+        }
+    }
+}
+
+/// Reads the value at a dotted path of a TOML table. No key of the path has a
+/// dot.
+fn at<'a>(t: &'a toml::Table, path: &str) -> Option<&'a toml::Value> {
+    let mut keys = path.split('.');
+    let mut v = t.get(keys.next()?)?;
+    for k in keys {
+        v = v.get(k)?;
+    }
+    Some(v)
+}
+
+/// Each key that 0.8.0 added and that `init` does not ask for (the list is
+/// `schema/spec-dna.schema.json` against the tag `v0.7.1`, and the groups of
+/// `[rules]`, `[layers.summaries]` and `[owners]`). A value that a person set
+/// survives `init --reconfigure` in each profile, and a second run changes
+/// nothing.
+#[test]
+fn reconfigure_keeps_each_key_that_0_8_0_added() {
+    use toml::Value;
+    let s = |x: &str| Value::String(x.to_string());
+    let list = |xs: &[&str]| Value::Array(xs.iter().map(|x| s(x)).collect());
+    let keys: Vec<(&str, Value)> = vec![
+        ("change.acceptance-for", s("none")),
+        ("change.higher-risk-acceptors", Value::Integer(3)),
+        ("change.invariants", Value::Boolean(true)),
+        ("change.max-task-files", Value::Integer(5)),
+        ("owners.src/**", list(&["security"])),
+        ("budgets.area.soft", Value::Integer(111)),
+        ("budgets.area.hard", Value::Integer(222)),
+        ("budgets.summary.soft", Value::Integer(33)),
+        ("budgets.summary.hard", Value::Integer(44)),
+        ("evidence.reports", list(&["reports/**/*.xml"])),
+        ("evidence.reliable-runs", Value::Integer(4)),
+        ("evidence.reliable-for", s("all")),
+        ("evidence.tree-exclude", list(&["**/*.txt"])),
+        ("rules.acceptance", s("off")),
+        ("rules.rollup", s("warning")),
+        ("rules.area-budget", s("off")),
+        ("rules.proof", s("off")),
+        ("rules.reports", s("off")),
+        ("layers.summaries.types", list(&["summary"])),
+        ("harness.roles.acceptor.claude-code", s("sonnet")),
+        ("harness.roles.acceptor.effort", s("low")),
+    ];
+    let mut report = Vec::new();
+    for profile in ["lite", "standard", "strict"] {
+        let r = repo();
+        let answers = format!("profile = \"{profile}\"\nharness = \"lean\"\n");
+        r.write("docs/a.md", "# A\n\nText.\n");
+        r.write(
+            "spec-dna.toml",
+            &format!(
+                "spec-dna = \"{VERSION}\"\nprofile = \"{profile}\"\n\n[change]\npolicy = \"three-class\"\ngate = \"warn\"\nacceptance-for = \"none\"\nhigher-risk-acceptors = 3\ninvariants = true\nmax-task-files = 5\n\n[owners]\n\"src/**\" = [\"security\"]\n\n[budgets.area]\nsoft = 111\nhard = 222\n\n[budgets.summary]\nsoft = 33\nhard = 44\n\n[evidence]\nreports = [\"reports/**/*.xml\"]\nreliable-runs = 4\nreliable-for = \"all\"\ntree-exclude = [\"**/*.txt\"]\n\n[rules]\nacceptance = \"off\"\nrollup = \"warning\"\narea-budget = \"off\"\nproof = \"off\"\nreports = \"off\"\n\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.intent]\ntypes = [\"intent\", \"spec\", \"plan\"]\n\n[layers.summaries]\ntypes = [\"summary\"]\n\n[harness]\nlevel = \"lean\"\n\n[harness.roles]\nacceptor = {{ claude-code = \"sonnet\", effort = \"low\" }}\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n"
+            ),
+        );
+        r.commit("set the keys");
+        let mut first = String::new();
+        for round in 1..=2 {
+            let (code, out, err) = init_with(&r, &answers, &["--reconfigure"]);
+            assert_eq!(code, 0, "{profile} {round}: {out}{err}");
+            let got = table(&r);
+            let lost: Vec<&str> = keys
+                .iter()
+                .filter(|(path, v)| at(&got, path) != Some(v))
+                .map(|(path, _)| *path)
+                .collect();
+            if !lost.is_empty() {
+                report.push(format!("{profile} {round}: {lost:?}"));
+            }
+            if round == 1 {
+                first = r.read("spec-dna.toml");
+            } else {
+                assert_eq!(r.read("spec-dna.toml"), first, "{profile}: second run");
+            }
+        }
+    }
+    assert_eq!(
+        report,
+        Vec::<String>::new(),
+        "keys that `--reconfigure` lost"
+    );
+}
+
+/// A value of the role `acceptor` that a person set stays when the configuration
+/// has no such role: the profile `lite`, or a skill list with no `review`. It
+/// comes back into use with the skill. A new project writes no entry then.
+#[test]
+fn reconfigure_keeps_the_acceptor_entry_where_the_role_is_not_in_use() {
+    for (profile, skills) in [
+        ("standard", "[\"brainstorm\"]"),
+        ("strict", "[]"),
+        ("lite", "[\"brainstorm\"]"),
+    ] {
+        let r = repo();
+        let answers = format!("profile = \"{profile}\"\nharness = \"lean\"\n");
+        r.write("docs/a.md", "# A\n\nText.\n");
+        r.write(
+            "spec-dna.toml",
+            &format!(
+                "spec-dna = \"{VERSION}\"\nprofile = \"{profile}\"\n\n[harness]\nlevel = \"lean\"\nskills = {skills}\n\n[harness.roles]\nacceptor = {{ claude-code = \"sonnet\", effort = \"low\" }}\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n"
+            ),
+        );
+        r.commit("set the role");
+        let (code, out, err) = init_with(&r, &answers, &["--reconfigure"]);
+        assert_eq!(code, 0, "{profile}: {out}{err}");
+        let t = table(&r);
+        assert_eq!(
+            at(&t, "harness.roles.acceptor.claude-code").and_then(toml::Value::as_str),
+            Some("sonnet"),
+            "{profile}: {}",
+            r.read("spec-dna.toml")
+        );
+        assert!(
+            !r.dir.join(".claude/agents/acceptor.md").exists(),
+            "{profile}: the role is not in use, so it has no file"
+        );
+        r.commit("reconfigure");
+        let (code, out, err) = run(&r, &["check"]);
+        assert_eq!(code, 0, "{profile}: {out}{err}");
+    }
+}

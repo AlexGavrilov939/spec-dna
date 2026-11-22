@@ -423,6 +423,57 @@ fn the_classname_binds_a_case_to_its_own_test_file() {
     assert_eq!(code, 1, "{out}");
 }
 
+/// The fixture of an untracked twin: the tag is in `tests/test_a.py` (skipped),
+/// and `tests/test_b.py` (passed) has a case of the same name. Both are new and
+/// never added.
+fn untracked_twins(evidence: &str, args: &[&str]) -> (i32, String) {
+    let tag = "# covers: requirements/valves#flush\ndef test_init():\n    assert True\n";
+    let plain = "def test_init():\n    assert True\n";
+    let r = pr("strict", evidence, &[]);
+    r.write("tests/test_a.py", tag);
+    r.write("tests/test_b.py", plain);
+    r.write(
+        "reports/junit.xml",
+        &junit(
+            "pytest",
+            &[
+                ("tests.test_a", "test_init", SKIPPED),
+                ("tests.test_b", "test_init", ""),
+            ],
+        ),
+    );
+    stamp(&r);
+    let mut all = vec!["check", "--reports"];
+    all.extend(args);
+    let (code, out, err) = r.run(&all);
+    (code, format!("{out}{err}"))
+}
+
+fn assert_skipped(code: i32, out: &str) {
+    let found = lines(out, "SD617");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(found[0].contains("`test_init` was skipped"), "{out}");
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn the_classname_binds_the_same_for_test_files_that_git_does_not_track() {
+    // Same case as above, but both test files are new and never added. The
+    // classname must still name its own file: the skipped case of `test_a.py`
+    // must not bind to the passed case of `test_b.py`.
+    let (code, out) = untracked_twins(REPORTS, &["--all"]);
+    assert_skipped(code, &out);
+}
+
+#[test]
+fn an_unusable_test_glob_does_not_turn_the_untracked_twin_into_a_proof() {
+    // A glob with `..` is no pathspec: the list of files is not limited, and
+    // the filter keeps the test files.
+    let evidence = format!("{REPORTS}tests = [\"tests/test_*.py\", \"../none/*.py\"]\n");
+    let (code, out) = untracked_twins(&evidence, &["--all"]);
+    assert_skipped(code, &out);
+}
+
 // The reports: SD613 to SD615
 
 #[test]
@@ -928,6 +979,57 @@ fn finish_stops_at_step_5_without_a_stamp_and_with_a_skipped_case() {
     let (code, out, err) = r.run(&["finish", "dose"]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(!r.dir.join(FOLDER).exists());
+}
+
+#[test]
+fn finish_reads_untracked_test_files_too_so_a_twin_case_does_not_prove_a_skipped_one() {
+    // `finish` reads the working tree, also the files that git does not track.
+    // The tagged test is skipped. An untracked file has a passed case of the
+    // same name. The case of the untracked file must not bind to the tag.
+    let r = Repo::with_config(&config("standard", REPORTS));
+    r.write(".gitignore", "reports/\n");
+    r.write("docs/requirements/valves.md", VALVES);
+    r.write("src/valves.py", "x = 1\n");
+    r.write(
+        &format!("{FOLDER}/intent.md"),
+        "---\nstatus: accepted\nclass: higher-risk\n---\n# Dose\n\n## Intent\n\nFlush the line.\n",
+    );
+    r.write(
+        &format!("{FOLDER}/plan.md"),
+        "---\nstatus: approved\n---\n# Plan\n\n## Files\n\n- `src/valves.py`\n- `tests/test_valves.py`\n\n## Order\n\n- Edit the code.\n\n## Risks\n\n- None.\n\n## Proof\n\n- A test.\n",
+    );
+    r.write(
+        &format!("{FOLDER}/spec.md"),
+        &format!("---\nstatus: approved\n---\n# Spec\n\n## Delta\n\n- ADD {TAG}: The controller SHALL flush the line.\n"),
+    );
+    r.commit_base_of_0_7_1("base");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    r.write("tests/test_valves.py", PY_TEST);
+    r.commit("test");
+    // The twin: never added to git.
+    r.write(
+        "tests/test_twin.py",
+        "def test_closes_on_timeout():\n    assert True\n",
+    );
+    r.write(
+        "reports/junit.xml",
+        &junit(
+            "pytest",
+            &[
+                ("tests.test_valves", "test_closes_on_timeout", SKIPPED),
+                ("tests.test_twin", "test_closes_on_timeout", ""),
+            ],
+        ),
+    );
+    stamp(&r);
+    let (code, out, err) = r.run(&["finish", "dose"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.contains("SD617") && out.contains("was skipped"),
+        "{out}{err}"
+    );
+    assert!(r.dir.join(FOLDER).exists());
 }
 
 // `init`
