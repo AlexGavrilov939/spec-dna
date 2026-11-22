@@ -191,9 +191,11 @@ The work is planned for this month.
 "##;
 
 /// `docs/intent/audit-file/intent.md`.
+/// The class is `routine`, so `finish` needs no acceptance record in the `standard`
+/// profile of 0.8.0. These evals measure `finish`, not the acceptance.
 pub const FINISH_4_DOCS_INTENT_AUDIT_FILE_INTENT_MD: &str = r##"---
 status: accepted
-class: higher-risk
+class: routine
 ---
 # Keep the audit lines in their own file
 
@@ -528,9 +530,11 @@ status: draft
 "##;
 
 /// `docs/intent/low-stock-10/intent.md`.
+/// The class is `routine`, so `finish` needs no acceptance record in the `standard`
+/// profile of 0.8.0. These evals measure `finish`, not the acceptance.
 pub const DOCS_INTENT_LOW_STOCK_10_INTENT_MD: &str = r##"---
 status: accepted
-class: higher-risk
+class: routine
 ---
 # Raise the low-stock threshold to 10
 
