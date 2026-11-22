@@ -116,7 +116,7 @@ ADR 0001 and ADR 0006 are accepted and locked, so this ADR does not edit them. W
 [ADR 0032](0032-acceptance-in-one-pass.md) amends these items of this ADR. [D77 of design 0.8.0](../design/0.8.0.md#d70-to-d79-the-acceptance-in-one-pass) gives the detail.
 
 - "Owners by path", item 1: an entry `@<login>` or an e-mail gives a warning and needs nothing in 0.8.0. It is no exit code 3.
-- "Owners by path", item 3: a role reads the role paths. They add a code path of the diff that no `scope` matches. For a pull request with only `finish`, they also add the paths since the commit that added the plan.
+- "Owners by path", item 3: a role reads the role paths. They add a code path of the diff that no `scope` matches. With only `finish`, they add the paths since the commit that added the plan.
 - "Owners by path", item 4: an acceptor entry has `roles`, so one entry answers each matched role. The builder passes no `--role`.
 - "Owners by path", item 5: a matched role makes a record needed, also for a `routine` change. The table is the union of the head and the base configuration.
 - "Deviations", item 4: `finish` prints the `[[deviation]]` entries of the record.
