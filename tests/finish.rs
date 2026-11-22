@@ -56,6 +56,12 @@ struct Fx<'a> {
     origin: bool,
     /// More tables of `spec-dna.toml`, after the layers.
     more_config: &'a str,
+    /// Runs after the files of the base are written and before the delta is
+    /// built: the roll-up documents of the roll-up tests.
+    setup: fn(&Repo),
+    /// True if a commit with no change folder comes before the base commit, so
+    /// that the plan has a commit before the one that adds it.
+    pre_commit: bool,
 }
 
 impl Default for Fx<'_> {
@@ -73,6 +79,8 @@ impl Default for Fx<'_> {
             extra: &[],
             origin: true,
             more_config: "",
+            setup: |_| {},
+            pre_commit: false,
         }
     }
 }
@@ -103,6 +111,10 @@ impl Fx<'_> {
         for (p, t) in self.extra {
             r.write(p, t);
         }
+        (self.setup)(&r);
+        if self.pre_commit {
+            r.commit("init");
+        }
         let close = hash(&r, "requirements/valves#close");
         let open = hash(&r, "requirements/valves#open");
         let routine = self.delta.is_empty() && self.spec_extra.is_empty();
@@ -123,10 +135,17 @@ impl Fx<'_> {
             if !self.delta.is_empty() {
                 body.push_str("## Delta\n\n");
                 for l in self.delta {
-                    body.push_str(&format!(
-                        "{}\n",
-                        l.replace("{close}", &close).replace("{open}", &open)
-                    ));
+                    let mut line = l.replace("{close}", &close).replace("{open}", &open);
+                    for (tag, id) in [
+                        ("{seal}", "requirements/pumps/seal#hold"),
+                        ("{rotor}", "requirements/fans/rotor#spin"),
+                        ("{wear}", "requirements/pumps/seal#wear"),
+                    ] {
+                        if line.contains(tag) {
+                            line = line.replace(tag, &hash(&r, id));
+                        }
+                    }
+                    body.push_str(&format!("{line}\n"));
                 }
             }
             body.push_str(self.spec_extra);
@@ -3115,6 +3134,438 @@ fn finish_still_stops_on_the_sd914_of_another_untouched_spec_as_in_0_7_1() {
         out.contains("\"step\":5")
             && out.contains("\"code\":\"SD914\"")
             && out.contains("docs/intent/other/spec.md"),
+        "{out}"
+    );
+}
+
+// The roll-up (design 0.8.0, D54): the summaries that a delta makes due
+
+const SEAL: &str = "---\nstatus: active\n---\n# Seal\n\n## Requirements\n\n- **hold**: The seal SHALL hold 10 bars.\n- **wear**: The seal SHALL last 5 years.\n";
+const ROTOR: &str = "---\nstatus: active\n---\n# Rotor\n\n## Requirements\n\n- **spin**: The rotor SHALL spin at 300 rpm.\n";
+const SEAL_PATH: &str = "docs/requirements/pumps/seal.md";
+const PUMPS: &str = "docs/summaries/pumps.md";
+const FANS: &str = "docs/summaries/fans.md";
+const SYSTEM: &str = "docs/system.md";
+const SYSTEM_PLAIN: &str = "# System\n\n## Overview\n\nPumps.\n\n## Constraints\n\n- None.\n";
+const ROLLUP_CONFIG: &str = "\n[layers.summaries]\ntypes = [\"summary\"]\n\n[layers.foundation]\ntypes = [\"system\"]\nfiles = [\"system.md\"]\n";
+const CHANGE_SEAL: &str =
+    "- CHANGE requirements/pumps/seal#hold@{seal}: The seal SHALL hold 12 bars.";
+const CHANGE_ROTOR: &str =
+    "- CHANGE requirements/fans/rotor#spin@{rotor}: The rotor SHALL spin at 400 rpm.";
+const REMOVE_WEAR: &str = "- REMOVE requirements/pumps/seal#wear@{wear}";
+const ADD_SEAL: &str = "- ADD requirements/pumps/seal#leak: The seal SHALL NOT leak.";
+const COVERS_SEAL: &str = "# covers: requirements/pumps/seal#hold\n";
+const COVERS_LEAK: &str = "# covers: requirements/pumps/seal#leak\n";
+const COVERS_BOTH: &str =
+    "# covers: requirements/pumps/seal#hold\n# covers: requirements/fans/rotor#spin\n";
+
+/// `new summary <area>` with the body that replaces the placeholders.
+fn summary_of(r: &Repo, area: &str, body: &str) {
+    let (code, out, err) = r.run(&["new", "summary", area]);
+    assert_eq!(code, 0, "{out}{err}");
+    let path = format!("docs/summaries/{area}.md");
+    let text = r.read(&path);
+    let end = text.find("\n---\n").expect("a front matter") + 5;
+    r.write(&path, &format!("{}\n{body}", &text[..end]));
+}
+
+/// A `system` document that rests on what is below it, with current pins.
+fn system_over(r: &Repo) {
+    r.write(SYSTEM, &format!("---\nrests-on: []\n---\n{SYSTEM_PLAIN}"));
+    let (code, out, err) = r.run(&["refresh", "system"]);
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+/// The area `pumps` with its summary, and `system` over it.
+fn pumps(r: &Repo) {
+    r.write(SEAL_PATH, SEAL);
+    summary_of(r, "pumps", "# Pumps\n\nPumps hold 10 bars.\n");
+    system_over(r);
+}
+
+/// The areas `pumps` and `fans`, each with a summary, and `system` over both.
+fn pumps_and_fans(r: &Repo) {
+    r.write(SEAL_PATH, SEAL);
+    r.write("docs/requirements/fans/rotor.md", ROTOR);
+    summary_of(r, "pumps", "# Pumps\n\nPumps hold 10 bars.\n");
+    summary_of(r, "fans", "# Fans\n\nFans spin at 300 rpm.\n");
+    system_over(r);
+}
+
+/// A flat project: `system` rests on the requirements, which have no area.
+fn flat(r: &Repo) {
+    system_over(r);
+}
+
+fn rollup_fx<'a>(delta: &'a [&'a str], setup: fn(&Repo)) -> Fx<'a> {
+    Fx {
+        delta,
+        setup,
+        more_config: ROLLUP_CONFIG,
+        ..Fx::default()
+    }
+}
+
+/// The 16 hex digits of the pin of `target` in the text.
+fn pin_of(text: &str, target: &str) -> Option<String> {
+    text.lines()
+        .find_map(|l| {
+            l.trim()
+                .strip_prefix("- ")?
+                .strip_prefix(target)?
+                .strip_prefix('@')
+        })
+        .map(str::to_string)
+}
+
+fn edit_text(r: &Repo, path: &str, from: &str, to: &str) {
+    let text = r.read(path);
+    assert!(text.contains(from), "{path} has no `{from}`");
+    r.write(path, &text.replacen(from, to, 1));
+}
+
+#[test]
+fn finish_repins_a_summary_that_the_change_edited_and_check_gives_no_sd641() {
+    let r = rollup_fx(&[CHANGE_SEAL], pumps).start();
+    // The build: the author edits the text of the summary, and then the text
+    // of `system`, which pins the summary.
+    edit_text(&r, PUMPS, "10 bars", "12 bars");
+    edit_text(&r, SYSTEM, "Pumps.", "Pumps and seals.");
+    let (code, out, err) = r.run(&["refresh", "system"]);
+    assert_eq!(code, 0, "{out}{err}");
+    r.write("tests/test_valves.py", COVERS_SEAL);
+    r.commit("edit the summaries");
+    let (code, out, err) = fin(&r, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("roll-up: re-pinned summaries/pumps (the change edited its text)"),
+        "{out}"
+    );
+    let new_hash = hash(&r, "requirements/pumps/seal#hold");
+    assert_eq!(
+        pin_of(&r.read(PUMPS), "requirements/pumps/seal#hold").as_deref(),
+        Some(new_hash.as_str())
+    );
+    assert!(r.read(PUMPS).contains("Pumps hold 12 bars."));
+    // `system` is not due: its pin holds the text of the summary.
+    assert!(!out.contains("roll-up: re-pinned system"), "{out}");
+    assert!(staged(&r).contains(&"M docs/summaries/pumps.md".to_string()));
+    r.commit("finish");
+    let (code, out) = check(&r, "main");
+    assert_eq!(code, 0, "{out}");
+    for c in ["SD641", "SD642", "SD645", "SD913"] {
+        assert!(!has(&out, c), "{c}: {out}");
+    }
+}
+
+#[test]
+fn holds_re_pins_a_summary_with_no_edit_and_check_gives_sd645_and_no_sd641() {
+    let r = rollup_fx(&[CHANGE_SEAL], pumps).start();
+    r.write("tests/test_valves.py", COVERS_SEAL);
+    let before = r.read(PUMPS);
+    let (code, out, err) = fin(&r, &["--holds", "summaries/pumps"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("roll-up: held summaries/pumps (--holds)"),
+        "{out}"
+    );
+    let now = r.read(PUMPS);
+    let new_hash = hash(&r, "requirements/pumps/seal#hold");
+    assert_eq!(
+        pin_of(&now, "requirements/pumps/seal#hold").as_deref(),
+        Some(new_hash.as_str())
+    );
+    // The body is the text of the base: the claim.
+    assert_eq!(now.split("\n---\n").nth(1), before.split("\n---\n").nth(1));
+    r.commit("finish");
+    let (_, out) = check(&r, "main");
+    assert!(has(&out, "SD645"), "{out}");
+    assert!(!has(&out, "SD641") && !has(&out, "SD642"), "{out}");
+}
+
+#[test]
+fn a_due_summary_with_no_edit_and_no_claim_stays_stale_and_finish_exits_0() {
+    let r = rollup_fx(&[CHANGE_SEAL], pumps).start();
+    r.write("tests/test_valves.py", COVERS_SEAL);
+    let before = r.read(PUMPS);
+    let (code, out, err) = fin(&r, &[]);
+    // Before: step 5 stopped on the new SD641 of its own delta.
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("roll-up: stale summaries/pumps (requirements/pumps/seal#hold changed); edit it and run spec-dna refresh summaries/pumps, or run spec-dna refresh summaries/pumps --holds"),
+        "{out}"
+    );
+    assert_eq!(r.read(PUMPS), before, "finish edits no stale summary");
+    assert!(!r.dir.join(FOLDER).exists());
+    r.commit("finish");
+    let (code, out) = check(&r, "main");
+    assert_ne!(code, 0, "{out}");
+    assert!(has(&out, "SD641"), "{out}");
+}
+
+#[test]
+fn a_claim_for_an_id_that_is_not_due_is_a_usage_error_and_changes_nothing() {
+    let r = rollup_fx(&[CHANGE_SEAL], pumps).start();
+    r.write("tests/test_valves.py", COVERS_SEAL);
+    let before = tree(&r);
+    for id in [
+        // A roll-up document that the delta does not make due.
+        "system",
+        // No document.
+        "summaries/nope",
+        // A document that is no roll-up document.
+        "requirements/pumps/seal",
+    ] {
+        let (code, out, err) = fin(&r, &["--holds", id]);
+        assert_eq!(code, 2, "{id}: {out}{err}");
+        assert!(err.contains(id), "{id}: {err}");
+        assert_eq!(tree(&r), before, "{id}: a usage error changed a file");
+    }
+    // A list of 2 ids with one that is due: still no change.
+    let (code, out, err) = fin(&r, &["--holds", "summaries/pumps", "--holds", "system"]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert_eq!(tree(&r), before);
+    let (code, _, err) = fin(&r, &["--holds"]);
+    assert_eq!(code, 2, "{err}");
+    // The flag of `refresh` keeps its form: it takes no value.
+    let (code, _, _) = r.run(&["refresh", "summaries/pumps", "--holds"]);
+    assert_eq!(code, 0);
+}
+
+#[test]
+fn a_claim_names_each_summary_and_one_claim_does_not_hold_the_others() {
+    let r = rollup_fx(&[CHANGE_SEAL, CHANGE_ROTOR], pumps_and_fans).start();
+    r.write("tests/test_valves.py", COVERS_BOTH);
+    let fans_before = r.read(FANS);
+    let (code, out, err) = fin(&r, &["--holds", "summaries/pumps"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("roll-up: held summaries/pumps (--holds)"),
+        "{out}"
+    );
+    // The cascade: `fans` is due, has no edit and no claim, so it stays stale.
+    assert!(out.contains("roll-up: stale summaries/fans ("), "{out}");
+    assert_eq!(r.read(FANS), fans_before);
+    r.commit("finish");
+    let (_, out) = check(&r, "main");
+    let stale: Vec<&str> = out.lines().filter(|l| l.contains(" SD641 ")).collect();
+    assert_eq!(stale.len(), 1, "{out}");
+    assert!(stale[0].contains("docs/summaries/fans.md"), "{out}");
+}
+
+#[test]
+fn an_added_requirement_makes_the_summary_due_and_an_edit_gives_it_the_pin() {
+    let r = rollup_fx(&[ADD_SEAL], pumps).start();
+    edit_text(&r, PUMPS, "10 bars", "10 bars and no leak");
+    edit_text(&r, SYSTEM, "Pumps.", "Pumps and seals.");
+    assert_eq!(r.run(&["refresh", "system"]).0, 0);
+    r.write("tests/test_valves.py", COVERS_LEAK);
+    r.commit("edit the summaries");
+    let (code, out, err) = fin(&r, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("roll-up: re-pinned summaries/pumps"), "{out}");
+    assert!(
+        pin_of(&r.read(PUMPS), "requirements/pumps/seal#leak").is_some(),
+        "{}",
+        r.read(PUMPS)
+    );
+    r.commit("finish");
+    let (code, out) = check(&r, "main");
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn a_flat_project_names_system_in_the_claim() {
+    let r = rollup_fx(&[CHANGE_CLOSE], flat).start();
+    r.write(
+        "tests/test_valves.py",
+        "# covers: requirements/valves#close\n",
+    );
+    let (code, out, err) = fin(&r, &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("roll-up: stale system (requirements/valves#close changed)"),
+        "{out}"
+    );
+    let (code, out, err) = fin(&r, &["--holds", "system"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("roll-up: held system (--holds)"), "{out}");
+    let new_hash = hash(&r, "requirements/valves#close");
+    assert_eq!(
+        pin_of(&r.read(SYSTEM), "requirements/valves#close").as_deref(),
+        Some(new_hash.as_str())
+    );
+}
+
+#[test]
+fn a_summary_edited_in_a_pull_request_that_merged_before_is_repinned_with_no_claim() {
+    let mut fx = rollup_fx(&[CHANGE_SEAL], pumps);
+    fx.pre_commit = true;
+    let r = fx.start();
+    // The pull request of the edit: merged into `main` after the plan.
+    r.git(&["checkout", "-q", "main"]);
+    edit_text(&r, PUMPS, "10 bars", "12 bars");
+    edit_text(&r, SYSTEM, "Pumps.", "Pumps and seals.");
+    assert_eq!(r.run(&["refresh", "system"]).0, 0);
+    r.commit("the pull request of the edit");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "feature"]);
+    r.git(&["merge", "-q", "--ff-only", "main"]);
+    r.write("tests/test_valves.py", COVERS_SEAL);
+    r.commit("code");
+    let (code, out, err) = fin(&r, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("roll-up: re-pinned summaries/pumps (the change edited its text)"),
+        "{out}"
+    );
+    r.commit("finish");
+    let (code, out) = check(&r, "main");
+    assert_eq!(code, 0, "{out}");
+    // The body is the text of the base, and the pins changed: no claim.
+    for c in ["SD641", "SD642", "SD645"] {
+        assert!(!has(&out, c), "{c}: {out}");
+    }
+}
+
+#[test]
+fn the_dry_run_shows_the_roll_up_and_writes_nothing() {
+    let r = rollup_fx(&[CHANGE_SEAL], pumps).start();
+    edit_text(&r, PUMPS, "10 bars", "12 bars");
+    edit_text(&r, SYSTEM, "Pumps.", "Pumps and seals.");
+    assert_eq!(r.run(&["refresh", "system"]).0, 0);
+    r.write("tests/test_valves.py", COVERS_SEAL);
+    r.commit("edit the summaries");
+    let before = tree(&r);
+    let (code, out, err) = fin(&r, &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(tree(&r), before);
+    assert!(staged(&r).is_empty());
+    assert!(out.contains("--- a/docs/summaries/pumps.md"), "{out}");
+    assert!(
+        out.contains("roll-up: would re-pin summaries/pumps"),
+        "{out}"
+    );
+    let (code, out, err) = fin(&r, &["--dry-run", "--holds", "summaries/nope"]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert_eq!(tree(&r), before);
+}
+
+#[test]
+fn the_json_report_has_the_roll_up_with_the_3_lists() {
+    let r = rollup_fx(&[CHANGE_SEAL, CHANGE_ROTOR], pumps_and_fans).start();
+    r.write("tests/test_valves.py", COVERS_BOTH);
+    let (code, out, err) = fin(&r, &["--dry-run", "--json", "--holds", "summaries/pumps"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains(
+            "\"rollup\":{\"repinned\":[],\"held\":[\"summaries/pumps\"],\"stale\":[{\"id\":\"summaries/fans\",\"pins\":[\"requirements/fans/rotor#spin\"]}]}"
+        ),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_project_with_no_roll_up_document_sees_no_change_in_finish() {
+    let r = Fx {
+        delta: &[CHANGE_CLOSE],
+        ..Fx::default()
+    }
+    .start();
+    r.write("tests/test_valves.py", COVERS_CLOSE_FLUSH);
+    let (code, out, err) = fin(&r, &["--dry-run", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!out.contains("rollup"), "{out}");
+    let (code, out, err) = fin(&r, &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!out.contains("roll-up"), "{out}");
+    // A claim names a due summary, and the project has none.
+    let (code, out, err) = fin(&r, &["--holds", "system"]);
+    assert_eq!(code, 2, "{out}{err}");
+}
+
+#[test]
+fn a_removed_requirement_makes_the_summary_due_and_the_claim_drops_its_pin() {
+    let r = rollup_fx(&[REMOVE_WEAR], pumps).start();
+    assert!(pin_of(&r.read(PUMPS), "requirements/pumps/seal#wear").is_some());
+    // No edit and no claim: the summary stays as it is.
+    let (code, out, err) = fin(&r, &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("roll-up: stale summaries/pumps (requirements/pumps/seal#wear changed)"),
+        "{out}"
+    );
+    let (code, out, err) = fin(&r, &["--holds", "summaries/pumps"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("roll-up: held summaries/pumps (--holds)"),
+        "{out}"
+    );
+    let now = r.read(PUMPS);
+    assert!(
+        pin_of(&now, "requirements/pumps/seal#wear").is_none(),
+        "{now}"
+    );
+    assert!(
+        pin_of(&now, "requirements/pumps/seal#hold").is_some(),
+        "{now}"
+    );
+}
+
+#[test]
+fn a_due_summary_behind_a_symbolic_link_stays_stale_and_the_link_stays() {
+    let r = rollup_fx(&[CHANGE_SEAL], pumps).start();
+    // The summary is a link to a file of the repository.
+    let real = r.read(PUMPS);
+    r.write("notes/pumps-real.md", &real);
+    std::fs::remove_file(r.dir.join(PUMPS)).unwrap();
+    std::os::unix::fs::symlink("../../notes/pumps-real.md", r.dir.join(PUMPS)).unwrap();
+    r.commit("link");
+    r.write("tests/test_valves.py", COVERS_SEAL);
+    let (code, out, err) = fin(&r, &["--holds", "summaries/pumps"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let meta = std::fs::symlink_metadata(r.dir.join(PUMPS)).unwrap();
+    assert!(meta.file_type().is_symlink(), "finish replaced the link");
+    assert_eq!(r.read("notes/pumps-real.md"), real);
+}
+
+#[test]
+fn a_claim_on_a_summary_that_the_delta_did_not_make_due_keeps_its_sd645() {
+    let mut fx = rollup_fx(&[CHANGE_SEAL], pumps_and_fans);
+    fx.pre_commit = true;
+    let r = fx.start();
+    // A pull request that merged after the plan edits the text of `fans`, which
+    // the delta does not touch, and the level above follows.
+    r.git(&["checkout", "-q", "main"]);
+    edit_text(&r, FANS, "300 rpm", "350 rpm");
+    assert_eq!(r.run(&["refresh", "system", "--holds"]).0, 0);
+    r.commit("the pull request of the edit");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "feature"]);
+    r.git(&["merge", "-q", "--ff-only", "main"]);
+    // The pull request of `finish` changes the pins of `fans` and not its text:
+    // a claim that no change of the delta explains.
+    let text = r.read(FANS);
+    let h = pin_of(&text, "requirements/fans/rotor#spin").unwrap();
+    r.write(FANS, &text.replace(&h, "0000000000000000"));
+    r.write("tests/test_valves.py", COVERS_SEAL);
+    r.commit("code");
+    let (code, out, err) = fin(&r, &["--holds", "summaries/pumps"]);
+    assert_eq!(code, 0, "{out}{err}");
+    r.commit("finish");
+    let (_, out) = check(&r, "main");
+    let claims: Vec<&str> = out
+        .lines()
+        .filter(|l| l.contains(": warning SD645 "))
+        .collect();
+    assert_eq!(claims.len(), 2, "{out}");
+    assert!(
+        claims.iter().any(|l| l.contains("docs/summaries/fans.md")),
+        "{out}"
+    );
+    // The summary that the delta made due and that `finish` held is a claim too.
+    assert!(
+        claims.iter().any(|l| l.contains("docs/summaries/pumps.md")),
         "{out}"
     );
 }

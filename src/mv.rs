@@ -25,6 +25,10 @@ pub struct Moved {
     /// For a move of a whole document: the changes of the `type` and `status`
     /// lines that the new place needs, one text line for each.
     pub changes: Vec<String>,
+    /// The roll-up documents whose pins the move makes stale (design 0.8.0,
+    /// D54): the summaries of the areas that the move leaves and enters. `mv`
+    /// writes no pin: a refresh with no reading would bypass the guard.
+    pub summaries: Vec<String>,
 }
 
 /// Moves one document, or requirements and sections (`split.rs`). The last
@@ -53,6 +57,7 @@ pub fn run(
         ));
     }
     let s = crate::split::run(repo, config, c, base, sources, to, opts)?;
+    let summaries = s.summaries.clone();
     let one = s.moved.len() == 1 && s.sections == 0;
     let (kind, from, to) = if one {
         let key = s.moved[0].rsplit('#').next().unwrap_or("");
@@ -70,6 +75,7 @@ pub fn run(
         stub: None,
         alias_dropped: None,
         changes: Vec::new(),
+        summaries,
     })
 }
 
@@ -182,6 +188,13 @@ fn move_document(
         }
     }
 
+    // The summaries whose pins the move makes stale: read before the first write.
+    let texts: HashMap<String, String> = others
+        .iter()
+        .cloned()
+        .chain([(to_path.clone(), updated.clone())])
+        .collect();
+    let summaries = crate::split::rollup_after_move(config, c, &doc.path, &to_path, &texts);
     let dest = repo.root.join(&to_path);
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent).map_err(|e| Fatal::Io(e.to_string()))?;
@@ -227,6 +240,7 @@ fn move_document(
         stub: stub_path,
         alias_dropped: own_alias,
         changes,
+        summaries,
     })
 }
 

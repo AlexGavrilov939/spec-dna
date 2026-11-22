@@ -1400,6 +1400,77 @@ fn sd913_skips_a_path_of_shared_paths() {
     assert_eq!(outside(&r), ["src/other.py"]);
 }
 
+// SD913 and the roll-up (design 0.8.0, D54): a summary is never outside the plan
+
+const SEAL: &str = "---\nstatus: active\n---\n# Seal\n\n## Requirements\n\n- **hold**: The seal SHALL hold 10 bars.\n";
+
+/// Like `scoped`, with the layers `summaries` and `foundation`, a summary of
+/// the area `pumps` and a `system` document that rests on it. The base has all
+/// of them.
+fn scoped_rollup() -> Repo {
+    let r = repo_with(&config(
+        "standard",
+        "gate = \"warn\"\n",
+        "\n[layers.summaries]\ntypes = [\"summary\"]\n\n[layers.foundation]\ntypes = [\"system\"]\nfiles = [\"system.md\"]\n",
+        "",
+    ));
+    r.write("docs/requirements/pumps/seal.md", SEAL);
+    let (code, out, err) = r.run(&["new", "summary", "pumps"]);
+    assert_eq!(code, 0, "{out}{err}");
+    r.write(
+        "docs/system.md",
+        "---\nrests-on: []\n---\n# System\n\n## Overview\n\nPumps.\n\n## Constraints\n\n- None.\n",
+    );
+    let (code, out, err) = r.run(&["refresh", "system"]);
+    assert_eq!(code, 0, "{out}{err}");
+    r.write(
+        "docs/intent/dose/intent.md",
+        "---\nstatus: accepted\nclass: routine\n---\n# Dose\n\n## Intent\n\nThe dose is too high.\n",
+    );
+    r.write(
+        "docs/intent/dose/plan.md",
+        "---\nstatus: approved\n---\n# Plan\n\n## Files\n\n- `src/dose.py`\n\n## Order\n\n- Edit the code.\n\n## Risks\n\n- None.\n\n## Proof\n\n- A test.\n",
+    );
+    r.write("src/dose.py", "x = 1\n");
+    r.commit("base");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    r
+}
+
+#[test]
+fn sd913_skips_a_summary_and_a_system_document_with_rests_on() {
+    let r = scoped_rollup();
+    r.write("src/dose.py", "x = 2\n");
+    let summary = r.read("docs/summaries/pumps.md");
+    r.write(
+        "docs/summaries/pumps.md",
+        &summary.replacen("{{", "Pumps hold 10 bars. {{", 1),
+    );
+    let system = r.read("docs/system.md");
+    r.write(
+        "docs/system.md",
+        &system.replacen("Pumps.", "Pumps and seals.", 1),
+    );
+    // Before: both files were outside the plan.
+    assert_eq!(outside(&r), Vec::<String>::new());
+    // The exception is for a roll-up document only.
+    r.write("docs/questions.md", QUESTIONS);
+    assert_eq!(outside(&r), ["docs/questions.md"]);
+}
+
+#[test]
+fn sd913_still_reports_a_system_document_that_has_no_rests_on() {
+    let r = scoped_rollup();
+    r.write("src/dose.py", "x = 2\n");
+    // A `system` document with no field is no roll-up document.
+    r.write(
+        "docs/system.md",
+        "# System\n\n## Overview\n\nPumps and seals.\n\n## Constraints\n\n- None.\n",
+    );
+    assert_eq!(outside(&r), ["docs/system.md"]);
+}
+
 // The invariants and the deviations (design 0.8.0, D6 and D7, slice S5)
 
 const RULE_DOC: &str = "---\nstatus: active\napplies-to: [\"**\"]\n---\n# Safety\n\n## Rules\n\n- **valve-closed**: The controller SHALL close each valve on a fault.\n- **alarm-sounds**: The controller SHALL sound the alarm on a fault.\n";

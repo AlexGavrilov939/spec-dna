@@ -5,6 +5,8 @@
 //!
 //! - the sections that the project conventions name for the type of each
 //!   entry (`[conventions]`), also from files outside the documents
+//! - the summary tier (design 0.8.0, D56): the documents of the roll-up chain
+//!   of the request (see below)
 //! - the rules (type `rule`) whose `applies-to` matches a scope, or that have
 //!   no `applies-to`, and the top files (`product`, `system`, `terms`) whose
 //!   `applies-to` matches. A top file with no `applies-to` is not in this
@@ -21,6 +23,21 @@
 //!   citing documents (depth 1)
 //! - accepted decisions linked to these documents, as summaries
 //!
+//! The summary tier holds the chain of the request: `product` and `system`
+//! documents that have `rests-on`, and the summaries of the area of each
+//! requirements document that the plan serves, with the summaries of its
+//! ancestor areas. A requirements document counts if it is active and in the
+//! plan, and a document that is only linked does not. The order is top down:
+//! `product`, `system`, then the summaries from the shallow folder to the deep
+//! one, with the title section of each document first. The tier, in full text
+//! and in stubs together, uses at most a quarter of the budget. It is filled
+//! in order: the first sections are in full, the next ones are stubs, and the
+//! last ones are cut. The packing order puts the tier after the sections of the
+//! entry and of the citing documents, so it never takes their room. A document
+//! of the tier is in no other tier, but a target or a convention can name it. A stale document (SD641 or SD642) has
+//! the word `stale` after the tier. A tree with no roll-up document has no
+//! tier, and the output is the output of 0.7.1.
+//!
 //! The order of the layers is the order of the graph: by level from 0 up, and
 //! the order of the configuration inside one level (`Graph::context_order`).
 //! It orders the first tier, and the documents that cite, in one citation class.
@@ -28,9 +45,9 @@
 //!
 //! A layer with `context = "on-request"` has its documents in the plan only
 //! if a target names them. A `research` document is in the plan under the
-//! same rule, in each layer. The assembly counts the documents of these
-//! layers that the request reaches, and `render` prints one line with the
-//! counts. It lists no file.
+//! same rule, in each layer: the plan has it only if a target names it. The
+//! assembly counts the documents of these layers that the request reaches, and
+//! `render` prints one line with the counts. It lists no file.
 //!
 //! For a requirements, interface or rule document, the assembly serves the
 //! requirement sections first, then the title section, in full. It serves a
@@ -67,6 +84,7 @@ use crate::json::{self, Obj};
 use crate::layer::{ContextMode, Rule};
 use crate::model::{Corpus, Doc, DocType, LinkRes, Res};
 use crate::parse::{Chunk, RefKind};
+use crate::rollup::{self, Level, Rollup};
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashSet};
 use std::path::Path;
@@ -74,6 +92,7 @@ use std::path::Path;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tier {
     Convention,
+    Summary,
     Rule,
     Entry,
     Cites,
@@ -88,6 +107,7 @@ impl Tier {
     fn name(self) -> &'static str {
         match self {
             Tier::Convention => "convention",
+            Tier::Summary => "summary",
             Tier::Rule => "rule",
             Tier::Entry => "entry",
             Tier::Cites => "cites",
@@ -105,6 +125,8 @@ pub struct Unit {
     pub chunk: usize,
     pub tier: Tier,
     pub full: bool,
+    /// True for a document of the tier `summary` that SD641 or SD642 reports.
+    pub stale: bool,
 }
 
 /// A section of a convention file (`Corpus::outside`) in an assembly.
@@ -153,6 +175,14 @@ pub struct Places {
     /// and none of them is in the group. All false without a group.
     group: Option<String>,
     other_area: Vec<bool>,
+    /// The roll-up data of the tier `summary` (D56). Both vectors are empty
+    /// if no document of the tree is a roll-up document.
+    ///
+    /// For a roll-up document: its level, and true if it is stale.
+    roll: Vec<Option<(Level, bool)>>,
+    /// For a document of the layer `requirements`: the folders of its area,
+    /// from the folder of the layer down. The root area has none.
+    area: Vec<Option<Vec<String>>>,
 }
 
 impl Places {
@@ -170,6 +200,8 @@ impl Places {
             layer: Vec::new(),
             group: None,
             other_area: vec![false; c.docs.len()],
+            roll: Vec::new(),
+            area: Vec::new(),
         };
         for d in &c.docs {
             let rel = cfg
@@ -192,7 +224,51 @@ impl Places {
                 }
             }
         }
+        p.add_rollup(c, cfg);
         p
+    }
+
+    /// Reads the roll-up of the tree: the level and the stale state of each
+    /// roll-up document, and the area of each requirements document. A tree
+    /// with no roll-up document keeps both vectors empty and pays nothing.
+    fn add_rollup(&mut self, c: &Corpus, cfg: &Config) {
+        if !c.docs.iter().any(rollup::is_rollup) {
+            return;
+        }
+        let roll = Rollup::build(cfg, c);
+        let layer = cfg.layers.layer_of_type(DocType::Requirements);
+        let dir = layer.and_then(|i| cfg.layers.layers()[i].dir());
+        for (i, d) in c.docs.iter().enumerate() {
+            // A file of the type `summary` in a project with no layer for it
+            // has no valid type, so it is no roll-up document: in `lite`, the
+            // tier is off unless the project adds the layer.
+            let info = if rollup::is_rollup(d) {
+                roll.level(d).map(|l| (l, !roll.stale(i as u32).is_empty()))
+            } else {
+                None
+            };
+            let area = match layer {
+                Some(l) if info.is_none() && crate::check::doc_layer(cfg, d) == Some(l) => {
+                    let rel = cfg
+                        .roots
+                        .get(d.root)
+                        .filter(|r| {
+                            r.path.is_empty() || d.path.starts_with(&format!("{}/", r.path))
+                        })
+                        .map_or(d.path.as_str(), |r| r.rel(&d.path));
+                    // A document of the layer outside its folder is in the
+                    // root area. The same rule as `rollup::requirement_area`.
+                    let under = dir.and_then(|dir| rel.strip_prefix(dir)?.strip_prefix('/'));
+                    let mut parts: Vec<String> =
+                        under.unwrap_or("").split('/').map(str::to_string).collect();
+                    parts.pop();
+                    Some(if under.is_some() { parts } else { Vec::new() })
+                }
+                _ => None,
+            };
+            self.roll.push(info);
+            self.area.push(area);
+        }
     }
 
     /// Sets the group of `--group`: `areas` are the areas of the group. A
@@ -348,6 +424,16 @@ pub fn section_id(d: &Doc, chunk: usize) -> String {
     }
 }
 
+/// The tier in a header or a list: its name, and the word `stale` after the
+/// name of a stale document of the tier `summary`.
+fn tier_label(tier: Tier, stale: bool) -> String {
+    if stale {
+        format!("{} stale", tier.name())
+    } else {
+        tier.name().to_string()
+    }
+}
+
 fn header(d: &Doc, chunk: usize, tier: &str) -> String {
     let ch = &d.parsed.chunks[chunk];
     let status = d
@@ -363,7 +449,7 @@ fn header(d: &Doc, chunk: usize, tier: &str) -> String {
     )
 }
 
-fn stub_line(c: &Corpus, d: &Doc, chunk: usize, tier: Tier) -> String {
+fn stub_line(c: &Corpus, d: &Doc, chunk: usize, tier: Tier, stale: bool) -> String {
     let ch = &d.parsed.chunks[chunk];
     let title = if ch.heading.is_empty() {
         d.parsed.title.as_str()
@@ -371,12 +457,13 @@ fn stub_line(c: &Corpus, d: &Doc, chunk: usize, tier: Tier) -> String {
         ch.heading.as_str()
     };
     format!(
-        "- `{}` h:{} {} chars ({}): {title}{}\n",
+        "- `{}` h:{} {} chars ({}): {title}{}{}\n",
         section_id(d, chunk),
         hex(&ch.hash),
         ch.chars,
         tier.name(),
-        inactive_note(c, d)
+        inactive_note(c, d),
+        if stale { " [stale]" } else { "" }
     )
 }
 
@@ -417,6 +504,10 @@ fn successors(c: &Corpus, d: &Doc) -> Vec<u32> {
 /// directory cannot fill the budget.
 const CITING_DOCS: usize = 8;
 const CITING_SUMMARIES: usize = 5;
+
+/// The full text of the tier `summary` uses at most `budget / SUMMARY_SHARE`
+/// characters (D56): a quarter, 2,000 of the 8,000 of the default.
+const SUMMARY_SHARE: u32 = 4;
 
 /// Plans and packs the sections for the targets and the code paths. `cited`
 /// contains the sections that cite the paths, best first (`cite::citing`).
@@ -729,6 +820,28 @@ pub fn assemble(
         add(&mut plan, d, j, Tier::Rest);
     }
 
+    // 6b. The tier `summary` (D56): the chain of the request. It takes its
+    // documents out of the other tiers, and goes after the conventions.
+    let chain = summary_chain(c, places, &entry_docs, &plan, &hold);
+    let stale_docs: HashSet<u32> = chain
+        .iter()
+        .copied()
+        .filter(|&d| matches!(places.roll[d as usize], Some((_, true))))
+        .collect();
+    if !chain.is_empty() {
+        plan.retain(|p| p.2 == Tier::Convention || !chain.contains(&p.0));
+        let at = plan.iter().take_while(|p| p.2 == Tier::Convention).count();
+        let mut units: Vec<(u32, usize, Tier)> = Vec::new();
+        for &d in &chain {
+            for j in title_first(&c.docs[d as usize]) {
+                if !plan.iter().any(|p| p.0 == d && p.1 == j) {
+                    units.push((d, j, Tier::Summary));
+                }
+            }
+        }
+        plan.splice(at..at, units);
+    }
+
     // 7. Other documents that the entries link to, as stubs.
     let mut related = 0;
     for &e in &entry_docs {
@@ -761,6 +874,11 @@ pub fn assemble(
                 .collect::<Vec<bool>>(),
         ),
     };
+    // The tier `summary` is in the plan before the rules and the entry, and it
+    // has its place in the output there. In the packing order, it comes after
+    // the last section of the entry or of a citing document, so it never takes
+    // their room (D56: the other tiers keep the rest of the budget).
+    let order = summary_after_entry(&plan, order);
     // An inactive document that no target names is only listed.
     if !include_inactive {
         for (i, &(d, _, _)) in plan.iter().enumerate() {
@@ -779,13 +897,18 @@ pub fn assemble(
     //
     // Thus one `show` call can read each listed section, for documents of any
     // length.
+    let is_stale = |d: u32, tier: Tier| tier == Tier::Summary && stale_docs.contains(&d);
     let costs: Vec<(u32, u32)> = plan
         .iter()
         .map(|&(d, ch, tier)| {
             let doc = &c.docs[d as usize];
-            let full =
-                doc.parsed.chunks[ch].chars + header(doc, ch, tier.name()).chars().count() as u32;
-            (full, stub_line(c, doc, ch, tier).chars().count() as u32)
+            let stale = is_stale(d, tier);
+            let full = doc.parsed.chunks[ch].chars
+                + header(doc, ch, &tier_label(tier, stale)).chars().count() as u32;
+            (
+                full,
+                stub_line(c, doc, ch, tier, stale).chars().count() as u32,
+            )
         })
         .collect();
     // The convention files come first in both passes.
@@ -800,6 +923,21 @@ pub fn assemble(
         .collect();
     let mut file_listed = vec![false; file_plan.len()];
     let mut listed = vec![false; plan.len()];
+    // The tier `summary` as a whole, in full and in stubs, has a quarter of
+    // the budget. It is filled in order: the first sections are in full, the
+    // next ones are stubs, and the last ones are cut. `(fulls, listed)` is the
+    // number of sections of each kind.
+    let tier: Vec<usize> = order
+        .iter()
+        .copied()
+        .filter(|&i| plan[i].2 == Tier::Summary)
+        .collect();
+    let (tier_full, tier_listed) = tier_share(
+        &tier.iter().map(|&i| costs[i]).collect::<Vec<_>>(),
+        budget / SUMMARY_SHARE,
+    );
+    let tier_pos = |i: usize| tier.iter().position(|&t| t == i);
+    let mut tier_stop = false;
     let mut used = 0u32;
     for (i, &(_, stub)) in file_costs.iter().enumerate() {
         if used + stub <= budget / 2 {
@@ -809,6 +947,13 @@ pub fn assemble(
     }
     for &i in &order {
         let stub = costs[i].1;
+        if let Some(t) = tier_pos(i) {
+            // A section of the tier that is not listed stops the tier.
+            if tier_stop || t >= tier_listed || used + stub > budget / 2 {
+                tier_stop = true;
+                continue;
+            }
+        }
         if used + stub <= budget / 2 {
             used += stub;
             listed[i] = true;
@@ -827,12 +972,20 @@ pub fn assemble(
         }
     }
     let mut full = vec![false; plan.len()];
+    tier_stop = false;
     for &i in &order {
         if !eligible[i] {
             continue;
         }
         let (f, stub) = costs[i];
         let extra = if listed[i] { f.saturating_sub(stub) } else { f };
+        if let Some(t) = tier_pos(i) {
+            // A section of the tier that is not in full stops the fulls.
+            if tier_stop || t >= tier_full || used + extra > budget {
+                tier_stop = true;
+                continue;
+            }
+        }
         if used + extra <= budget {
             used += extra;
             full[i] = true;
@@ -859,6 +1012,7 @@ pub fn assemble(
                 chunk: ch,
                 tier,
                 full: full[i],
+                stale: is_stale(d, tier),
             });
         } else {
             omitted += 1;
@@ -879,6 +1033,117 @@ pub fn assemble(
         held: count_held(c, places, &held.into_inner()),
         other_area: places.group.clone().map(|g| (g, other.into_inner().len())),
     }
+}
+
+/// The documents of the tier `summary` for a plan (D56), in the order of the
+/// tier: `product` documents, `system` documents, then the summaries from the
+/// shallow folder to the deep one, and by id in one depth. The chain is empty
+/// if the plan has no active document of the layer `requirements`. A document
+/// that a target names is an entry, and a document that `hold` holds back is
+/// counted there, so neither is in the chain.
+fn summary_chain(
+    c: &Corpus,
+    places: &Places,
+    entry_docs: &[u32],
+    plan: &[(u32, usize, Tier)],
+    hold: &impl Fn(u32) -> bool,
+) -> Vec<u32> {
+    if places.roll.is_empty() {
+        return Vec::new();
+    }
+    let mut areas: Vec<&Vec<String>> = Vec::new();
+    for &(d, _, _) in plan {
+        if let Some(a) = &places.area[d as usize]
+            && !c.docs[d as usize].is_inactive()
+            && !areas.contains(&a)
+        {
+            areas.push(a);
+        }
+    }
+    if areas.is_empty() {
+        return Vec::new();
+    }
+    let mut found: Vec<(usize, usize, &str, u32)> = Vec::new();
+    for (i, d) in c.docs.iter().enumerate() {
+        let Some((level, _)) = &places.roll[i] else {
+            continue;
+        };
+        let (class, depth) = match level {
+            Level::Product => (0, 0),
+            Level::System => (1, 0),
+            Level::Summary(a) if areas.iter().any(|x| x.starts_with(a)) => (2, a.len()),
+            Level::Summary(_) => continue,
+        };
+        let i = i as u32;
+        if !d.is_inactive() && !entry_docs.contains(&i) && !hold(i) {
+            found.push((class, depth, d.id.as_str(), i));
+        }
+    }
+    found.sort();
+    found.into_iter().map(|f| f.3).collect()
+}
+
+/// Moves the sections of the tier `summary` in the packing order to the place
+/// after the last section of the tier `entry` or `cites`. With no such
+/// section, they come after the conventions and the rules. The sections of the
+/// tier keep their order.
+fn summary_after_entry(plan: &[(u32, usize, Tier)], order: Vec<usize>) -> Vec<usize> {
+    let (tier, mut rest): (Vec<usize>, Vec<usize>) =
+        order.into_iter().partition(|&i| plan[i].2 == Tier::Summary);
+    if tier.is_empty() {
+        return rest;
+    }
+    let after = rest
+        .iter()
+        .rposition(|&i| matches!(plan[i].2, Tier::Entry | Tier::Cites))
+        .or_else(|| {
+            rest.iter()
+                .rposition(|&i| matches!(plan[i].2, Tier::Convention | Tier::Rule))
+        })
+        .map_or(0, |at| at + 1);
+    let mut tier = tier;
+    tier.sort_unstable();
+    rest.splice(after..after, tier);
+    rest
+}
+
+/// The share of the tier `summary`: how many of its sections, in order, are in
+/// full, and how many are listed (a full section is listed too). `costs` has
+/// the full cost and the stub cost of each section. The fulls come first, as
+/// many as fit in `share` characters. The stubs after them use the rest of the
+/// share. A section that does not fit stops each count.
+fn tier_share(costs: &[(u32, u32)], share: u32) -> (usize, usize) {
+    let mut left = share;
+    let mut full = 0;
+    for &(f, _) in costs {
+        if f > left {
+            break;
+        }
+        left -= f;
+        full += 1;
+    }
+    let mut listed = full;
+    for &(_, stub) in &costs[full..] {
+        if stub > left {
+            break;
+        }
+        left -= stub;
+        listed += 1;
+    }
+    (full, listed)
+}
+
+/// The sections of a document for the tier `summary`: the title section
+/// first (the first section of level 1), then the others in heading order.
+fn title_first(d: &Doc) -> Vec<usize> {
+    let chunks = &d.parsed.chunks;
+    let title = chunks.iter().position(|ch| ch.level == 1).unwrap_or(0);
+    let mut out: Vec<usize> = (0..chunks.len()).collect();
+    if !out.is_empty() {
+        out.remove(title);
+        out.insert(0, title);
+    }
+    out
 }
 
 /// Counts the documents that the plan does not serve, for each layer, in the
@@ -1198,6 +1463,9 @@ pub fn render(c: &Corpus, root: &Path, a: &Assembly, as_json: bool) -> String {
                     .collect();
                 o = o.strs("successors", &next);
             }
+            if u.stale {
+                o = o.bool("stale", true);
+            }
             if u.full {
                 o = o.str("text", chunk_text(&texts[&u.doc], d, u.chunk));
             }
@@ -1233,7 +1501,7 @@ pub fn render(c: &Corpus, root: &Path, a: &Assembly, as_json: bool) -> String {
     }
     for u in a.units.iter().filter(|u| u.full) {
         let d = &c.docs[u.doc as usize];
-        out.push_str(&header(d, u.chunk, u.tier.name()));
+        out.push_str(&header(d, u.chunk, &tier_label(u.tier, u.stale)));
         out.push_str(chunk_text(&texts[&u.doc], d, u.chunk));
         out.push_str("\n\n");
     }
@@ -1246,7 +1514,13 @@ pub fn render(c: &Corpus, root: &Path, a: &Assembly, as_json: bool) -> String {
             ));
         }
         for u in a.units.iter().filter(|u| !u.full) {
-            out.push_str(&stub_line(c, &c.docs[u.doc as usize], u.chunk, u.tier));
+            out.push_str(&stub_line(
+                c,
+                &c.docs[u.doc as usize],
+                u.chunk,
+                u.tier,
+                u.stale,
+            ));
         }
     }
     // A group that holds back a document that the request reaches: the

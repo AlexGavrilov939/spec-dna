@@ -89,6 +89,10 @@ growth = 4000                   # characters that a document over its hard budge
 soft = 10000
 hard = 20000
 
+[budgets.area]                  # characters of the documents of an area (SD705 to SD707); no table, no area budget
+soft = 60000
+hard = 120000
+
 [lint]
 max-words = 30                  # the word limit of a requirement sentence, before a warning
 history-terms = ["formerly", "vormals"]  # the phrases of SD903; they replace the default phrases
@@ -132,7 +136,7 @@ sonnet = "high"
 | `spec-dna` | string | required | The pinned version. If the binary has a different version, `check`, `finish`, `init` and `eval run` do not run. They print the install command and exit with code 3. The other commands print a warning. To move the pin, run `spec-dna upgrade`. In the checkout of spec-dna itself (a tree binary), SD503 does not count a change of the pin line. See [the tree binary](diagnostics.md#files-that-sd503-counts). |
 | `spec-dna-sha256` | table | none | The SHA-256 sums of the release assets of the pin. Each key is an asset name: `spec-dna-<version>-<target>`, with the suffix `.exe` for a Windows target. Each value is its sum. See [The table `spec-dna-sha256`](#the-table-spec-dna-sha256). |
 | `profile` | string | `"standard"` | The default severity of each diagnostic code: `"lite"`, `"standard"` or `"strict"`. [docs/profiles.md](profiles.md) gives the table. |
-| `rules` | table | `{}` | Severity overrides for every root. A key is a rule group (`references`, `ids`, `budgets`, `drift`, `evidence`, `reports`, `proof`, `acceptance`, `rollup`, `lint`, `layers`, `changes`) or a code (`SD704`). A value is `"off"`, `"warning"` or `"error"`. A code rule has priority over a group rule. The group `evidence` holds SD103, SD105 and SD608. The group `reports` holds SD613 to SD617. The group `proof` holds SD618 to SD620. The group `acceptance` holds SD927 to SD931, SD933 and SD935 to SD941. The group `rollup` holds SD641 to SD645. A rule for the group `budgets` does not change the group `rollup`. No rule for the group `evidence` changes the groups `reports` and `proof`. No rule for the group `changes` changes the group `acceptance`. The group `layers` holds SD901 to SD904. The group `changes` holds SD905 and SD910 to SD926. The word `rules` in `[layers.rules]` is a layer name, not the `[rules]` table: the key path shows which one. |
+| `rules` | table | `{}` | Severity overrides for every root. A key is a rule group (`references`, `ids`, `budgets`, `area-budget`, `drift`, `evidence`, `reports`, `proof`, `acceptance`, `rollup`, `lint`, `layers`, `changes`) or a code (`SD704`). A value is `"off"`, `"warning"` or `"error"`. A code rule has priority over a group rule. The group `evidence` holds SD103, SD105 and SD608. The group `reports` holds SD613 to SD617. The group `proof` holds SD618 to SD620. The group `acceptance` holds SD927 to SD931, SD933 and SD935 to SD941. The group `rollup` holds SD641 to SD645. The group `area-budget` holds SD705 to SD707. A rule for the group `budgets` does not change the groups `rollup` and `area-budget`. No rule for the group `evidence` changes the groups `reports` and `proof`. No rule for the group `changes` changes the group `acceptance`. The group `layers` holds SD901 to SD904. The group `changes` holds SD905 and SD910 to SD926. The word `rules` in `[layers.rules]` is a layer name, not the `[rules]` table: the key path shows which one. |
 | `language` | string | `"en"` | The language of the normative text: a BCP 47 language tag, such as `en`, `en-GB` or `de`. It is a top-level key only. The form is a primary subtag of 2 or 3 letters, then subtags of 1 to 8 letters or digits, separated by `-`. spec-dna does not check a tag against the language registry. A tag in another form, such as `english`, `en_GB` or `x-private`, is an error (exit code 3). The primary subtag `en` (in any case) means English. Another primary subtag disables the checks that read English word lists (SD801 to SD805 and SD904). |
 | `change` | table | none | The change process. See [The table `change`](#the-table-change). |
 | `change.policy` | string | required in the table | `"three-class"`, `"two-class"` or `"none"`. Without the `[change]` table the policy is `"none"`. With `"none"`, the codes SD905 and SD910 to SD926 are off, and no rule can enable them. |
@@ -194,6 +198,7 @@ sonnet = "high"
 | `roots.lint-severity` | string | none | The key of 0.1 for the rule `lint` of this root (SD801 to SD805). `roots.rules` has priority over it. |
 | `roots.drift-severity` | string | none | The key of 0.1 for the rule `drift` of this root (SD606, SD607). `roots.rules` has priority over it. |
 | `budgets.<type>` | table | see below | The `soft` and `hard` character budgets. |
+| `budgets.area` | table | none | The `soft` and `hard` character budgets of an area. With no table, no area has a budget. A field of 0, or an absent field, means no budget of that kind. See [Area budget](#area-budget). |
 | `budgets.growth` | integer | `4000` | The number of characters that a document over its hard budget in the base can grow in one change. Growth up to this number gives a warning (SD703), not an error (SD702). The default of 4,000 characters is about the size of one amendment. |
 | `lint.history-terms` | list of strings | `"previously"`, `"formerly"`, `"no longer"`, `"used to"`, `"was changed"`, `"before this change"`, `"after this change"` | The phrases that SD903 reports in a requirement. A list replaces the default phrases. An empty list means no phrase: SD903 then reports only dates, `round <n>` and `iteration <n>`. A phrase is not blank, and no phrase is listed twice. |
 | `lint.max-words` | integer | `30` | The word limit of a requirement sentence. A longer sentence gives a `sentence-length` warning. |
@@ -357,6 +362,8 @@ areas = ["valves", "sensors", "reports"]
 operations = ["valves", "sensors"]
 reporting = ["reports"]
 ```
+
+`[budgets.area]` sets the size budget of an area ([Area budget](#area-budget)). The budget reads the folders, not the key `areas`.
 
 A project has no group by default, and `init` never proposes one. A group is a view. The options `--group <name>` of `status`, `stats` and `context` read it. A group never makes a folder, an id or a requirement key.
 
@@ -617,6 +624,29 @@ A document over the soft budget gives a warning (SD701). If it also grew against
 - A document that was over the hard budget in the base and did not grow gives a warning (SD704).
 
 A stub that `mv --stub` leaves and an index that `spec-dna index` generates have no budget. In a root with `enforce-budgets = false`, each of the 4 cases above gives SD704. `check --all` uses the same base, so a document that did not change does not give SD702. The profile sets the severity of each budget code ([docs/profiles.md](profiles.md)).
+
+### Area budget
+
+`[budgets.area]` sets a size budget for each area, with the keys `soft` and `hard`, in characters. With no table, no area has a budget, and `check` gives no SD705, SD706 or SD707. A field of 0, or an absent field, means no budget of that kind. A `hard` below `soft` is a configuration error (exit code 3), unless `hard` is 0.
+
+`init` writes the table for a new project of `standard` (60,000 and 120,000) and of `strict` (40,000 and 80,000). It writes none for `lite`. `upgrade` writes none.
+
+An area is a folder of any depth under the folder of the layer `requirements`. That folder is the root area. A document of the layer that is not under the folder is in the root area.
+
+The size of an area is the sum of the body characters of its documents that are not inactive. A stub and a generated index do not count. For each sub-area that has a summary, the sum counts that summary in place of the documents of the sub-area. Only the highest summary of a branch counts. The summary of an area is not part of the size of that area. Thus a summary condenses a sub-area for each level above it.
+
+The rules against the base follow the rules of the hard budget of a document:
+
+- An area over the soft budget gives SD705. An area over the hard budget gives SD706 or SD707, not SD705.
+- An area over the hard budget gives SD706 in one of these cases:
+  - The area is new.
+  - The area was under the hard budget in the base.
+  - The area grew by more than `budgets.growth` characters.
+- An area that was over the hard budget in the base, and did not grow by more than `budgets.growth` characters, gives SD707. The finding is new if the area grew. It is not new if the area did not grow.
+- The base counts an area by its folders. A folder that moves is a new area.
+- The finding is on the summary of the area, or on the folder of the area if it has no summary. Its `target` is the area (`.` for the root area).
+
+To fix an area, split it into sub-areas with `spec-dna mv`, and give each one a summary with `spec-dna new summary`. The profile sets the severity ([profiles.md](profiles.md)).
 
 ## Sections of a decision
 

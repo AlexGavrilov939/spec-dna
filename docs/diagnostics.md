@@ -25,6 +25,8 @@ SD613, SD614, SD615 and SD617 are always new, because the base has no report. SD
 
 The codes SD401 to SD405, SD202, SD605, SD606, SD607, SD702, SD703 and SD921 compare the base tree with the head tree. Thus these diagnostics are always new. SD704 is new only if the root does not enforce budgets and the document is new or grew.
 
+SD705 to SD707 compare the size of an area with the base by the folders of the area. SD706 is always new. SD707 is new only if the area grew. SD705 is new if the area was not over the soft budget in the base.
+
 Without `--base`, the change codes that need a base use the merge base of `origin/HEAD` with `HEAD`, or, if there is no `origin/HEAD`, of the branch of `[change] base` with `HEAD` ([the checks of the change lifecycle](#checks-of-the-change-lifecycle)). If git cannot name this base, `check` prints a note and runs only the checks of one tree.
 
 ## Code ranges
@@ -41,6 +43,7 @@ Without `--base`, the change codes that need a base use the merge base of `origi
 | SD618 to SD620 | Proof levels and the proof debt | [Proof levels and the proof debt](#proof-levels-and-the-proof-debt-sd618-to-sd620) |
 | SD641 to SD645 | The roll-up: summaries and pins | [Roll-up](#roll-up-sd641-to-sd645) |
 | SD701 to SD704 | Budgets | [Budgets](#budgets-sd701-to-sd704) |
+| SD705 to SD707 | Area budgets | [Area budgets](#area-budgets-sd705-to-sd707) |
 | SD801 to SD807 | Requirement text | [Requirement text](#requirement-text-sd801-to-sd807) |
 | SD901 to SD904 | Layers | [Layers](#layers-sd901-to-sd904) |
 | SD905, SD910 to SD926 | Changes | [Changes](#changes-sd905-and-sd910-to-sd926) |
@@ -201,7 +204,7 @@ These codes are new in 0.8.0. They are in the rule group `rollup`, so a rule for
 - The message of SD641 and SD642 names the pin or the item, and the command `spec-dna refresh <id>`. A person or an agent reads the requirement, edits the text of the summary, then runs `refresh`. If the text still holds, `refresh <id> --holds` writes the pins, and SD645 shows that claim in the diff.
 - The check does not read the meaning. A summary with a wrong text and current pins passes. SD645 shows a claim: it does not check it.
 - SD645 uses the base of the change checks (the merge base of `--base` and `HEAD`), or `HEAD` when there is none. `refresh` uses the same base for its guard.
-- `finish` and `mv` do not yet know the roll-up. A new SD641 that a change causes can stop them in `standard` and `strict`.
+- `finish` runs the roll-up. It does not count SD641 and SD642 of a due document that it leaves stale ([finish](commands.md#finish)). `mv` does not count SD641 and SD642 either, and it names the summaries that the move makes stale ([mv](commands.md#mv)).
 
 ## Budgets (SD701 to SD704)
 
@@ -211,6 +214,23 @@ These codes are new in 0.8.0. They are in the rule group `rollup`, so a rule for
 | SD702 | budget-hard | error | A document is over its hard budget. Against the base, it is new, it was under the hard budget, or it grew by more than `[budgets] growth` characters (default 4,000). |
 | SD703 | budget-grew | warning | A document over its soft budget grew against the base. It is under its hard budget, or over it by at most `[budgets] growth` characters. |
 | SD704 | budget-hard-kept | warning | A document is over its hard budget, but it was over it in the base and did not grow. Or a split moved it out of a document over its hard budget (its section aliases name that document). In a root with `enforce-budgets = false`, every document over its hard budget gives SD704. |
+
+## Area budgets (SD705 to SD707)
+
+These codes are new in 0.8.0. They are in the rule group `area-budget`, so a rule for the group `budgets` does not change them. They need the table `[budgets.area]` ([config.md](config.md#area-budget)). With no table, they give nothing. They are off in `lite`.
+
+Each finding is on the summary of the area, or on the folder of the area if it has no summary. Its target is the area, and `.` is the root area.
+
+| Code | Name | Severity | Meaning |
+| --- | --- | --- | --- |
+| SD705 | area-budget-soft | warning | An area is over its soft budget, and not over its hard budget. It is new if the area was not over the soft budget in the base. |
+| SD706 | area-budget-hard | error | An area is over its hard budget. Against the base, it is new, it was under the hard budget, or it grew by more than `[budgets] growth` characters. |
+| SD707 | area-budget-hard-kept | warning | An area is over its hard budget, and it was over it in the base. It grew by at most `[budgets] growth` characters (new), or it did not grow (not new). |
+
+- The size of an area is the sum of its documents that are not inactive. A summary of a sub-area counts in place of the documents of that sub-area.
+- To fix SD706, split the area with `spec-dna mv` and give each sub-area a summary (`spec-dna new summary`), or condense its documents.
+- The gate compares an area with the base by its folders.
+- A change that adds at most `[budgets] growth` characters to an area that is over its hard budget in the base gives SD707, not SD706.
 
 ## Requirement text (SD801 to SD807)
 
@@ -251,7 +271,7 @@ These codes are new in 0.6.0, except SD923 to SD926, which are new in 0.7.0. The
 | SD910 | gate-approval-missing | error | A `spec.md` or a `plan.md` that is not a `draft` changes while no approval of the artifact before it counts. Code under the `Files` of a plan that no approval covers counts as an artifact. With `[change] approval = "base"`, only the base tree gives an approval. With `"branch"`, an approval commit of an approver in the branch also counts. The message names one of 9 reasons. `[change] gate` sets the severity: `block` is an error, `warn` is a warning, `off` disables the code. |
 | SD911 | change-stale | warning | A started change has had no commit for more than `stale-days` days (a key of the `intent` layer). It is a state code: `check --all` shows it, and it is never new. Off in `lite`. |
 | SD912 | started-limit | warning | More changes than `max-started` of the `intent` layer have an `accepted` intent. The diagnostic is on `spec-dna.toml`. It is new when the head has more started changes than the lifecycle base. Off in `lite`, an error in `strict`. |
-| SD913 | outside-plan | warning | A change of the diff has a plan, and the diff touches a file that no item of `Files` matches. The intent folder (with its `acceptance.toml`), the files of `.spec-dna/accepted/` and the documents that the delta names are always in scope. A file that SD503 does not count is always in scope: an adapter, a harness file, a hook file, a starter file of the evals and a file whose name starts with `spec-dna`. A path that a glob of [`[change] shared-paths`](config.md#the-table-change) matches is in scope too. Before a plan exists, SD913 gives nothing. Known limit: a path that another open change lists in its own `Files` hides SD913 for that path in this change, because SD913 asks whether any plan of the diff matches the path. No check reports it. Off in `lite`. |
+| SD913 | outside-plan | warning | A change of the diff has a plan, and the diff touches a file that no item of `Files` matches. The intent folder (with its `acceptance.toml`), the files of `.spec-dna/accepted/` and the documents that the delta names are always in scope. A file that SD503 does not count is always in scope: an adapter, a harness file, a hook file, a starter file of the evals and a file whose name starts with `spec-dna`. A path that a glob of [`[change] shared-paths`](config.md#the-table-change) matches is in scope too. So is a roll-up document ([Roll-up](#roll-up-sd641-to-sd645)), because a change can make a summary due at `finish`. Before a plan exists, SD913 gives nothing. Known limit: a path that another open change lists in its own `Files` hides SD913 for that path in this change, because SD913 asks whether any plan of the diff matches the path. No check reports it. Off in `lite`. |
 | SD914 | delta-invalid | error | A delta line has an invalid form, names an absent target, targets a layer that `moves-to` does not allow, or has a hash that does not match the requirement. SD914 also reports an `Interfaces` item that is not `CHANGE <interface id>: <text>`, `ADD <interface id>: <text>` or `none`, that names an absent interface document, that has the place of another type, or that names an interface that the diff does not change. It is a warning for a spec that the diff does not touch, and with no lifecycle base. |
 | SD915 | finish-incomplete | error | The diff deletes an intent folder whose base status is not `closed`, and the head does not have the result of its delta. For a change with no delta, the diff changes no `Files` path and no requirement hash. |
 | SD916 | delta-evidence-missing | error | An `ADD` or `CHANGE` requirement has no full `covers:` tag and no `verified-by` when `finish` runs, or when the diff deletes the intent folder. For a change with no delta, the same applies to each requirement whose hash differs from the base. |
@@ -461,7 +481,7 @@ A change whose intent has the status `closed` does not proceed, so its spec give
     - an edit that a side branch made and merged after `finish`.
   - If a plan lists no path, and it has an item that is not a path, the message names the first such item. If its `Files` section has a paragraph and no list item, and the paragraph is not in the `none` form: the first word is `none`, followed by `:`, `.` or the end of the paragraph ([Files and paths](types.md#files-and-paths)), the message says: "the section `Files` has a paragraph and no list item; write the paths as a list, or write `- none`". SD915 gives the same text.
   - For a change with no delta, a requirement document is in scope only if `Files` lists it.
-  - SD913 gives one diagnostic for each path outside the scope of every change of the diff, also for a path that is deleted. A generated index is not reported. A file of the tool (the list of SD503) and a path of `shared-paths` are not reported.
+  - SD913 gives one diagnostic for each path outside the scope of every change of the diff, also for a path that is deleted. A generated index is not reported. A file of the tool (the list of SD503), a path of `shared-paths` and a roll-up document are not reported.
   - SD913 runs only when at least one change of the diff has a `plan.md`. A `draft` plan is a plan, and so is a plan with `- None.` under `Files`. A change also has a plan if the base tree has its `plan.md`, so a branch that deletes the plan does not turn SD913 off. Before a plan exists, a change has no `Files`, so it has no scope to check against. Thus an edit of another document (such as the questions or the roadmap) or of a spike gives no SD913 during `clarify`.
   - The check reads the plan in the tree that SD913 reads for the change: the head tree, the base tree or the newest branch text for a folder that the diff deletes, or the newest branch text of a change that the branch added and finished. A change that its `Files` matched has a plan.
   - When a change of the diff has a plan, the rule applies to each path outside the scope of every change of the diff. The scope of a change with no plan (its folder, and the documents that its delta and `Interfaces` name) still counts. An edit that belongs to a change with no plan, next to a change with a plan, still gives SD913. Keep one change in a branch.
@@ -578,7 +598,7 @@ SD506 needs the table `[evals]`, with any `[change] policy`. It reads the files 
 | 2 | SD919 (an open concern), SD922 (an open question) or SD920 (a needed decision that is absent or not `accepted`) |
 | 3 | SD914: a delta line is not valid, its target is absent or in a layer that `moves-to` does not allow, or its hash is not the hash of the requirement. Also SD914: the delta differs from the delta that the base tree has (an approved delta must not change). Also SD914: an interface of `Interfaces` that the diff does not change, or an `ADD` item of `Interfaces` whose document the tree does not have and no delta line adds |
 | 4 | The result would not give the result of a delta line (`check` would report SD915), or two lines edit the same lines of a file |
-| 5 | SD613, SD614 or SD615 (step 5.1: with `[evidence] reports`, a test report is missing, stale or unreadable), SD916 (a requirement that the change adds or changes has no evidence), SD617 (step 5.4: it has a tag, and no bound test case passed in the reports), SD620 (step 5.4: with `[evidence] reliable-for`, a requirement passed fewer times than `[evidence] reliable-runs`), SD927, SD928, SD929, SD930, SD931, SD933, SD936, SD937, SD938, SD939 or SD940 (step 5.2: a change that needs a record has none, or the record is not valid, stale, rejected, self-accepted or short of acceptors, or a section `Invariants` or `Deviations` is not valid or is not answered), a path of the archive file that git ignores or that has a link (step 5.5), or the result adds an error. The only exception is SD305 for a new document: the author adds the sections that the root requires |
+| 5 | SD613, SD614 or SD615 (step 5.1: with `[evidence] reports`, a test report is missing, stale or unreadable), SD916 (a requirement that the change adds or changes has no evidence), SD617 (step 5.4: it has a tag, and no bound test case passed in the reports), SD620 (step 5.4: with `[evidence] reliable-for`, a requirement passed fewer times than `[evidence] reliable-runs`), SD927, SD928, SD929, SD930, SD931, SD933, SD936, SD937, SD938, SD939 or SD940 (step 5.2: a change that needs a record has none, or the record is not valid, stale, rejected, self-accepted or short of acceptors, or a section `Invariants` or `Deviations` is not valid or is not answered), a path of the archive file that git ignores or that has a link (step 5.5), or the result adds an error. The only exceptions are SD305 for a new document, and SD641 and SD642 for a due roll-up document that `finish` leaves stale. For SD305, the author adds the sections that the root requires |
 
 The base of step 3 is the merge base of `--base` (or of `origin/HEAD`, or of the branch of `[change] base`) with `HEAD`, for each policy. An `accepted` change needs it, and without it `finish` exits with code 3. A change that the base tree does not have was added in the same branch: its delta has no approved text to compare.
 

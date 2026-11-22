@@ -343,6 +343,47 @@ fn finish_names_the_line_hours_without_its_form() {
     assert!(!f.contains("Hours: <total>"), "{f}");
 }
 
+/// D54 and S8b: the skill `finish` tells an agent what to do with a due
+/// summary that `next` names. The edit comes in the build, before `finish`
+/// runs, because `finish` deletes the folder and re-pins no later edit. A
+/// higher summary that pins the edited one gets `refresh`, or `refresh
+/// --holds` when its text did not change. A stale summary goes to the owner.
+#[test]
+fn finish_names_the_due_summary_the_holds_option_and_the_stale_report() {
+    let f = shown("finish");
+    for w in [
+        "1. If `next` names a due summary, edit its text before `finish` when its meaning changes.",
+        "run `spec-dna refresh <id>` on a higher summary that pins it, with `--holds` if its meaning holds",
+        "Name each other due summary with `--holds <id>`, one option for each id.",
+        "`roll-up: stale <id>`",
+        "tell the owner: it needs an edit and `spec-dna refresh <id>` in a new commit, or `spec-dna refresh <id> --holds` if its text holds.",
+    ] {
+        assert!(f.contains(w), "`{w}`\n{f}");
+    }
+    // The edit sits before the run of `finish`, and no sentence after it.
+    let edit = f.find("edit its text").expect("edit");
+    let run = f.find("2. Run `spec-dna finish <slug>`.").expect("step 2");
+    assert!(edit < run, "{f}");
+    assert!(!f.contains("in the same commit"), "{f}");
+    let file = written().read(&path("finish"));
+    assert!(
+        body_of(&file).len() <= 2500,
+        "{} bytes",
+        body_of(&file).len()
+    );
+}
+
+/// D54: a due summary that `next` names is no file outside `Files`, so
+/// `execute` does not stop and ask for it.
+#[test]
+fn execute_does_not_stop_for_a_due_summary() {
+    let e = shown("execute");
+    assert!(
+        e.contains("A due summary that `next` names is no such file: edit it with no stop."),
+        "{e}"
+    );
+}
+
 #[test]
 fn the_front_matter_and_the_sizes_follow_the_budgets_of_d6() {
     let r = written();
@@ -1134,10 +1175,12 @@ fn the_golden_files_of_standard_differ_from_0_7_1_in_the_named_lines_only() {
             "execute",
             &[
                 r#"2. Take the first open task. Only the review of the owner ends the task `Review by the owner`: never tick it and never write `Skip:` for it. Start one fresh subagent for it, and give it the task and `spec-dna context <file>...` for its files. It changes only the files of the task."#,
+                r#"If the check fails: Fix the cause in the same task. If a file is outside `Files`, stop and ask the person. With a yes, add the path to `Files` of `plan.md` in the commit of the edit; a plan with an approval commit in this branch needs a new approval commit first (SD910, reason 8)."#,
             ],
             &[
                 r#"2. Take the first open task. A task with `By: person` is not yours: never tick it. Only the review of the owner ends the task `Review by the owner`: never tick it and never write `Skip:` for it. Start one fresh subagent for it, and give it the task and `spec-dna context <file>...` for its files. It changes only the files of the task."#,
                 r#"5. If the work differs from the plan or the spec, add an item to `Deviations` of `plan.md`, in the commit of the work: `- <id> (plan): <text>`, or `- <id> (spec): <text>. Delta: <verb> <doc-id>#<key>` (or `Follow-up: <slug>`)."#,
+                r#"If the check fails: Fix the cause in the same task. If a file is outside `Files`, stop and ask the person. With a yes, add the path to `Files` of `plan.md` in the commit of the edit; a plan with an approval commit in this branch needs a new approval commit first (SD910, reason 8). A due summary that `next` names is no such file: edit it with no stop."#,
             ],
         ),
         (
@@ -1183,10 +1226,14 @@ fn the_golden_files_of_standard_differ_from_0_7_1_in_the_named_lines_only() {
         (
             "finish",
             &[
+                r#"1. Run `spec-dna finish <slug> --dry-run` alone: one plain command with no other command after it. If git has no `origin/HEAD`, add `--base <rev>`. Read each step and each stop."#,
                 r#"2. Run `spec-dna finish <slug>`. It applies the delta, deletes the folder of the change and stages the paths. It makes no commit."#,
+                r#"If the check fails: A command that the tool denies is no stop of `finish`: run the plain command again. A stop is a line `stopped at step N` that `spec-dna finish` prints. The stop changes nothing. Fix that step, then run `spec-dna finish <slug>` again. A stop at step 0 lists each open task of `plan.md` (do the task, or write a reason in `Skip:`) or each reference into the folder. If the stop names a status, ask the approver. If `spec-dna finish` prints no stop, read its message: it can name an edit that is not committed. If `spec-dna check --base origin/HEAD` gives SD910 reason 7, the branch added the artifacts and finished the change: put `finish` in a new pull request. Do not delete the folder by hand."#,
             ],
             &[
-                r#"2. Run `spec-dna finish <slug>`. It applies the delta, deletes the folder of the change and stages the paths. It makes no commit. If it prints `Deviations: <n>` and one line for each, tell the owner: the merge acknowledges them, or, with `approval = branch`, an approver does it with `spec-dna approve <slug> acceptance`."#,
+                r#"1. If `next` names a due summary, edit its text before `finish` when its meaning changes. Then run `spec-dna refresh <id>` on a higher summary that pins it, with `--holds` if its meaning holds. Run `spec-dna finish <slug> --dry-run` alone: one plain command with no other command after it. If git has no `origin/HEAD`, add `--base <rev>`. Read each step and each stop."#,
+                r#"2. Run `spec-dna finish <slug>`. It applies the delta, deletes the folder of the change and stages the paths. It makes no commit. Name each other due summary with `--holds <id>`, one option for each id. If it prints `Deviations: <n>` and one line for each, tell the owner: the merge acknowledges them, or, with `approval = branch`, an approver does it with `spec-dna approve <slug> acceptance`."#,
+                r#"If the check fails: A command that the tool denies is no stop of `finish`: run the plain command again. A stop is a line `stopped at step N` that `spec-dna finish` prints. The stop changes nothing. Fix that step, then run `spec-dna finish <slug>` again. A stop at step 0 lists each open task of `plan.md` (do the task, or write a reason in `Skip:`) or each reference into the folder. If the stop names a status, ask the approver. If `spec-dna finish` prints no stop, read its message: it can name an edit that is not committed. If `spec-dna check --base origin/HEAD` gives SD910 reason 7, the branch added the artifacts and finished the change: put `finish` in a new pull request. Do not delete the folder by hand. If `spec-dna finish` prints `roll-up: stale <id>`, tell the owner: it needs an edit and `spec-dna refresh <id>` in a new commit, or `spec-dna refresh <id> --holds` if its text holds."#,
             ],
         ),
         ("debug", &[], &[]),

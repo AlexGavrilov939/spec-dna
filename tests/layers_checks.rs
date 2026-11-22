@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+mod common;
+
 const BIN: &str = env!("CARGO_BIN_EXE_spec-dna");
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -933,4 +935,561 @@ fn sd612_pairs_with_the_exact_line_that_sd611_reports() {
     assert!(sd612[0].starts_with("docs/decisions/pump.md:"), "{out}");
     let line = |l: &str| l.split(':').nth(1).unwrap().to_string();
     assert_ne!(line(sd611[0]), line(sd612[0]), "{out}");
+}
+
+// The budget of an area: SD705 to SD707 of the group `area-budget` (design
+// 0.8.0, D55). A fixture has the layers `requirements` and `summaries`, and
+// the key `[budgets.area]`. These cases use `common::Repo`, which commits with
+// an isolated git identity.
+
+const AREA_LAYERS: &str = "[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.summaries]\ntypes = [\"summary\"]\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n";
+
+/// The key of the tests: 1,500 and 2,500 characters, and a growth allowance of
+/// 100 characters.
+const AREA_KEY: &str = "[budgets]\ngrowth = 100\n\n[budgets.area]\nsoft = 1500\nhard = 2500\n";
+
+fn area_repo(profile: &str, tables: &str) -> common::Repo {
+    common::Repo::with_config(&format!("profile = \"{profile}\"\n{tables}\n{AREA_LAYERS}"))
+}
+
+/// A requirement document of about `pad + 100` body characters.
+fn area_doc(key: &str, status: &str, pad: usize) -> String {
+    format!(
+        "---\nstatus: {status}\n---\n# {key}\n\n## Requirements\n\n- **{key}**: The valve SHALL close after 30 seconds.\n\n## Notes\n\n{}\n",
+        "x".repeat(pad)
+    )
+}
+
+/// The first `n` documents of `a`, `b` and `c` in the area `valves`.
+fn valves(r: &common::Repo, n: usize) {
+    for key in ["a", "b", "c"].iter().take(n) {
+        r.write(
+            &format!("docs/requirements/valves/{key}.md"),
+            &area_doc(key, "active", 1000),
+        );
+    }
+}
+
+/// The finding lines of SD705 to SD707, not their fix lines.
+fn area_lines(out: &str) -> Vec<&str> {
+    out.lines()
+        .filter(|l| {
+            ["SD705", "SD706", "SD707"]
+                .iter()
+                .any(|c| l.contains(&format!("error {c} ")) || l.contains(&format!("warning {c} ")))
+        })
+        .collect()
+}
+
+fn run_check(r: &common::Repo, args: &[&str]) -> (i32, String) {
+    let (code, out, err) = r.run(args);
+    (code, format!("{out}{err}"))
+}
+
+/// The number of characters that a finding line names after `has`.
+fn count_in(line: &str) -> u32 {
+    let at = line.find(" has ").unwrap() + 5;
+    line[at..].split(' ').next().unwrap().parse().unwrap()
+}
+
+#[test]
+fn sd706_a_new_area_over_the_hard_budget_is_an_error_in_standard_and_strict_and_off_in_lite() {
+    for (profile, want) in [("lite", None), ("standard", Some(1)), ("strict", Some(1))] {
+        let r = area_repo(profile, AREA_KEY);
+        valves(&r, 3);
+        // No commit: every area is new.
+        let (code, out) = run_check(&r, &["check"]);
+        let found = area_lines(&out);
+        match want {
+            None => {
+                assert!(found.is_empty(), "{profile}: {out}");
+                assert_eq!(code, 0, "{profile}: {out}");
+            }
+            Some(exit) => {
+                assert_eq!(code, exit, "{profile}: {out}");
+                assert!(
+                    found.iter().any(|l| l.starts_with(
+                        "docs/requirements/valves:1: error SD706 area-budget-hard: area `valves` has "
+                    ) && l.ends_with("characters, over the hard budget of 2500 (a new area)")),
+                    "{profile}: {out}"
+                );
+                assert!(out.contains("SD706 fix: "), "{out}");
+            }
+        }
+    }
+}
+
+#[test]
+fn sd707_an_excess_of_the_base_with_no_growth_is_not_new_and_check_all_shows_it() {
+    for (profile, severity) in [("standard", "warning"), ("strict", "error")] {
+        // The rule `evidence = "off"` takes the SD608 errors of `strict` away.
+        let r = area_repo(
+            profile,
+            &format!("{AREA_KEY}\n[rules]\nevidence = \"off\"\n"),
+        );
+        valves(&r, 3);
+        r.commit("base");
+        let (code, out) = run_check(&r, &["check"]);
+        assert_eq!(code, 0, "{profile}: {out}");
+        assert!(area_lines(&out).is_empty(), "{profile}: not new: {out}");
+        // `--all` fails on each error it lists, new or not: so on the error
+        // SD707 of `strict`, and not on the warning SD707 of `standard`.
+        let (code, out) = run_check(&r, &["check", "--all"]);
+        assert_eq!(code, i32::from(profile == "strict"), "{profile}: {out}");
+        assert!(
+            area_lines(&out).iter().any(|l| l.contains(&format!(
+                "{severity} SD707 area-budget-hard-kept: area `valves` has "
+            )) && l.ends_with("(no growth against the base)")),
+            "{profile}: {out}"
+        );
+        assert!(!out.contains("SD706 area"), "{out}");
+    }
+}
+
+#[test]
+fn sd707_growth_up_to_the_allowance_is_new_and_more_growth_is_sd706() {
+    for (profile, exit_small) in [("standard", 0), ("strict", 1)] {
+        let r = area_repo(profile, AREA_KEY);
+        valves(&r, 3);
+        r.commit("base");
+        // Exactly `growth` characters more: SD707, new.
+        r.write(
+            "docs/requirements/valves/a.md",
+            &area_doc("a", "active", 1100),
+        );
+        let (code, out) = run_check(&r, &["check"]);
+        assert_eq!(code, exit_small, "{profile}: {out}");
+        assert!(
+            area_lines(&out)
+                .iter()
+                .any(|l| l.contains(" SD707 area-budget-hard-kept: ")
+                    && l.ends_with("(grew by 100 characters, at most 100 in one change)")),
+            "{profile}: {out}"
+        );
+        // One character more: SD706, an error in each profile.
+        r.write(
+            "docs/requirements/valves/a.md",
+            &area_doc("a", "active", 1101),
+        );
+        let (code, out) = run_check(&r, &["check"]);
+        assert_eq!(code, 1, "{profile}: {out}");
+        assert!(
+            area_lines(&out)
+                .iter()
+                .any(|l| l.contains("error SD706 area-budget-hard: ")
+                    && l.contains("(grew from ")
+                    && l.ends_with(" characters in the base)")),
+            "{profile}: {out}"
+        );
+        // Less text: no growth, so not new.
+        r.write(
+            "docs/requirements/valves/a.md",
+            &area_doc("a", "active", 900),
+        );
+        let (code, out) = run_check(&r, &["check"]);
+        assert_eq!(code, 0, "{profile}: {out}");
+        assert!(area_lines(&out).is_empty(), "{profile}: {out}");
+    }
+}
+
+#[test]
+fn sd706_an_area_that_was_under_the_hard_budget_in_the_base_is_an_error() {
+    let r = area_repo("standard", AREA_KEY);
+    valves(&r, 2);
+    r.commit("base");
+    valves(&r, 3);
+    let (code, out) = run_check(&r, &["check"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        area_lines(&out)
+            .iter()
+            .any(|l| l.contains("error SD706 ") && l.contains("characters in the base)")),
+        "{out}"
+    );
+}
+
+#[test]
+fn sd705_the_soft_budget_is_a_warning_in_standard_an_error_in_strict_and_new_only_when_crossed() {
+    for (profile, severity, exit) in [("standard", "warning", 0), ("strict", "error", 1)] {
+        let r = area_repo(profile, AREA_KEY);
+        valves(&r, 2);
+        let (code, out) = run_check(&r, &["check"]);
+        assert_eq!(code, exit, "{profile}: {out}");
+        assert!(
+            area_lines(&out)
+                .iter()
+                .any(|l| l.contains(&format!(
+                    "{severity} SD705 area-budget-soft: area `valves` has "
+                )) && l.ends_with("characters, over the soft budget of 1500")),
+            "{profile}: {out}"
+        );
+        assert!(
+            !out.contains("SD706 area") && !out.contains("SD707 area"),
+            "{out}"
+        );
+        // In the base, it is not new.
+        r.commit("base");
+        let (code, out) = run_check(&r, &["check"]);
+        assert_eq!(code, 0, "{profile}: {out}");
+        assert!(area_lines(&out).is_empty(), "{profile}: {out}");
+        let (_, out) = run_check(&r, &["check", "--all"]);
+        assert!(out.contains("SD705 area-budget-soft"), "{profile}: {out}");
+    }
+    // An area that crosses the soft budget in the change is new.
+    let r = area_repo("standard", AREA_KEY);
+    valves(&r, 1);
+    r.commit("base");
+    valves(&r, 2);
+    let (code, out) = run_check(&r, &["check"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("warning SD705 area-budget-soft"), "{out}");
+}
+
+#[test]
+fn an_area_budget_that_a_project_adds_over_an_existing_excess_gives_sd707_not_sd706() {
+    let r = area_repo("standard", "");
+    valves(&r, 3);
+    r.commit("base");
+    let (_, out) = run_check(&r, &["check", "--all"]);
+    assert!(area_lines(&out).is_empty(), "no table, no code: {out}");
+    // The table is in the head. The excess is in the base too.
+    let text = r.read("spec-dna.toml");
+    r.write(
+        "spec-dna.toml",
+        &text.replacen("\n[layers.", &format!("\n{AREA_KEY}\n[layers."), 1),
+    );
+    let (code, out) = run_check(&r, &["check"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(area_lines(&out).is_empty(), "{out}");
+    let (code, out) = run_check(&r, &["check", "--all"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("warning SD707 area-budget-hard-kept"), "{out}");
+    assert!(!out.contains("SD706 area"), "{out}");
+}
+
+#[test]
+fn a_project_with_no_area_budget_gives_no_code_of_the_group_in_any_profile() {
+    for profile in ["lite", "standard", "strict"] {
+        let r = area_repo(profile, "");
+        valves(&r, 3);
+        let (_, out) = run_check(&r, &["check", "--all"]);
+        assert!(area_lines(&out).is_empty(), "{profile}: {out}");
+        let (_, json) = run_check(&r, &["check", "--all", "--json"]);
+        assert!(
+            !json.contains("SD705") && !json.contains("SD706") && !json.contains("SD707"),
+            "{profile}: {json}"
+        );
+    }
+    // An empty table has no budget: 0 turns a budget off.
+    let r = area_repo("standard", "[budgets.area]\n");
+    valves(&r, 3);
+    let (_, out) = run_check(&r, &["check", "--all"]);
+    assert!(area_lines(&out).is_empty(), "{out}");
+    // A key with only `hard` has no soft budget.
+    let r = area_repo("standard", "[budgets.area]\nhard = 2500\n");
+    valves(&r, 2);
+    let (_, out) = run_check(&r, &["check", "--all"]);
+    assert!(area_lines(&out).is_empty(), "{out}");
+    valves(&r, 3);
+    let (_, out) = run_check(&r, &["check", "--all"]);
+    assert!(out.contains("SD706 area-budget-hard"), "{out}");
+}
+
+#[test]
+fn a_summary_counts_in_place_of_the_documents_of_its_sub_area() {
+    let r = area_repo("standard", AREA_KEY);
+    r.write(
+        "docs/requirements/valves/a.md",
+        &area_doc("a", "active", 500),
+    );
+    for key in ["b", "c"] {
+        r.write(
+            &format!("docs/requirements/valves/inner/{key}.md"),
+            &area_doc(key, "active", 1200),
+        );
+    }
+    // No summary: `valves` counts the documents of `inner`, and so does the
+    // root area.
+    let (_, out) = run_check(&r, &["check", "--all"]);
+    let found = area_lines(&out);
+    let targets: Vec<&str> = found
+        .iter()
+        .filter(|l| l.contains(" SD706 "))
+        .map(|l| l.split(':').next().unwrap())
+        .collect();
+    assert_eq!(
+        targets,
+        [
+            "docs/requirements",
+            "docs/requirements/valves",
+            "docs/requirements/valves/inner"
+        ],
+        "{out}"
+    );
+    let before = count_in(found.iter().find(|l| l.contains("`valves`")).unwrap());
+    assert!(before > 2500, "{out}");
+    // With a short summary of `inner`, the finding of `inner` is on the
+    // summary, and `valves` counts the summary and its own document only.
+    r.write(
+        "docs/summaries/valves/inner.md",
+        "---\nstatus: active\n---\n# Inner\n\nThe inner valves close after 30 seconds.\n",
+    );
+    let (_, out) = run_check(&r, &["check", "--all"]);
+    let found = area_lines(&out);
+    assert!(
+        found.iter().any(
+            |l| l.starts_with("docs/summaries/valves/inner.md:1: error SD706 ")
+                && l.contains("area `valves/inner` has ")
+        ),
+        "{out}"
+    );
+    assert!(
+        !found
+            .iter()
+            .any(|l| l.contains("area `valves` ") || l.contains("area `.` ")),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_retired_document_does_not_count_and_a_draft_does() {
+    let r = area_repo("standard", AREA_KEY);
+    valves(&r, 2);
+    r.write(
+        "docs/requirements/valves/c.md",
+        &area_doc("c", "retired", 1000),
+    );
+    let (_, out) = run_check(&r, &["check", "--all"]);
+    assert!(!out.contains("SD706 area"), "{out}");
+    r.write(
+        "docs/requirements/valves/c.md",
+        &area_doc("c", "draft", 1000),
+    );
+    let (_, out) = run_check(&r, &["check", "--all"]);
+    assert!(out.contains("error SD706 area-budget-hard"), "{out}");
+}
+
+#[test]
+fn the_rules_of_the_group_area_budget_and_of_each_code_set_the_severity() {
+    // `lite` has the codes off, and the group turns them on.
+    let r = area_repo(
+        "lite",
+        &format!("{AREA_KEY}\n[rules]\narea-budget = \"error\"\n"),
+    );
+    valves(&r, 3);
+    let (code, out) = run_check(&r, &["check"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("error SD706 area-budget-hard"), "{out}");
+    // A rule for the group `budgets` does not change the codes.
+    let r = area_repo(
+        "standard",
+        &format!("{AREA_KEY}\n[rules]\nbudgets = \"off\"\n"),
+    );
+    valves(&r, 3);
+    let (code, out) = run_check(&r, &["check"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("error SD706 area-budget-hard"), "{out}");
+    // A rule for the group, and a rule for the code, turn them off.
+    for rule in ["area-budget = \"off\"", "SD706 = \"off\""] {
+        let r = area_repo("standard", &format!("{AREA_KEY}\n[rules]\n{rule}\n"));
+        valves(&r, 3);
+        let (code, out) = run_check(&r, &["check"]);
+        assert_eq!(code, 0, "{rule}: {out}");
+        assert!(!out.contains("SD706 area"), "{rule}: {out}");
+    }
+}
+
+#[test]
+fn the_json_of_a_finding_names_the_folder_and_the_area() {
+    let r = area_repo("standard", AREA_KEY);
+    valves(&r, 3);
+    let (_, json) = run_check(&r, &["check", "--json"]);
+    // The root area is over the budget too: take the object of `valves`.
+    let obj = json
+        .match_indices("\"code\":\"SD706\"")
+        .map(|(at, _)| &json[at..at + json[at..].find('}').unwrap()])
+        .find(|o| o.contains("\"target\":\"valves\""))
+        .expect(&json);
+    for part in [
+        "\"name\":\"area-budget-hard\"",
+        "\"severity\":\"error\"",
+        "\"new\":true",
+        "\"path\":\"docs/requirements/valves\"",
+        "\"target\":\"valves\"",
+    ] {
+        assert!(obj.contains(part), "{part}: {obj}");
+    }
+}
+
+#[test]
+fn the_root_area_is_the_folder_of_the_layer_and_a_renamed_area_is_a_new_area() {
+    let r = area_repo("standard", AREA_KEY);
+    for key in ["a", "b", "c"] {
+        r.write(
+            &format!("docs/requirements/{key}.md"),
+            &area_doc(key, "active", 1000),
+        );
+    }
+    let (_, out) = run_check(&r, &["check", "--all"]);
+    let found = area_lines(&out);
+    assert!(
+        found
+            .iter()
+            .any(|l| l.starts_with("docs/requirements:1: error SD706 ")
+                && l.contains("area `.` has ")),
+        "{out}"
+    );
+    // A folder that moves is a new area: no base area has its path.
+    let r = area_repo("standard", AREA_KEY);
+    valves(&r, 3);
+    r.commit("base");
+    r.git(&["mv", "docs/requirements/valves", "docs/requirements/pumps"]);
+    let (code, out) = run_check(&r, &["check"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        area_lines(&out)
+            .iter()
+            .any(|l| l.contains("area `pumps` ") && l.ends_with("(a new area)")),
+        "{out}"
+    );
+}
+
+// P5: a project with no `[layers]` table and no `[budgets.area]` keeps its
+// output byte for byte. The expected text is the output of 0.7.1 for the
+// fixture: the same code gave it before D55. The area has 14 documents of
+// about 9,100 characters: more than 120,000, the hard budget that `init`
+// writes for `standard`. So a default budget in place of the missing table
+// would show in the output.
+
+const P5_KEYS: [&str; 14] = [
+    "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n",
+];
+
+fn p5_repo(profile: &str) -> common::Repo {
+    let r = common::Repo::with_config(&format!(
+        "profile = \"{profile}\"\n\n[rules]\nevidence = \"off\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"requirements\"\nstatus = \"active\"\n"
+    ));
+    for key in P5_KEYS {
+        r.write(
+            &format!("docs/requirements/valves/{key}.md"),
+            &area_doc(key, "active", 9000),
+        );
+    }
+    r
+}
+
+#[test]
+fn a_project_with_no_layers_table_and_no_area_budget_keeps_its_output_byte_for_byte() {
+    let mut outs = Vec::new();
+    for profile in ["lite", "standard", "strict"] {
+        let r = p5_repo(profile);
+        let (code, out) = run_check(&r, &["check", "--all"]);
+        outs.push((code, out));
+    }
+    // The rule `evidence = "off"` takes the SD608 lines out of the text.
+    let want = (
+        0,
+        "spec-dna check: 14 documents; 0 errors and 0 warnings\n".to_string(),
+    );
+    assert_eq!(outs, [want.clone(), want.clone(), want]);
+}
+
+#[test]
+fn only_the_highest_summary_of_a_branch_counts() {
+    let r = area_repo("standard", AREA_KEY);
+    r.write(
+        "docs/requirements/valves/a.md",
+        &area_doc("a", "active", 400),
+    );
+    for key in ["x", "y"] {
+        r.write(
+            &format!("docs/requirements/valves/inner/deep/{key}.md"),
+            &area_doc(key, "active", 1200),
+        );
+    }
+    let summary = |title: &str| {
+        format!(
+            "---\nstatus: active\n---\n# {title}\n\n{}\n",
+            "s".repeat(700)
+        )
+    };
+    r.write("docs/summaries/valves/inner.md", &summary("Inner"));
+    r.write("docs/summaries/valves/inner/deep.md", &summary("Deep"));
+    let (_, out) = run_check(&r, &["check", "--all"]);
+    let found = area_lines(&out);
+    // `valves` counts its document and the summary of `inner`: about 1,300
+    // characters, under the soft budget. The summary of `deep` is not added.
+    assert!(!found.iter().any(|l| l.contains("area `valves` ")), "{out}");
+    // `inner` counts the summary of `deep` in place of its 2 documents.
+    assert!(
+        !found.iter().any(|l| l.contains("area `valves/inner` ")),
+        "{out}"
+    );
+    // `deep` counts its 2 documents, and the finding is on its summary.
+    assert!(
+        found
+            .iter()
+            .any(|l| l.starts_with("docs/summaries/valves/inner/deep.md:1: error SD706 ")),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_stub_and_a_generated_index_do_not_count_in_the_size_of_an_area() {
+    let r = area_repo("standard", AREA_KEY);
+    valves(&r, 1);
+    let pad = "x".repeat(3000);
+    r.write(
+        "docs/requirements/valves/old.md",
+        &format!("---\nmoved-to: requirements/valves/a\n---\n# Moved\n\n{pad}\n"),
+    );
+    r.write(
+        "docs/requirements/valves/README.md",
+        &format!(
+            "---\ngenerated: spec-dna index 0000000000000000\nstatus: active\n---\n# Index\n\n{pad}\n"
+        ),
+    );
+    let (_, out) = run_check(&r, &["check", "--all"]);
+    assert!(area_lines(&out).is_empty(), "{out}");
+}
+
+#[test]
+fn a_document_of_the_layer_outside_its_folder_is_in_the_root_area() {
+    let r = common::Repo::with_config(&format!(
+        "profile = \"standard\"\n{AREA_KEY}\n[layers.requirements]\ntypes = [\"requirements\"]\npaths = [\"specs/*.md\"]\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n"
+    ));
+    for key in ["a", "b", "c"] {
+        let text = area_doc(key, "active", 1000).replacen("---\n", "---\ntype: requirements\n", 1);
+        r.write(&format!("docs/specs/{key}.md"), &text);
+    }
+    let (_, out) = run_check(&r, &["check", "--all"]);
+    let found = area_lines(&out);
+    assert!(
+        found
+            .iter()
+            .any(|l| l.starts_with("docs/requirements:1: error SD706 ")
+                && l.contains("area `.` has ")),
+        "{out}"
+    );
+    assert_eq!(
+        found.iter().filter(|l| l.contains(" SD706 ")).count(),
+        1,
+        "{out}"
+    );
+}
+
+#[test]
+fn the_key_works_with_no_layers_table_on_the_default_graph() {
+    let r = common::Repo::with_config(&format!(
+        "profile = \"standard\"\n{AREA_KEY}\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\ndefault-type = \"requirements\"\nstatus = \"active\"\n"
+    ));
+    valves(&r, 3);
+    let (code, out) = run_check(&r, &["check"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        area_lines(&out)
+            .iter()
+            .any(|l| l.starts_with("docs/requirements/valves:1: error SD706 ")),
+        "{out}"
+    );
 }

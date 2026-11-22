@@ -691,6 +691,76 @@ impl<'a> Rollup<'a> {
             .collect()
     }
 
+    /// The area of the document that a delta line names, or `None` if the
+    /// requirements of the document are in no frontier. An active requirements
+    /// document of the layer `requirements` has the area of its folders. An id
+    /// that names no document is a new document (an `ADD` line): its area is
+    /// the folders of the id under the folder of the layer.
+    fn target_area(&self, id: &str) -> Option<Vec<String>> {
+        match self.c.resolve(id) {
+            Res::Found(d, None, _) => self
+                .reqs
+                .iter()
+                .find(|(i, _)| *i == d)
+                .map(|(_, a)| a.clone()),
+            Res::Missing => {
+                let dir: Vec<String> = requirements_dir(self.config)?
+                    .split('/')
+                    .map(str::to_string)
+                    .collect();
+                let mut parts = folders(id);
+                parts.starts_with(&dir).then(|| parts.split_off(dir.len()))
+            }
+            _ => None,
+        }
+    }
+
+    /// True if the frontier of `level` holds the requirements of a document in
+    /// the area `area`. It mirrors `area_frontier`: a summary of a sub-area
+    /// stands for the requirements below it. A `product` document that has
+    /// `system` documents with `rests-on` pins those, so it holds no
+    /// requirement.
+    fn holds_area(&self, level: &Level, area: &[String]) -> bool {
+        let stood_for = |root: &[String]| {
+            self.summaries
+                .iter()
+                .any(|(_, b)| b.len() > root.len() && within(b, root) && within(area, b))
+        };
+        match level {
+            Level::Summary(a) => within(area, a) && !stood_for(a),
+            Level::System => !stood_for(&[]),
+            Level::Product => {
+                !self
+                    .c
+                    .docs
+                    .iter()
+                    .any(|d| d.ty == DocType::System && is_rollup(d))
+                    && !stood_for(&[])
+            }
+        }
+    }
+
+    /// The roll-up documents that a delta makes due (design 0.8.0, D54): each
+    /// one whose frontier holds a requirement of a document that a line of the
+    /// delta names. `targets` are the ids of those documents. The area of the
+    /// document decides, so an `ADD` line (a requirement that the tree does not
+    /// have yet) and a `REMOVE` line (one that the result no longer has) count
+    /// as a `CHANGE` line does. `next` and `finish` share this function.
+    pub fn due(&self, targets: &[String]) -> Vec<u32> {
+        let areas: Vec<Vec<String>> = targets.iter().filter_map(|t| self.target_area(t)).collect();
+        if areas.is_empty() {
+            return Vec::new();
+        }
+        (0..self.c.docs.len() as u32)
+            .filter(|&i| is_rollup(&self.c.docs[i as usize]))
+            .filter(|&i| has_area(self.config, self.c, &self.c.docs[i as usize]))
+            .filter(|&i| {
+                self.level(&self.c.docs[i as usize])
+                    .is_some_and(|l| areas.iter().any(|a| self.holds_area(&l, a)))
+            })
+            .collect()
+    }
+
     /// The pins that a document of `level` must have now: the pins of its
     /// frontier with the current hashes, sorted by id.
     pub fn pins_for(&self, level: &Level) -> Vec<Pin> {
@@ -1582,5 +1652,104 @@ mod tests {
         assert!(repinned(&head, &base).is_empty());
         // A new document has no base.
         assert!(repinned(&base, &corpus(&cfg, &[])).is_empty());
+    }
+    /// The roll-up documents that the delta of the ids makes due, as ids.
+    fn due_ids(c: &Corpus, cfg: &Config, targets: &[&str]) -> Vec<String> {
+        let t: Vec<String> = targets.iter().map(|s| s.to_string()).collect();
+        Rollup::build(cfg, c)
+            .due(&t)
+            .into_iter()
+            .map(|i| c.docs[i as usize].id.clone())
+            .collect()
+    }
+
+    #[test]
+    fn a_summary_is_due_when_its_frontier_holds_a_requirement_of_the_delta() {
+        let cfg = config();
+        let pinned = "---\nrests-on: []\n---\n# S\n\nText.\n";
+        let docs = [
+            ("docs/requirements/valves/closing.md", req("close")),
+            ("docs/requirements/valves/drives/motor.md", req("spin")),
+            ("docs/requirements/zones.md", req("zone")),
+            ("docs/summaries/valves.md", pinned.to_string()),
+            ("docs/summaries/valves/drives.md", pinned.to_string()),
+            (
+                "docs/system.md",
+                "---\nrests-on: []\n---\n# Sys\n".to_string(),
+            ),
+        ];
+        let v: Vec<(&str, &str)> = docs.iter().map(|(p, t)| (*p, t.as_str())).collect();
+        let c = corpus(&cfg, &v);
+        // The requirement is in the frontier of `valves` only, not of
+        // `valves/drives` (it is not below it), and not of `system` (the
+        // summary `valves` stands for it).
+        assert_eq!(
+            due_ids(&c, &cfg, &["requirements/valves/closing"]),
+            ["summaries/valves"]
+        );
+        // A requirement under the sub-summary is in the frontier of that one.
+        assert_eq!(
+            due_ids(&c, &cfg, &["requirements/valves/drives/motor"]),
+            ["summaries/valves/drives"]
+        );
+        // A requirement that no summary stands for is in the frontier of
+        // `system`: the flat case.
+        assert_eq!(due_ids(&c, &cfg, &["requirements/zones"]), ["system"]);
+        // Two lines: both documents are due, once each.
+        assert_eq!(
+            due_ids(
+                &c,
+                &cfg,
+                &["requirements/zones", "requirements/valves/closing"]
+            ),
+            ["summaries/valves", "system"]
+        );
+        // An unknown id that is not under the folder of the layer, and a
+        // document that is no requirements document, are in no frontier.
+        assert!(due_ids(&c, &cfg, &["decisions/none", "summaries/valves"]).is_empty());
+        assert!(due_ids(&c, &cfg, &[]).is_empty());
+    }
+
+    #[test]
+    fn an_added_requirement_is_due_by_the_area_of_its_new_document() {
+        let cfg = config();
+        let pinned = "---\nrests-on: []\n---\n# S\n\nText.\n";
+        let docs = [
+            ("docs/requirements/valves/closing.md", req("close")),
+            ("docs/summaries/valves.md", pinned.to_string()),
+            (
+                "docs/system.md",
+                "---\nrests-on: []\n---\n# Sys\n".to_string(),
+            ),
+        ];
+        let v: Vec<(&str, &str)> = docs.iter().map(|(p, t)| (*p, t.as_str())).collect();
+        let c = corpus(&cfg, &v);
+        // A new document of the area `valves`, and one of a new area.
+        assert_eq!(
+            due_ids(&c, &cfg, &["requirements/valves/gaskets"]),
+            ["summaries/valves"]
+        );
+        assert_eq!(due_ids(&c, &cfg, &["requirements/pumps/seal"]), ["system"]);
+    }
+
+    #[test]
+    fn a_product_with_systems_holds_no_requirement_and_a_tree_with_no_rollup_has_no_due() {
+        let cfg = config();
+        let docs = [
+            ("docs/requirements/zones.md", req("zone")),
+            (
+                "docs/system.md",
+                "---\nrests-on: []\n---\n# Sys\n".to_string(),
+            ),
+            (
+                "docs/product.md",
+                "---\nrests-on: []\n---\n# Prod\n".to_string(),
+            ),
+        ];
+        let v: Vec<(&str, &str)> = docs.iter().map(|(p, t)| (*p, t.as_str())).collect();
+        let c = corpus(&cfg, &v);
+        assert_eq!(due_ids(&c, &cfg, &["requirements/zones"]), ["system"]);
+        let c = corpus(&cfg, &[("docs/requirements/zones.md", &req("zone"))]);
+        assert!(due_ids(&c, &cfg, &["requirements/zones"]).is_empty());
     }
 }

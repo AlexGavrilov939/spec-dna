@@ -106,7 +106,7 @@ Question 5 has 2 prompts: the gate and the approvers. Question 12 has 2 prompts:
 | 6 | The evidence policy (`profile`, `off`, `warning`, `error`) and the link style (`covers`, `verified-by`, `both`) | `profile, both` |
 | 7 | The language of normative text, as a BCP 47 tag, and the heading aliases: `en; outcome: Entscheidung; amendments: Nachtrag` | The detected language and aliases. `en` if detection finds none |
 | 8 | The mapping of each detected root: press Enter to accept it, enter `drop` to drop it, or edit it. An edit has the form `type=requirements status=active exclude=a/**,b.md` | Accept |
-| 9 | The budget level: `default`, `relaxed` (2 times), `tight` (half) or `off`. The question shows the number of documents over the hard budget at each level | `default` |
+| 9 | The budget level: `default`, `relaxed` (2 times), `tight` (half) or `off`. The question shows the number of documents over the hard budget at each level. The level also scales `[budgets.area]` ([The preset of a profile](#the-preset-of-a-profile)) | `default` |
 | 10 | The agent adapters: `agents-md`, `claude-md`, `skill` or `none`. `agents-md` writes the line into `AGENTS.md`, which Codex, Cursor and many other agents read. `claude-md` writes it into `CLAUDE.md`, which Claude Code reads. `skill` writes the skill for Claude Code | `claude-md` and `skill`, and `agents-md` when `AGENTS.md` exists or `CLAUDE.md` does not exist |
 | 11 | The CI step (`github`, `gitlab`, `none`), the hook (`pre-commit`, `husky`, `lefthook`, `none`) and the base branch | The detected CI system, hook framework and default branch |
 | 12 | The Claude Code harness: `none`, `lean` or `full` ([harness.md](harness.md)). The question says what each level installs, and that the files are for Claude Code. Then the parts, as words `skills=<names or none>`, `review-md=<true or false>` and `protect-tests=<fix-branches, always or off>`, in any order. A word that you omit keeps its default | `lean`. In `--reconfigure`, the current level; for a configuration with no `[harness]` table, `lean`. For the parts, see [Parts of the harness](#parts-of-the-harness) |
@@ -130,6 +130,7 @@ The answer to question 1 sets the defaults of a new project. The answers to the 
 - `lite` asks for `two-class` and `warn`. It writes no `REVIEW.md`, `protect-tests = "off"`, no `[evals]` table and no starter file. Its skills are `brainstorm`, `write-plan` and `finish`, each one only if it is on by default.
 - `standard` asks for `three-class` and `block`. It writes `REVIEW.md`, `protect-tests = "fix-branches"` and the starter files of the evals. Its skills are the skills that are on by default.
 - `strict` is as `standard`, with `approval = "base"`, `protect-approvals = true` and `[change] invariants = true` ([config.md](config.md#the-acceptance-record)). `init` writes no eval pack for it: the pack has 57 evals and 812 files. With the answer `skeleton`, the preview and the result print a note that names `spec-dna eval pack` and the folder `<dir>/pack/`. With `--json`, the note is an item of `notes`.
+- `standard` and `strict` write the table `[budgets.area]`, and `lite` writes none. The budget level of question 9 scales the 2 values ([profiles.md](profiles.md#what-init-writes-for-each-profile)).
 - The level `full` of question 12 proposes the 11 skills, for each profile. The profile `lite` writes no agent file `acceptor.md` at any level ([harness.md](harness.md#roles)): the acceptance is off there. Its skill texts are the texts of 0.7.1 ([harness.md](harness.md#the-workflow-pack-and-reviewmd)).
 
 A skill is on by default when `spec-dna skill list` says so ([ADR 0023](adr/0023-default-skills-from-the-release-table.md)). The rule reads the 7 skills of the design (D2), the verdict of each skill in the table of the release, and one constant. With the constant `true`, a skill is on only with the verdict `on`. With `false`, a skill of the 7 stays on unless its verdict is `off`. A skill outside the 7 is on only with the verdict `on`. The constant is `false`, so `execute`, `verify` and `debug` are off by default and the 8 other skills are on. `init` never reads a table of the project for this: the default is the same in each project of a release.
@@ -336,6 +337,7 @@ With `custom`, `init` writes the current `[layers.<name>]` tables again, in the 
 - every rule of `[rules]`. An answer replaces only the rule of its group: `evidence` and `budgets`.
 - the test globs
 - the `[budgets.<type>]` tables, unless the budget level changes
+- the table `[budgets.area]`, also when the budget level changes
 - `[conventions]`
 - the section keys of each root (`required-sections`, `amendment-sections`, `history-sections`, `companion-sections`, `live-sections`), and its budget, profile and rules keys. A root with no `default-type` keeps none. A section key that equals its default (`live-sections = { decision = ["Status"] }`) is not written
 

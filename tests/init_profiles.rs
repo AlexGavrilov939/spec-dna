@@ -650,3 +650,100 @@ fn reconfigure_keeps_the_key_invariants_as_the_file_sets_it() {
     assert_eq!(code, 0, "{out}{err}");
     assert_eq!(table(&r)["change"]["invariants"].as_bool(), Some(false));
 }
+
+/// The area budget (design 0.8.0, D55) of a file: its `[budgets.area]` as 2
+/// numbers.
+fn area_budget(r: &Repo) -> Option<(i64, i64)> {
+    let t = table(r);
+    let a = t.get("budgets")?.get("area")?;
+    Some((a.get("soft")?.as_integer()?, a.get("hard")?.as_integer()?))
+}
+
+/// `standard` writes `[budgets.area]` with 60,000 and 120,000, `strict` with
+/// 40,000 and 80,000, and `lite` writes none. The budget level scales it as it
+/// scales the budget of a type, and `off` writes none.
+#[test]
+fn a_new_project_gets_the_area_budget_of_its_profile_and_budget_level() {
+    for (profile, level, want) in [
+        ("lite", "default", None),
+        ("standard", "default", Some((60_000, 120_000))),
+        ("strict", "default", Some((40_000, 80_000))),
+        ("standard", "relaxed", Some((120_000, 240_000))),
+        ("standard", "tight", Some((30_000, 60_000))),
+        ("standard", "off", None),
+        ("strict", "off", None),
+    ] {
+        let r = repo();
+        let (code, out, err) = init_with(
+            &r,
+            &format!("profile = \"{profile}\"\nharness = \"lean\"\nbudgets = \"{level}\"\n"),
+            &[],
+        );
+        assert_eq!(code, 0, "{profile} {level}: {out}{err}");
+        let text = r.read("spec-dna.toml");
+        assert_eq!(area_budget(&r), want, "{profile} {level}: {text}");
+        assert_eq!(
+            text.matches("[budgets.area]").count(),
+            usize::from(want.is_some()),
+            "{profile} {level}: {text}"
+        );
+        // `check` accepts the new project.
+        r.commit("adopt spec-dna");
+        let (code, out, err) = run(&r, &["check"]);
+        assert_eq!(code, 0, "{profile} {level}: {out}{err}");
+    }
+}
+
+/// `--reconfigure` keeps the table of the file with its values, writes none
+/// for a file that has none, and never writes it twice.
+#[test]
+fn reconfigure_keeps_the_area_budget_and_adds_none() {
+    let r = repo();
+    let (code, out, err) = init_with(&r, "profile = \"standard\"\nharness = \"lean\"\n", &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let text = r
+        .read("spec-dna.toml")
+        .replace("hard = 120000", "hard = 99000");
+    r.write("spec-dna.toml", &text);
+    r.commit("adopt spec-dna");
+    // The budget level scales the tables of the types. It never changes the
+    // table of the area.
+    for level in ["default", "default", "relaxed", "tight", "off", "default"] {
+        let (code, out, err) = init_with(
+            &r,
+            &format!("profile = \"standard\"\nharness = \"lean\"\nbudgets = \"{level}\"\n"),
+            &["--reconfigure"],
+        );
+        assert_eq!(code, 0, "{level}: {out}{err}");
+        assert_eq!(area_budget(&r), Some((60_000, 99_000)), "{level}");
+        assert_eq!(
+            r.read("spec-dna.toml").matches("[budgets.area]").count(),
+            1,
+            "{level}"
+        );
+    }
+    // A file of another profile keeps it too.
+    let (code, out, err) = init_with(
+        &r,
+        "profile = \"lite\"\nharness = \"lean\"\nbudgets = \"relaxed\"\n",
+        &["--reconfigure"],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(area_budget(&r), Some((60_000, 99_000)));
+    // A file with no table gets none: the table is for a new project.
+    let text = r.read("spec-dna.toml");
+    let at = text.find("\n[budgets.area]").unwrap();
+    let end = text[at + 1..]
+        .find("\n\n")
+        .map_or(text.len(), |i| at + 1 + i);
+    r.write("spec-dna.toml", &format!("{}{}", &text[..at], &text[end..]));
+    r.commit("drop the area budget");
+    assert_eq!(area_budget(&r), None);
+    let (code, out, err) = init_with(
+        &r,
+        "profile = \"standard\"\nharness = \"lean\"\n",
+        &["--reconfigure"],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(area_budget(&r), None, "{}", r.read("spec-dna.toml"));
+}
