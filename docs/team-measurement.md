@@ -41,9 +41,9 @@ All 12 tasks, 2 runs each, in the setup `lean-no-advisor`. This step shows if a 
 
 ## Decision
 
-The owner's brief for this work says to start the batch only if the pilot shows that the tasks are not at the ceiling or at the floor in every arm. ADR 0029 has no such rule. The pilot found the tasks at the ceiling: 3 of 3 for each setup on `team-01` to `team-03`, and 23 of 24 for `lean-no-advisor` on all 12 tasks. So the agent that ran the pilot stopped before the batch, and it did not change the protocol.
+The pilot found the tasks at the ceiling: 3 of 3 for each setup on `team-01` to `team-03`, and 23 of 24 for `lean-no-advisor` on all 12 tasks. A `lean` run cost 4 to 6 times more than the other runs, with no gain. The agent that ran the pilot stopped before the batch. ADR 0029 has no rule for this case, and the agent did not change the protocol.
 
-The rules of the ADR alone would go on. No fixture is broken, so the batch keeps 10 tasks: `team-05`, then `team-01` to `team-04` and `team-06` to `team-10`. The projected cost is about 178 USD for 5 waves, and the budget `M` is about 370 USD. The owner can order that batch. The default harness level and the advisor gate of 0.8.1 stay as they are.
+The owner decided on 2026-11-23 that protocol 1 ends with the result "no result" (amendment of ADR 0029). The default harness level and the advisor gate of 0.8.1 do not change because of this page. A new protocol on tasks from the history of this repository replaces it.
 
 ## Limits
 
