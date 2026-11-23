@@ -199,7 +199,7 @@ A run of 0.7.1 copies the harness files of the project that runs the command: `C
 | --- | --- |
 | `none` | `[harness] level = "none"`. No `.claude/` folder |
 | `lean` | The level `lean` with the roles that `init` writes by default, including the advisor |
-| `lean-no-advisor` | `lean` with `advisor = { claude-code = "none" }`. It has no `advisorModel`, no `fallback-advisor.md` and no sentence of the advisor in the line of `CLAUDE.md`. That is the only difference from `lean` |
+| `lean-no-advisor` | `lean` with `advisor = { claude-code = "none" }`. This turns off the role `advisor`. It is not the key `advisor` of the entry `acceptor`. It has no `advisorModel`, no `fallback-advisor.md` and no sentence of the advisor in the line of `CLAUDE.md`. That is the only difference from `lean` |
 | `full` | The level `full` |
 | `project` | The harness files of the project, as in 0.7.1. In `--arms` and `--harness`, it also gets the pin and the adapter line of the binary, `SD501` and `SD502` off, and the same `--model` and `--effort` as each other arm |
 
@@ -209,7 +209,7 @@ In `--arms` and `--harness`, the runner passes `--model` and `--effort` with the
 
 ### `--harness`
 
-`eval run --harness <arm>` runs the plain evals with one arm. The result has the key `harness`. With `--ab`, the copy gets the team of the arm and the skills that `init` proposes for the profile `standard` at that level (the default skills of [ADR 0023](adr/0023-default-skills-from-the-release-table.md)). Then the edit of `--ab` adds the measured skill to the arm `with` and removes it from the arm `without`, in the files and in `[harness] skills`. A skill runs beside the other default skills, as for a user. The text of the skill files follows the key `profile` of the `spec-dna.toml` of the copy: the text of 0.7.1 for `lite`, else the text of this release. Then the skill `review` of the arm `with` brings the agent `acceptor`, except in `lite`. `--resume` of `--ab` refuses a file that has another harness (a file of 0.7.1 has `project`). `--ab` without `--harness` keeps the copy of 0.7.1.
+`eval run --harness <arm>` runs the plain evals with one arm. The result has the key `harness`. With `--ab`, the copy gets the team of the arm and the skills that `init` proposes for the profile `standard` at that level (the default skills of [ADR 0023](adr/0023-default-skills-from-the-release-table.md)). Then the edit of `--ab` adds the measured skill to the arm `with` and removes it from the arm `without`, in the files and in `[harness] skills`. A skill runs beside the other default skills, as for a user. The text of the skill files follows the key `profile` of the `spec-dna.toml` of the copy: the text of 0.7.1 for `lite`, else the text of this release. Then the skill `review` of the arm `with` brings the agent `acceptor`, except in `lite`. The file `acceptor.md` follows the key `advisor` of the copy, so a copy of `standard` has its line ([harness.md](harness.md#the-advisor-of-the-acceptor)). No arm starts the agent, so the line changes no run. `--resume` of `--ab` refuses a file that has another harness (a file of 0.7.1 has `project`). `--ab` without `--harness` keeps the copy of 0.7.1.
 
 ### `--arms`
 
@@ -317,9 +317,9 @@ A record that has `result = "accepted"` fails the evals 1 to 4. A record that re
 
 ### The measured cost of one acceptance pass
 
-Read this section to learn what the acceptance of a change in `standard` costs. The acceptance is the single pass of 0.8.0 that fills the acceptance record. The numbers come from 2 paid batches of the target `accept`.
+Read this section to learn what one acceptance pass costs, with the advisor and with no advisor. The acceptance is the single pass of 0.8.0 that fills the acceptance record. The numbers come from 2 paid batches of the target `accept`. Each run is a whole session of `claude -p`, not a run of the subagent `acceptor`.
 
-Each batch ran the 5 evals `accept-1` to `accept-5`, with 3 runs of each eval in each arm: 15 pairs. The fixtures are toy projects of 1 or 2 files. The version of Claude Code was 2.1.330. The runner passed `--model opus --effort xhigh`, `--max-turns 40` and `--max-budget-usd 2.5`. The records are in `bench/results/evals/*-accept*.jsonl`.
+Each batch ran the 5 evals `accept-1` to `accept-5`, with 3 runs of each eval in each arm: 15 pairs. The fixtures are small projects of 1 or 2 files. The version of Claude Code was 2.1.330. The runner passed `--model opus --effort xhigh`, `--max-turns 40` and `--max-budget-usd 2.5`. The records are in `bench/results/evals/*-accept*.jsonl`.
 
 The arm `with` is the single pass of 0.8.0. The arm `without` is the `review` of 0.7.1 with the brief.
 
@@ -336,7 +336,7 @@ The arm `with` is the single pass of 0.8.0. The arm `without` is the `review` of
 - The analysis reads both batches as `inconclusive`. In batch 1, both arms are at the ceiling.
 - The spend was 72.86 USD in all: the canary 3.19 USD, batch 1 51.28 USD and batch 2 18.40 USD.
 
-On these fixtures, one pass costs 0.5 to 1.7 USD and takes 2 to 5 minutes. This is less time than the review of 0.7.1 plus a separate acceptance of part A. That sum took 13 to 25 minutes on the slices of this repository. A real slice is larger than a toy fixture, so a real pass costs more.
+In the arm `with`, a pass with the advisor cost 1.74 USD on average and took 4.6 minutes, and 15 of 15 runs passed. A pass with no advisor cost 0.53 USD and took 2.2 minutes, and 13 of 15 runs passed. A real change costs more than a small fixture. The review of 0.7.1 plus a separate acceptance took 13 to 25 minutes and about 190,000 to 250,000 tokens for a run on a slice of this repository.
 
 What the numbers do not prove:
 
@@ -344,6 +344,8 @@ What the numbers do not prove:
 - The oracle does not separate the arms. Batch 1 is at the ceiling, and batch 2 is `inconclusive`.
 - About 4 tool calls for each pass were denied in each batch. The result file counts the denials. It does not list the denied commands, so the effect on the cost is not known.
 - One account, one model set and one version of Claude Code gave the numbers.
+- Both batches ran whole sessions of `claude -p` at the effort `xhigh`, with the main session as the agent. No run started the subagent `acceptor`.
+- Batch 2 turned off the role `advisor` for the whole session. This is the hard off of [The advisor of the acceptor](harness.md#the-advisor-of-the-acceptor). It is not the line of the key `advisor`, and no run measures that line. Thus 0.53 USD is the cost of a session with no advisor, and not the measured cost of `advisor = false`.
 
 To repeat the measure, run this command:
 
@@ -538,44 +540,52 @@ The skill texts of the profiles `standard` and `strict` of 0.8.0 are frozen at t
 | `spec-dna-finish.md` | `16570fd7da0cebad` |
 | `spec-dna-write-plan.md` | `8757f6f2dd550c22` |
 | `spec-dna-review.md` | `5e2e6537227c836b` |
-| `acceptor.md` (the agent file) | `f541cad357de8926` |
+| `acceptor.md` (the agent file) with `advisor = true`: the default of `strict` | `f541cad357de8926` |
+| `acceptor.md` (the agent file) with `advisor = false`: the default of `standard` | `ac3e6b19951dc492` |
 
-The golden files `tests/golden/harness/skills/*.md` and `tests/golden/harness/acceptor.md` hold the same hashes. The texts of the profile `lite` are the texts of 0.7.1, so they are not part of the freeze. A change of one of these texts after the reruns makes the verdicts apply to an older text. Thus the next change of one of these hashes needs a new rerun.
+The golden files `tests/golden/harness/skills/*.md`, `tests/golden/harness/acceptor.md` (`advisor = true`) and `tests/golden/harness/acceptor-no-advisor.md` (`advisor = false`) hold the same hashes. The texts of the profile `lite` are the texts of 0.7.1, so they are not part of the freeze. A change of one of these texts after the reruns makes the verdicts apply to an older text. Thus the next change of one of these hashes needs a new rerun, with the one exception below.
+
+The exception is the line of the key `advisor` of the entry `acceptor` (design D81, 2026-11-23). The line changed the hash of the file of `standard` from `f541cad357de8926` to `ac3e6b19951dc492`. The file of `strict`, and each file with `advisor = true`, keep `f541cad357de8926`. No rerun is necessary, because the body of `acceptor.md` was in no measured prompt. The measured agent of each eval is the main session of `claude -p`, and no eval lists the tool `Agent` in its `allowed-tools`. The records cannot show that no run started a subagent `acceptor`: that rests on the design of the evals. No skill file changed, so each hash of a skill holds.
 
 The records of the reruns are in `bench/results/evals/`. The newest batch of a skill gives its row in the table `RELEASE` of `src/verdict.rs`. `spec-dna eval verdict --release` prints the table.
 
 ### The reruns of 0.8.0
 
-The reruns of D66 are paid runs with `--harness lean`. The tree was built with version 0.8.0, and Claude Code was 2.1.330. The skill texts are the frozen texts of the section above. The plan for each skill was 5 evals, 3 runs and 2 arms: 15 pairs.
+The reruns of D66 are paid runs with `--harness lean`. The tree was built with version 0.8.0: the commit 70b4349 for `specify` and `write-plan`, and the commit 3af6947 for `finish`. The commit 3af6947 sets `class: routine` in the fixtures of `finish` (see below), and it changes no skill text. Claude Code was 2.1.330, with the model `claude-opus-5-5` and the advisor `claude-fable-5-2`. The skill texts are the frozen texts of the section above. Each skill has 5 evals, 3 runs and 2 arms: 15 pairs.
+
+The batches ran on 2026-11-22. The batches of `write-plan` and `finish` stopped at the cost caps of their files before the 15th pair. On 2026-11-23, the owner allowed 15 USD more (Q55 of the design). Each of the 2 result files was resumed with `--resume`, with the same binary and the frozen texts. One batch ran at a time, and no other eval process ran.
 
 | Skill | Complete pairs | `with` | `without` | Verdict |
 | --- | --- | --- | --- | --- |
-| `specify` | 15 | 15 of 15 (16.82 USD) | 9 of 15 (21.27 USD) | `on` |
-| `write-plan` | 14 | 14 of 14 (21.49 USD) | 10 of 14 (20.05 USD) | none: below the floor |
-| `finish` | 10 | 10 of 10 (8.52 USD) | 10 of 10 (9.03 USD) | none: below the floor |
+| `specify` | 15 | 15 of 15 (16.82 USD) | 9 of 15 (21.27 USD) | `on` (rule 1) |
+| `write-plan` | 15 | 15 of 15 (22.67 USD) | 11 of 15 (21.85 USD) | `on` (rule 2) |
+| `finish` | 15 | 14 of 15 (13.35 USD) | 14 of 15 (14.91 USD) | `inconclusive` |
 
-- `specify`: the batch `20261122T103356Z-specify.jsonl` has 30 records. The newest batch decides, so the row of `specify` in `RELEASE` comes from it. The committed records of `specify` hold passes, costs, turns and seconds, but not the stop reason or the names of the failed checks. The 6 failed runs of `without` are: 3 stopped by the turn limit (`error_max_turns`), 1 stopped by the cost limit and 2 ended with failed checks.
-- `write-plan` and `finish`: each batch stopped at its cost cap before the 15th pair. The floor of D59 is 15 pairs, so these batches give no verdict. 14 of 14 against 10 of 14 is not a verdict. The 10 pairs of `finish` cover 4 of the 5 evals: `finish-5` did not run, and the floor needs 5 evals.
+- `specify`: the batch `20261122T103356Z-specify.jsonl` has 30 records. The 6 failed runs of `without` are: 3 stopped by the turn limit (`error_max_turns`), 1 stopped by the cost limit and 2 ended with failed checks. The 3 runs that stopped at the turn limit passed each check. Thus the `on` rests on them: if they counted as passes, the arm `without` would have 12 of 15.
+- `write-plan`: the batch `20261122T103358Z-write-plan.jsonl` has 30 records. The difference is 0.267, with the interval 0 to 0.533, so rule 1 does not hold. The ratio of the costs per correct outcome is 0.761, with the interval 0.458 to 0.993, so rule 2 gives `on`. The high end is near 1, so the `on` rests on the cost. The 4 failed runs of `without` failed the checks `task-paths-in-files`, `proof-covers`, `tasks-small` and `task-form`. The result file counts 1 excluded attempt of the arm `with`.
+- `finish`: the batch `20261122T113622Z-finish.jsonl` has 30 records. The difference is 0, with the interval -0.2 to 0.133. The cost ratio is 0.895, with the interval 0.710 to 1.125. Its high end is above 1, so no rule holds. The failed run of `with` is `finish-5` run 3, which stopped at the turn limit. The failed run of `without` is `finish-5` run 2, which stopped at the cost limit. The result file counts 1 excluded attempt of the arm `without`. This row replaces the row `on` (rule 2) of the batch `20261118T161747Z`, which measured an older text. `finish` and `write-plan` are skills of the design set D2, so each stays on by default unless its verdict is `off` ([ADR 0023](adr/0023-default-skills-from-the-release-table.md)). Thus the new row of `finish` changes no default.
 - `execute`: it was not rerun (D66).
-- `review`: the merged skill was not rerun. The accept evals measure it ([the evals of the acceptance record](#the-evals-of-the-acceptance-record)).
+- `review`: the merged skill was not rerun. The accept evals measure it ([the evals of the acceptance record](#the-evals-of-the-acceptance-record)), and they decide no row.
 
-`eval records` refuses a result that has an incomplete pair, and the loader of `RELEASE` reads no subfolder. Thus the result files of `write-plan` and `finish` are in `bench/results/evals/below-floor/`, with the same content as the files of the tool. The files were re-indented. They hold counts, costs and check names only. The rows of `write-plan` and `finish` in `RELEASE` stay the rows of the older batches, so their verdicts describe older texts.
+The newest batch of a skill gives its row in `RELEASE`, so these 3 batches give the rows of `specify`, `write-plan` and `finish`. The committed records hold passes, costs, turns and seconds, but no stop reason and no names of the failed checks. The result files of the tool give them, and they are not committed. An excluded attempt is an attempt that the API refused, and no result counts it.
 
-The first batch of `finish`, `below-floor/20261122T103357Z-finish-invalid-fixture-class.json`, is INVALID. The fixtures of `finish-1` to `finish-5` had `class: higher-risk`. At pin 0.8.0, `finish` then stopped at SD927, so no run could pass. The batch has 4 complete pairs with 0 passes, and a ninth run of one side only. Since the change of this slice that sets `class: routine` in the fixtures of the `finish` evals, the fixtures are `class: routine`. Do not use this file for a row.
+The folder `bench/results/evals/below-floor/` now holds only the result file of the invalid batch of `finish`. No loader reads the folder. The first batch of `finish`, `below-floor/20261122T103357Z-finish-invalid-fixture-class.json`, is INVALID. The fixtures of `finish-1` to `finish-5` had `class: higher-risk`. At pin 0.8.0, `finish` then stopped at SD927, so no run could pass. The batch has 4 complete pairs with 0 passes, and a ninth run of one side only. Since the change of this slice that sets `class: routine` in the fixtures of the `finish` evals, the fixtures are `class: routine`. Do not use this file for a row.
 
-The reruns cost 139.79 USD of the cap of 140 USD. This sum includes 26.02 USD for runs that 2 processes did on the same result file (an error of the operator). It also includes 13.96 USD for the invalid batch and a canary. The 99.81 USD is the sum of the `spend_usd` headers of the 3 valid result files: 38.10 for `specify`, 42.82 for `write-plan` and 18.89 for `finish`. The invalid batch (12.24 USD) is in a committed file. The duplicate runs (26.02 USD, from 14.09 plus 11.93) and the canary (1.72 USD) come from the notes and logs of the operator, and from no committed file. The sum is 99.81 + 26.02 + 13.96 = 139.79.
+On 2026-11-22 the reruns cost 139.79 USD of the cap of 140 USD. This sum includes 26.02 USD for runs that 2 processes did on the same result file (an error of the operator). It also includes 13.96 USD for the invalid batch and a canary. The other 99.81 USD is the `spend_usd` of the 3 valid result files on that day: 38.10 for `specify`, 42.82 for `write-plan` and 18.89 for `finish`. The invalid batch (12.24 USD) is in a committed file. The duplicate runs (26.02 USD, from 14.09 plus 11.93) and the canary (1.72 USD) come from the notes and logs of the operator, and from no committed file. The sum is 99.81 + 26.02 + 13.96 = 139.79.
 
-To finish the reruns, resume each batch with a higher cap. About 10 USD more is necessary for the 2 batches. For `finish`, use the same command with the target `finish`.
+On 2026-11-23 the resume cost 11.48 USD of the 15 USD: 1.80 USD for `write-plan` and 9.68 USD for `finish`. Thus the reruns cost 151.27 USD in all. The `spend_usd` of the 2 result files is now 44.62 USD and 28.57 USD. The committed records give 44.52 USD and 28.26 USD, because a record has no excluded attempt.
+
+The resume used this command, and the same command with the target `finish`:
 
 ```text
 spec-dna eval run --ab write-plan --runs 3 --harness lean --resume <result file> --max-total-usd <higher cap>
 ```
 
-When a batch is complete, run `eval records` on its file and write the output to `bench/results/evals/<stamp>-<target>.jsonl`. Then paste the table that the test of `RELEASE` prints.
+When a batch is complete, `eval records` reads its file, and the output goes to `bench/results/evals/<stamp>-<target>.jsonl`. Then the test of `RELEASE` prints the table for the constant.
 
 Lessons:
 
-- Start one process for each result file, and check with `ps` after a stop.
+- Start one process for each result file, and check with `ps` after a stop. Run one batch at a time.
 - Run one canary pair before a batch.
 - Run the reference solution of each eval under the pin of the next version before a paid run.
 
@@ -614,7 +624,7 @@ The job runs on a pull request and a push that change `CLAUDE.md`, `AGENTS.md`, 
 - The job runs only when the repository variable `SPEC_DNA_EVALS` is `true`.
 - A pull request from a fork gets no secrets, so the job does not run for it. The workflow never uses `pull_request_target`.
 - The job has the permission `contents: read`, and it reads the key from the secret `ANTHROPIC_API_KEY`.
-- The job installs the pinned spec-dna and Claude Code 2.1.325, and it runs `spec-dna eval run`. Each action in it has a full commit SHA.
+- The job installs the pinned spec-dna and Claude Code 2.1.330 (the version of the paid runs of 0.8.0), and it runs `spec-dna eval run`. Each action in it has a full commit SHA.
 - The job fails when the pass rate is lower than `min-pass-rate`.
 - `init` writes the job once. The workflow has no marker, so a Dependabot update of a pinned action gives no diagnostic.
 
