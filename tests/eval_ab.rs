@@ -1384,8 +1384,8 @@ const RELEASED_ON: [&str; 7] = [
     "brainstorm",
     "specify",
     "clarify",
+    "write-plan",
     "tdd",
-    "finish",
     "post-mortem",
     "agents-line",
 ];
