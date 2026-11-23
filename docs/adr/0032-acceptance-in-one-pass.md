@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # 0032. Acceptance in one pass
@@ -76,3 +76,7 @@ ADR 0017, ADR 0025 and ADR 0027 are accepted and locked, so this ADR does not ed
 - ADR 0027, "Deviations", item 4: `finish` prints the entries of the record.
 
 ## Amendments
+
+### 2026-11-23: the advisor of the acceptor
+
+The answer to Q54 adds the key `advisor` to the entry `acceptor` of `[harness.roles]`. Its default is `false` in `standard` and `true` in `strict`, and `init` writes it. With `false`, `acceptor.md` has one more line: do not consult the advisor. A subagent gets the advisor of its session, and no setting of an agent file removes it, so the line is a soft rule. The profile thus selects a third thing, also for ADR 0017. [D81](../design/0.8.0.md#d81-the-advisor-of-the-acceptor-q54) gives the detail.
