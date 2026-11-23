@@ -37,6 +37,7 @@ This page lists each page of the documentation. The [README](../README.md) gives
 ## Project
 
 - [Evidence](evidence.md): the experiments and their limits.
+- [Model team measurement](team-measurement.md): the pilot of the measurement of the model team, and why the batch did not run.
 - [Decisions](adr/): the ADRs of the project.
 - [Designs](design/): the design of a version, with the deviations of each step.
 - [Design note of 0.8.1](design/0.8.1-note.md): the start of the design of 0.8.1, with the parts that moved from the design of 0.8.0.

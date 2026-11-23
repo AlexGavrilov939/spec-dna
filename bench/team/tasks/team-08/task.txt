@@ -1,0 +1,1 @@
+Add migration step 3 to `store/migrations.py`. It adds the column `handle` to the table `users`, and each user must have a handle. `migrate(conn)` must bring a database of version 2 to version 3, and it must still work on a new empty database. Keep the tests in `tests/` as they are, and make them pass.

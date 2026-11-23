@@ -1,0 +1,1 @@
+`charge_order` in `payments/client.py` fails for the customer when the payment gateway has a short outage. Make it retry: it makes at most 3 attempts in total when the gateway raises `TransientError`. After the third failure it raises `ChargeFailed`. Any other error must not be retried. Keep the tests in `tests/` as they are, and make them pass.
