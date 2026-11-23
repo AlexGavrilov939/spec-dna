@@ -28,7 +28,7 @@ from pathlib import Path
 HIDDEN = re.compile(
     r"oracle|/var/www|github\.com|githubusercontent|\bgh (pr|api|repo|run|issue|search)|"
     r"git (clone|fetch|remote|ls-remote)|refs/pull|evals/(fixtures|oracle)|claude/projects|lsof|"
-    r"bench/team|tasks/t2-",
+    r"bench/team|tasks/t2-|/private/var/tmp|/private/tmp/claude",
     re.I,
 )
 

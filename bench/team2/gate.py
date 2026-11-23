@@ -31,7 +31,7 @@ from analyze import runs_of  # noqa: E402
 
 CAP = 380.0
 RESERVE = 10.0
-PROBE_TASK = "t2-02-change-feedback"
+PROBE_TASK = "t2-05-approver-hook"
 RUNS = 15
 
 

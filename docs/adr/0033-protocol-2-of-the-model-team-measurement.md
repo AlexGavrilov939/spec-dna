@@ -26,7 +26,7 @@ The arms of [ADR 0030](0030-harness-arms-time-record-and-verdict-floor.md): `non
 
 ### Tasks
 
-Five tasks. Each is a pull request of this repository, or a part of one. The start commit is the parent of the slice on `master`, so it holds the approved plan of the slice. A fix commit comes after the first implementation. It is a commit of the branch of the pull request, or, for `t2-01`, a commit of pull request 60. Each defect in the table has a test that failed before its fix and fails on the start tree. Other fixes are not in part 2: 2 commits have no test (`d0313ed` of `t2-02`, `fdf3d7a` of `t2-05`), and 3 tests pass on the start tree (a symlinked manifest, a plan that the branch deletes, a glob id of an `ADD` item). The reference holds them all.
+Five tasks. Each is a pull request of this repository, or a part of one. The start commit is the parent of the slice on `master`, so it holds the approved plan of the slice. A fix commit comes after the first implementation. It is a commit of the branch of the pull request (for `t2-01`, of pull request 60). Each defect in the table has a test that failed before its fix and fails on the start tree. Other fixes are not in part 2: 2 commits have no test (`d0313ed` of `t2-02`, `fdf3d7a` of `t2-05`), and 3 tests pass on the start tree (a symlinked manifest, a plan that the branch deletes, a glob id of an `ADD` item). The reference holds them all.
 
 | Task | Slice | Tests of part 1 and part 2 | Later defects (the tests of part 2) |
 | --- | --- | --- | --- |
@@ -72,7 +72,7 @@ The oracle is hidden and has 2 parts. Each part is a list of integration tests o
 ### Dry run, probes and limits
 
 1. The dry run is free. The self-test proves each task on the stub agent, and `eval run --arms` with the stub shows the copy of each arm.
-2. The probes are 1 paid run of each arm on one task, `t2-02-change-feedback`. Their limits are 300 turns and 25 USD (the option `--limits` of `make_project.py`), 3,600 seconds for the agent (`SPEC_DNA_EVAL_TIMEOUT`) and 1,800 seconds for a check (`SPEC_DNA_EVAL_CHECK_TIMEOUT`). A probe that hits a limit stops the work. A probe with no counted run (a refusal, an interrupt or an error of the runner) runs again after the person removes the cause. Its cost counts in the spend of the probes.
+2. The probes are 1 paid run of each arm on one task, `t2-05-approver-hook` (the most tests in part 2, and a size near the mean). Their limits are 300 turns and 25 USD (the option `--limits` of `make_project.py`), 7,200 seconds for the agent (`SPEC_DNA_EVAL_TIMEOUT`) and 1,800 seconds for a check (`SPEC_DNA_EVAL_CHECK_TIMEOUT`). A probe that hits a limit stops the work. A probe with no counted run (a refusal, an interrupt or an error of the runner) runs again after the person removes the cause. Its cost counts in the spend of the probes.
 3. The limits of the batch come from the probes by this formula: `max-turns` is 2 times the largest number of turns of a probe, rounded up to a multiple of 10, and at least 80 and at most 300. `max-budget-usd` is 2 times the largest cost of a probe, rounded up to a whole number, and at least 10 and at most 25. The time limits stay as in the probes. `limits.json` holds the result, and `make_project.py` makes a new project for the batch.
 4. The probes do not count in the verdict.
 
@@ -83,7 +83,7 @@ The work stops after the probes, with a report and no batch, when one of these i
 - On the probe task, the main measure is 1 in each arm (the ceiling), or 0 in each arm (the floor), or the score of part 1 is 0 in each arm.
 - A probe hit a limit.
 - A probe of `none` or `lean-no-advisor` lists the advisor model of `lean` in its `models`, or a probe does not list the main model of `lean`.
-- The projected cost plus `max-budget-usd` is above the room (the runner starts no run that could pass the cap). The projection is `15 x (a + b + c) x s`. `a`, `b` and `c` are the costs of the probes of the 3 arms. `s` is 1.32: the mean of the changed lines of the 5 files `reference.patch` (499, 921, 2,097, 1,349, 1,233) over that of the probe task. The room is 380 USD, minus the spend of the probes, minus 10 USD of reserve.
+- The projected cost plus `max-budget-usd` is above the room (the runner starts no run that could pass the cap). The projection is `15 x (a + b + c) x s`. `a`, `b` and `c` are the costs of the probes of the 3 arms. `s` is 0.99: the mean of the changed lines of the 5 files `reference.patch` (499, 921, 2,097, 1,349, 1,233) over that of the probe task. The room is 380 USD, minus the spend of the probes, minus 10 USD of reserve.
 
 ### Batch
 
@@ -116,11 +116,11 @@ Two comparisons have a verdict: `lean` against `lean-no-advisor` (the advisor), 
 | `no-gain-at-cost` or `worse` | The owner decides on the default level |
 | `inconclusive` or below the floor | No change |
 
-The result decides nothing by itself. The owner decides each change of a default. The work changes no code of `src/` and no version, and it makes no tag. The records go to `bench/results/evals/`, and they do not enter the table of the release of the skills.
+The owner decides each change of a default. The work changes no code of `src/` and no version, and it makes no tag. The records go to `bench/results/evals/`, and they do not enter the table of the release of the skills.
 
 ### Leaks
 
-The agent can read the disk, and the public repository holds the fixed code. A run is leaked when a tool call of its transcript matches the pattern of `transcript_counts.py`: the oracle, this repository and its checkouts, `github.com`, a `gh` or `git` read of the remote, or the tools of the batch. The report gives the count of leaked runs for each arm, and 2 verdicts: with all runs, and without the leaked runs.
+The agent can read the disk, and the public repository holds the fixed code. A run is leaked when a tool call of its transcript matches the pattern of `transcript_counts.py`: the oracle, this repository and its checkouts, `github.com`, a `gh` or `git` read of the remote, the tools or the project of the batch, or any other folder outside the copy. The report gives the leaked runs of each arm, and 2 verdicts: with all runs, and without the leaked runs.
 
 - The verdict without the leaked runs takes the floor from all runs. A task with no run left in an arm leaves that comparison.
 - The tap log holds the batch only (a new tools folder after the probes). `analyze.py` matches its lines to the runs in order and skips the excluded attempts. If the counts differ for a task and arm, a leaked line marks each of its runs.
@@ -128,24 +128,23 @@ The agent can read the disk, and the public repository holds the fixed code. A r
 
 ### Rejected
 
-- Option 1: protocol 1 had the ceiling. A harder synthetic task has no proof that the defect is a real one.
+- Option 1: a synthetic defect has no proof that it is a real one.
 - Option 3: the grade changes from run to run, and the grader shares the family of the agent.
 - A top-up of runs after a look at the result.
 - A unit test of `src/` in the oracle: it needs the internal names of the first author.
-- A text of the agent as a check.
 
 ### Consequences
 
 - Good: the defects are real, and each defect of part 2 has a test that failed before its fix.
-- Good: the cost, the limits and the stop rules are fixed before the money is spent.
+- Good: the cost, the limits and the stop rules are fixed before the spend.
 - Bad: part 2 of a task has 1 to 4 tests, so a score has a large step, and the intervals are wide. The likely result for a small effect is `inconclusive`.
 - Bad: the tasks are public, and the fixed code is in this repository.
-- Neutral: the probes cost money and do not count in the verdict.
 
 ### Limits
 
-- One repository, one language, one model family and one version of Claude Code.
+- One repository, one language, one model family, one version of Claude Code.
 - The tests of a part check the behavior of the real binary. Some of them read the text of a message of the first implementation. An agent that wrote another message fails them, in each arm.
 - `t2-04` has the reference of the whole pull request, and its tests are limited to the files of the part. `t2-05` takes only the commits of the part.
+- The gate reads 3 runs of one task, so each arm gives one draw of the main measure. A gate that stays open does not show that the other tasks are hard.
 - The batch binary is on `PATH`, and the adapter line names it. It holds the fixed code, and the leak pattern does not count a call of it.
-- The cost comes from the runner, not from an invoice.
+- The cost is the cost of the runner, not an invoice.
