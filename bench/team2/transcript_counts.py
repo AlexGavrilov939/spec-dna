@@ -69,19 +69,34 @@ STRICT_TARGET = re.compile(
 )
 # `gh` with a subcommand (also with a path before it, flags before the subcommand, after
 # `if`, in `bash -c "..."` or in a quoted text: a miss costs more than a false hit in
-# this column), and `git clone` and `git ls-remote` (also after `-C dir`).
-STRICT_COMMAND = re.compile(
-    r"(^|[\s;&|(`'\"{])(\S*/)?gh\s+(-{1,2}\S+\s+([^-\s]\S*\s+)?)*"
-    r"(pr|api|repo|run|issue|search|auth|browse|release|gist|workflow|status)\b"
-    r"|\bgit\b[^;&|\n]*\b(clone|ls-remote)\b"
-)
-# The body of a heredoc that only writes text (`cat` or `tee`) is no call. The body of another
-# heredoc (`bash <<EOF`, `python3 - <<EOF`) can run, so it counts. `<<<` is no heredoc.
+# this column), and `git clone` and `git ls-remote` (also after flags such as `-C dir`).
+GH_WORD = re.compile(r"(?:^|[\s;&|(`'\"{])(?:\S*/)?gh(?=\s)")
+GH_SUBCOMMANDS = {"pr", "api", "repo", "run", "issue", "search", "auth", "browse", "release", "gist", "workflow", "status"}
+GIT_REMOTE = re.compile(r"\bgit\s+(?:-\S+\s+(?:[^-\s]\S*\s+)?)*(?:clone|ls-remote)\b")
+# The body of a heredoc that only writes text (`cat` or `tee` with the heredoc on its own
+# line, no pipe, no `&&` and no `;`) is no call. The body of another heredoc (`bash <<EOF`,
+# `cat <<EOF | sh`, `python3 - <<EOF`) can run, so it counts. `<<<` is no heredoc.
 HEREDOC = re.compile(
-    r"(?<=cat)([^\n<]*)(?<!<)<<(?!<)-?\s*(['\"]?)(\w+)\2[^\n]*\n.*?\n\s*\3\b"
-    r"|(?<=tee)([^\n<]*)(?<!<)<<(?!<)-?\s*(['\"]?)(\w+)\5[^\n]*\n.*?\n\s*\6\b",
+    r"(?:^|\n)\s*(?:cat|tee)\b[^\n<|&;]*(?<!<)<<(?!<)-?\s*(['\"]?)(\w+)\1[^\n|&;]*\n.*?\n\s*\2\b",
     re.S,
 )
+
+
+def gh_call(command: str) -> bool:
+    for m in GH_WORD.finditer(command):
+        tokens = command[m.end():].split(None, 10)[:10]
+        i = 0
+        while i < len(tokens) and tokens[i].startswith("-"):
+            i += 1
+            # A flag with a value, such as `-R owner/repo`, unless the next token is a subcommand.
+            if "=" not in tokens[i - 1] and i < len(tokens) and not tokens[i].startswith("-"):
+                if tokens[i] not in GH_SUBCOMMANDS:
+                    i += 1
+        if i < len(tokens) and tokens[i].rstrip(";&|)`'\"") in GH_SUBCOMMANDS:
+            return True
+    return False
+
+
 # The keys of a tool input that name where a call goes. `pattern` counts for a glob only.
 TARGET_KEYS = ("command", "file_path", "path", "notebook_path", "url", "glob", "query")
 
@@ -97,7 +112,8 @@ def strict_hit(name: str, tool_input: object) -> bool:
             return True
     command = tool_input.get("command")
     if isinstance(command, str):
-        if STRICT_COMMAND.search(HEREDOC.sub("", command)):
+        bare = HEREDOC.sub("", command)
+        if gh_call(bare) or GIT_REMOTE.search(bare):
             return True
     return False
 
@@ -289,6 +305,11 @@ def selftest() -> int:
         ("gh after a here string", "Bash", {"command": "cat <<< \"x\"\ngh pr view 5"}, 0, 1),  # the ADR pattern misses it
         ("git clone after -C", "Bash", {"command": "git -C dir clone ssh://example.invalid/r.git"}, 0, 1),  # the ADR pattern misses it
         ("a web search of the host", "WebSearch", {"query": "site:github.com spec-dna"}, 1, 1),
+        ("a heredoc that is piped to a shell", "Bash", {"command": "cat <<EOF | sh\ngh pr view 5\nEOF"}, 0, 1),
+        ("a heredoc after cat and &&", "Bash", {"command": "cat notes.txt && bash <<EOF\ngh pr view 5\nEOF"}, 0, 1),
+        ("git add of a file with clone in its name", "Bash", {"command": "git add src/clone.rs"}, 0, 0),
+        ("git grep for clone", "Bash", {"command": "git grep -n clone"}, 0, 0),
+        ("a long run of flags is fast", "Bash", {"command": "gh " + "--a " * 200 + "x"}, 0, 0),
         ("a word that ends in gh", "Bash", {"command": "cargo test --test high pr_list"}, 0, 0),
         ("glob into a checkout", "Glob", {"pattern": "/private/var/www/*/src/hook.rs"}, 1, 1),
     ]

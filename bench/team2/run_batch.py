@@ -1,7 +1,7 @@
 """Run the batch of protocol 2 (ADR 0033) as jobs, with up to 3 jobs at the same time.
 
 Usage: run_batch.py <lab> --tasks <id>,<id>,... --room <usd> [--waves 3] [--concurrency 3]
-                    [--prefilled <wave>=<result file> ...] [--claude-version <v>] [--dry-run]
+                    [--prefilled <wave>=<result file> ...] [--claude-version <v>] [--dry-run] [--clear-halt]
         run_batch.py --selftest
 
 The folder <lab> holds `project/` (the batch project of make_project.py) and `tools/`
@@ -37,7 +37,7 @@ It waits when one runs. A job that the API stopped (the runner gave up after its
 waits), or that a signal stopped, runs again with `--resume <its file>` (no `--out`) after 30 minutes, up
 to 4 attempts. A job does not start before the job of the same task in the wave before it is done, so
 the tap log of a task and an arm has its runs in the order of the run numbers. The state file keeps a halt: a
-new start does nothing until the file is removed. Any other stop ends the command.
+new start does nothing until `--clear-halt` is given. Never remove the state file: it holds the money that was spent. Any other stop ends the command.
 
 Events: `WAVE <n> COMPLETE` when all tasks of a wave are done, `BATCH END <reason>`.
 """
@@ -228,6 +228,7 @@ class Batch:
             elif result is not None:
                 job["status"] = "retry"
                 job["retry_at"] = 0
+                job["killed"] = job.get("killed", 0) + 1
             else:
                 # No file: the runner left no spend that we can read, so the whole cap counts as spent.
                 job["lost_usd"] = job.get("lost_usd", 0.0) + job.get("cap", JOB_USD)
@@ -247,10 +248,9 @@ class Batch:
 
     def committed(self, job: dict) -> float:
         """The money that a job holds: its spend if it is finished, else its whole cap."""
-        lost = job.get("lost_usd", 0.0)
-        if job.get("uncertain"):
-            # The spend of an attempt that a signal stopped is not in the result file.
-            return lost + job.get("cap", JOB_USD)
+        # The runner does not write the cost of an attempt that a signal stopped (up to
+        # 25 USD, the budget of one run), and its cap does not count it either.
+        lost = job.get("lost_usd", 0.0) + MIN_START * job.get("killed", 0)
         if job["status"] in ("done", "stopped"):
             result = read_result(self.folder(job))
             if result is None:
@@ -313,13 +313,22 @@ class Batch:
             else:
                 stopped = (result or {}).get("stopped")
                 self.say(f"JOB stop {name} exit {code} stopped {stopped}")
-                refused = stopped in ("api-error", "interrupted") or code in (129, 130, 143)
-                if stopped == "interrupted" or code in (129, 130, 143):
-                    job["uncertain"] = True
+                refused = stopped in ("api-error", "interrupted") or signalled
+                signalled = stopped == "interrupted" or code < 0 or code in (129, 130, 143)
+                if signalled:
+                    job["killed"] = job.get("killed", 0) + 1
                 after = newest_result(self.folder(job))
                 changed = after is not None and job.get("stamp") != [after.name, after.stat().st_mtime]
                 # A usage error (exit 2) leaves the file as it was. Such a job does not run again.
-                if result is not None and refused and changed and job["attempts"] < ATTEMPTS and not self.halted:
+                if self.stop and signalled:
+                    # We sent the signal. The job runs again at the next start, from its file if it has one.
+                    job["status"] = "retry" if result is not None else "pending"
+                    job["retry_at"] = 0
+                    if result is None:
+                        job["lost_usd"] = job.get("lost_usd", 0.0) + job.get("cap", JOB_USD)
+                        job.pop("cap", None)
+                        job["killed"] = 0
+                elif result is not None and refused and changed and job["attempts"] < ATTEMPTS and not self.halted:
                     job["status"] = "retry"
                     job["retry_at"] = time.time() + RETRY_WAIT
                     self.say(f"JOB retry {name} in {RETRY_WAIT} s with --resume")
@@ -503,10 +512,10 @@ def selftest() -> int:
     cmd = again.command(again.jobs[0])
     expect("resume has no --out", "--out" in cmd, False)
     expect("resume path is relative", cmd[cmd.index("--resume") + 1], "evals/results/w1-a/arms-1.json")
-    # An attempt that a signal stopped counts its whole cap, also when the job is done.
-    again.jobs[0].update({"status": "done", "uncertain": True})
-    # 75 USD lost before, and the cap of 80 USD now.
-    expect("an uncertain job counts its cap", again.committed(again.jobs[0]), 155.0)
+    # An attempt that a signal stopped has a cost that the runner does not write: 25 USD for each.
+    # Here: 75 USD lost before, 2 killed attempts, and the spend of the file (0).
+    again.jobs[0].update({"status": "done", "killed": 2})
+    expect("a killed attempt counts 25 USD", again.committed(again.jobs[0]), 125.0)
     # A halt stays after a restart.
     again.halted = "job w1-a stopped"
     again.save()
@@ -541,6 +550,16 @@ def main() -> int:
             result = json.loads(Path(name).read_text())
             for item in result["evals"]:
                 prefilled[(int(wave), item["id"])] = Path(name)
+    if "--clear-halt" in args:
+        # Only the halt goes. The jobs and their spend stay.
+        state = json.loads((lab / "state.json").read_text())
+        state["halted"] = None
+        for job in state["jobs"]:
+            if job["status"] == "stopped":
+                job["status"] = "retry" if read_result(lab / "project" / "evals" / "results" / job["name"]) else "pending"
+                job["retry_at"] = 0
+                job["attempts"] = 0
+        (lab / "state.json").write_text(json.dumps(state, indent=2) + "\n")
     batch = Batch(
         lab, tasks, float(opt("--room")), int(opt("--waves", "3")), int(opt("--concurrency", "3")),
         prefilled, opt("--claude-version"), None, POLL,

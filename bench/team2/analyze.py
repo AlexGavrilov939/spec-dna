@@ -1,6 +1,6 @@
 """Scores and verdicts of protocol 2 (ADR 0033).
 
-Usage: analyze.py <arms result file> [--counts <transcript_counts json>[,<json>...]] [--json]
+Usage: analyze.py <arms result file> [--counts <transcript_counts json>[,<json>...]] [--partial] [--json]
         analyze.py --selftest
 
 The result file is `evals/results/arms-<stamp>.json` of `spec-dna eval run --arms`.
@@ -27,6 +27,9 @@ records the turns of the last wake-up segment only), and gives 3 variants of the
 arms table and of the comparisons: all runs, the runs without a hit of the pattern of
 the ADR (`leaked_adr`), and the runs without a hit of the stricter column
 (`leaked_strict`). Each variant takes the floor of the verdict from all runs.
+
+`--partial` is for a report during the batch: the tap log then holds lines of jobs that still run,
+and the command drops the lines after the last run that the result file knows.
 """
 
 import collections
@@ -158,7 +161,7 @@ def arm_table(runs: list[dict]) -> dict:
     return table
 
 
-def match_counts(runs: list[dict], counts: dict | None) -> dict[str, set]:
+def match_counts(runs: list[dict], counts: dict | None, partial: bool = False) -> dict[str, set]:
     """Match the transcript counts to the runs, and set the turns and the leak counts of each run.
 
     `runs` holds the runs of all waves, also of a wave that is not complete: the tap
@@ -177,7 +180,11 @@ def match_counts(runs: list[dict], counts: dict | None) -> dict[str, set]:
         order[(c["task"], c["arm"])].append(c)
     for (task, arm), lines in order.items():
         mine = sorted((r for r in runs if r["task"] == task and r["arm"] == arm), key=lambda r: r["run"])
-        exact = len(lines) == sum(r["excluded"] + 1 for r in mine)
+        expected = sum(r["excluded"] + 1 for r in mine)
+        if partial and len(lines) > expected:
+            # A report during the batch: the log holds the lines of jobs that still run.
+            lines = lines[:expected]
+        exact = len(lines) == expected
         counted: list[dict] = []
         if exact:
             at = 0
@@ -222,12 +229,12 @@ def variant(runs: list[dict], floor_ok: bool) -> dict:
     return {"arms": arms, "comparisons": comparisons}
 
 
-def analyze(result: dict, counts: dict | None) -> dict:
+def analyze(result: dict, counts: dict | None, partial: bool = False) -> dict:
     """The arms table and the comparisons, for all runs, and without the runs that
     each leak column marks. The floor of each variant comes from all runs (ADR 0033)."""
     waves_all = result.get("waves", 0)
     everything = runs_of({**result, "waves": 10**6})
-    leaked = match_counts(everything, counts)
+    leaked = match_counts(everything, counts, partial)
     runs = [r for r in everything if r["run"] <= waves_all]
     floor_ok = waves_all >= WAVES_FLOOR and len({r["task"] for r in runs}) >= TASKS_FLOOR
     variants = {"all": variant(runs, floor_ok)}
@@ -335,6 +342,10 @@ def selftest() -> int:
         {"task": "t0", "arm": "none", "epoch": 1, "turns": 3, "strict_touches": 1},
         {"task": "t0", "arm": "none", "epoch": 2, "turns": 77, "strict_touches": 0},
     ]}
+    # A report during the batch: a line of a job that still runs is dropped with --partial.
+    counts5 = {"runs": counts4["runs"] + [{"task": "t0", "arm": "none", "epoch": 3, "turns": 5, "strict_touches": 9}]}
+    out = analyze(res4, counts5, partial=True)
+    expect("a running job is dropped", (out["leaked_runs_strict"], out["runs"][0]["turns"]), ([], 77))
     out = analyze(res4, counts4)
     expect("an excluded attempt is skipped", (out["leaked_runs_strict"], out["runs"][0]["turns"]), ([], 77))
     return 0 if ok else 1
@@ -354,7 +365,7 @@ def main() -> int:
         for name in args[args.index("--counts") + 1].split(","):
             runs += json.loads(Path(name).read_text())["runs"]
         counts = {"runs": runs}
-    out = analyze(result, counts)
+    out = analyze(result, counts, "--partial" in args)
     if "--json" in args:
         print(json.dumps(out, indent=2))
         return 0
