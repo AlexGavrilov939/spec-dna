@@ -1,6 +1,6 @@
 # spec-dna agent team
 
-This folder defines 14 Claude Code agents, with one file for each agent. An agent file gives the scope of the agent, its invariants, its limits, and the agents that it delegates to. It links to the docs and does not copy them. This README and `ownership.md` apply to all agents.
+This folder defines 15 Claude Code agents, with one file for each agent. An agent file gives the scope of the agent, its invariants, its limits, and the agents that it delegates to. It links to the docs and does not copy them. This README and `ownership.md` apply to all agents.
 
 - [ownership.md](ownership.md) gives the responsible agent of each task and each path. Read it before you delegate.
 - `CLAUDE.md` tells the main session when to use an agent, the advisor or no agent.
@@ -24,6 +24,7 @@ This folder defines 14 Claude Code agents, with one file for each agent. An agen
 | Prose to bring to ASD-STE100 | `docs-editor` |
 | A release, or a change to CI or the hooks | `release-engineer` |
 | Finished work, before you say that it is done | `checker` |
+| The acceptance record of a `higher-risk` change, with the line that `spec-dna next` prints | `acceptor` |
 | A wide search or a docs lookup | `Explore` |
 | A decision point while the advisor tool is off or fails | `fallback-advisor` |
 
@@ -53,6 +54,7 @@ This folder defines 14 Claude Code agents, with one file for each agent. An agen
 | [test-engineer](test-engineer.md) | The test strategy, the shared test code, golden and fixture policy, the tool benchmark | sonnet | high | yes |
 | [failure-analyst](failure-analyst.md) | The proved cause of a failure and a small repro. Never fixes | opus | xhigh | no |
 | [checker](checker.md) | An independent check of finished work. Never edits | opus | high | no |
+| [acceptor](acceptor.md) | The acceptance pass of a `higher-risk` change: it tries to break the finished change from the brief of `spec-dna accept --brief` and writes `acceptance.toml`. It edits no code. Its advisor line follows `[harness.roles] acceptor.advisor` | opus | high | `acceptance.toml` only |
 
 ### Docs and release
 
@@ -108,7 +110,7 @@ A session that runs reloads `env`, `advisorModel`, `fallbackModel` and the files
 1. Start a new session. Do not resume an old session. The header shows Sonnet and names `.claude/settings.json`.
 2. Run `/effort status`. It shows `high`.
 3. Find the notice `Advisor Tool (experimental) is on`. Run `/advisor`. It shows Fable.
-4. Type `@`. The list shows the 14 agents of the roster. Since v2.1.198, `/agents` prints only a reminder.
+4. Type `@`. The list shows the 15 agents of the roster. Since v2.1.198, `/agents` prints only a reminder.
 5. While a subagent runs, run `/tasks`. The row of the subagent shows its model.
 6. When Claude calls the advisor, an `Advising` line shows. Press `Ctrl+O` to read the advice. Run `/usage` to see the cost.
 

@@ -38,6 +38,7 @@ These roles have no row in the matrix:
 - The main session builds a small task itself. It then acts as the R of the task and keeps the invariants of the responsible agent. It also makes each commit and pull request, after the approval of the owner.
 - The advisor (Fable) and `fallback-advisor` give advice at a decision point. They are C when the main session asks them.
 - `Explore` searches on request. It owns no task and no path.
+- `acceptor` writes the acceptance record of a `higher-risk` change, from the brief of `spec-dna accept --brief`, and commits it alone. It writes `acceptance.toml` only, and it edits no code. It is not `checker`: `checker` verifies the work of an agent before the owner accepts it, and `acceptor` writes the record that the gate of `finish` reads.
 
 ## Work areas
 
@@ -167,6 +168,8 @@ src/record.rs                        COR: the acceptance record (D3 of 0.8.0): t
 src/accept.rs                        COR: `accept` and `accept --brief`, the skeleton and the brief of the acceptance record
 src/acceptance.rs                    DIA: the rule "a change that needs a record", the archive file, the compare of the brief, and the checks of the record that `finish` and `check` share (SD927 to SD931, SD933, SD935). HYG is C for step 5.2 and 5.5 of `finish`
 src/finish.rs                        HYG: `finish`. It edits documents, so HYG owns it
+src/owners.rs                        COR: the table `[owners]`, the glob match and the agent roles of a change (D5 and D77 of 0.8.0). DIA is C for SD933
+src/rollup.rs                        HYG: the roll-up: the pins `rests-on`, the frontier of a summary, `refresh` and the re-pin of `finish` (D50 to D53 of 0.8.0). DIA is C for SD641 to SD645
 src/stage.rs                         COR: the stage derivation, `next` and `status`, the skill names
 src/sdlc.rs                          COR: `log` and `stats --sdlc`
 src/import.rs                        INI: `import`, the command, its write and its report
@@ -184,6 +187,7 @@ src/eval_records.rs                  COR: `eval records`, the reader of a result
 src/eval_pack.rs                     INI: the evals of the pack, their fixtures and `eval pack`
 src/eval_pack_pilot.rs, src/eval_pack_rest.rs, src/eval_pack_fixtures_rest.rs   INI: the data of the evals of the pack (15 pilot evals of `execute`, `tdd` and `debug`, 35 other evals and their fixtures)
 src/eval_pack_harder.rs              INI: the evals of part B (`verify-6` to `verify-10`, `agents-line-1`, `agents-line-2`) and their fixtures
+src/eval_pack_accept.rs              INI: the 5 evals `accept-1` to `accept-5` of the acceptance pass (D62) and their fixtures
 src/harness.rs                       INI: the roles, the generated files, the settings merge. DIA: the function `check` (SD501, SD502, SD504, SD505)
 src/harness_text.rs                  INI: the texts of the 11 skills of the workflow pack and `REVIEW.md`
 src/hook.rs                          INI
@@ -230,6 +234,10 @@ tests/branch_approval.rs             DIA. COR: the cases of `next` and `status`
 tests/approve_cmd.rs                 COR
 tests/accept_cmd.rs                  COR: `accept`, the skeleton and the brief of the record. HYG is C for the cases of `finish`
 tests/accept_archive_owner.rs         COR: the archive file that belongs to a change by its field `change`
+tests/accept_followup.rs, tests/accept_stop.rs   COR: the follow-up of a note (D73) and the stop rule (D74). DIA is C for SD929 and SD941
+tests/acceptance_need.rs             DIA: the rule "a change that needs a record" and the key `[change] acceptance-for` (D70, ADR 0032)
+tests/owners.rs                      COR: the table `[owners]`, the roles of the brief. DIA is C for SD933
+tests/rollup_checks.rs, tests/rollup_refresh.rs   HYG: the roll-up checks (SD641 to SD645) and `refresh`. DIA is C for the checks
 tests/acceptance_checks.rs           DIA: the record in `finish` (steps 5.2 and 5.5) and in `check`, the archive file and SD927 to SD931, SD933 and SD935. HYG is C for the cases of `finish`
 tests/tree_binary.rs                 COR
 tests/change_model.rs, tests/change_config.rs, tests/git_lifecycle.rs, tests/lifecycle_commands.rs, tests/lifecycle_log.rs, tests/review_fixes.rs, tests/config_step2.rs   COR
