@@ -1096,6 +1096,57 @@ fn reconfigure_with_another_profile_moves_a_default_advisor() {
     assert_eq!(advisor_lines(&r), Some(1));
 }
 
+/// A `lite` file with a kept entry (a model of a person) and `advisor = true`
+/// keeps the value when the answer to question 1 is `standard` (D81 item 7: `lite`
+/// has no default to move). It keeps it also when the skill `review` returns.
+#[test]
+fn reconfigure_from_lite_keeps_the_advisor_of_a_kept_entry() {
+    let file = |skills: &str| {
+        format!(
+            "spec-dna = \"{VERSION}\"\nprofile = \"lite\"\n\n[harness]\nlevel = \"lean\"\nskills = {skills}\n\n[harness.roles]\nacceptor = {{ claude-code = \"sonnet\", effort = \"high\", advisor = true }}\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n"
+        )
+    };
+    let answers = answers_of("standard");
+    let want = Some(true);
+    // Without `review`, the role does not exist: the entry stays, with no file.
+    let r = repo();
+    r.write("docs/a.md", "# A\n\nText.\n");
+    r.write("spec-dna.toml", &file("[\"brainstorm\"]"));
+    r.commit("set the role");
+    let (code, out, err) = init_with(&r, &answers, &["--reconfigure"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(advisor_key(&r), want, "{}", r.read("spec-dna.toml"));
+    assert_eq!(
+        at(&table(&r), "harness.roles.acceptor.claude-code").and_then(toml::Value::as_str),
+        Some("sonnet")
+    );
+    assert_eq!(advisor_lines(&r), None);
+    // The skill `review` returns: the file has no line, and `check` is clean.
+    r.write(
+        "spec-dna.toml",
+        &r.read("spec-dna.toml")
+            .replace("skills = [\"brainstorm\"]", "skills = [\"review\"]"),
+    );
+    r.commit("add review");
+    let (code, out, err) = init_with(&r, &answers, &["--reconfigure"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(advisor_key(&r), want, "{}", r.read("spec-dna.toml"));
+    assert_eq!(advisor_lines(&r), Some(0));
+    r.commit("reconfigure");
+    let (code, out, err) = run(&r, &["check"]);
+    assert_eq!(code, 0, "{out}{err}");
+    // With `review` in the list at once, the role appears with the answer
+    // `standard`, and the value is not the default of `lite` to move.
+    let r = repo();
+    r.write("docs/a.md", "# A\n\nText.\n");
+    r.write("spec-dna.toml", &file("[\"review\"]"));
+    r.commit("set the role");
+    let (code, out, err) = init_with(&r, &answers, &["--reconfigure"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(advisor_key(&r), want, "{}", r.read("spec-dna.toml"));
+    assert_eq!(advisor_lines(&r), Some(0));
+}
+
 /// Where the role `acceptor` does not exist, the key `advisor` alone never
 /// keeps the entry (D81 item 8). A model or an effort of a person keeps it, with
 /// its key.
