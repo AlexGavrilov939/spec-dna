@@ -15,7 +15,7 @@ status: approved
 
 ## Order
 
-- [ ] t1: Prove the 5 tasks on the stub agent: the start tree fails part 1, the solution with the defects passes part 1 and fails part 2, and the reference passes both. Files: `bench/team2/`. Verify: `python3 bench/team2/selftest.py --write` passes, and each task has tests in both parts.
+- [x] t1: Prove the 5 tasks on the stub agent: the start tree fails part 1, the solution with the defects passes part 1 and fails part 2, and the reference passes both. Files: `bench/team2/`. Verify: `python3 bench/team2/selftest.py --write` passes, and each task has tests in both parts.
 - [ ] t2: Write ADR 0033 and make it accepted on the word of the owner. Files: `docs/adr/0033-protocol-2-of-the-model-team-measurement.md`. Verify: `cargo run --quiet -- check` gives no error.
 - [ ] t3: Run the dry run of the 3 arms on the stub agent, and the 3 paid probes. Apply the gate of the ADR. Files: `bench/team2/limits.json`. Verify: the numbers of the probes and the gate are in the report.
 - [ ] t4: Run the batch of 45 runs, one batch at a time, with the back-off of the runner. Files: `bench/results/evals/`. Verify: `python3 bench/team2/analyze.py` reads the result file.

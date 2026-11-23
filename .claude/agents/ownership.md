@@ -273,6 +273,7 @@ bench/tool/                          TST
 bench/retrieval/                     CTX
 bench/harness/                       TST
 bench/team/                          TST: the tasks, the oracle and the tools of the model-team measurement (ADR 0029), accepted by ARC
+bench/team2/                         TST: the recipes, the tasks, the oracle and the tools of protocol 2 of the model-team measurement (ADR 0033), accepted by ARC
 bench/results/tool-*.json            TST
 bench/results/harness-*.json         TST
 bench/results/retrieval-*.json       CTX
