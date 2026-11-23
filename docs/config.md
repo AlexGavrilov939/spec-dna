@@ -122,7 +122,7 @@ protect-approvals = true        # the hook `protect-approvals` denies an approva
 orchestrator = { claude-code = "opus", effort = "xhigh", fallback = ["opus", "sonnet"] }
 advisor = { claude-code = "fable", agent = "opus", effort = "xhigh" }
 verifier = { claude-code = "opus", effort = "high" }
-acceptor = { claude-code = "opus", effort = "high" }  # only with the skill `review`; no role in `lite`
+acceptor = { claude-code = "opus", effort = "high", advisor = false }  # only with the skill `review`; no role in `lite`
 researcher = { claude-code = "haiku", effort = "high" }
 helper = { claude-code = "haiku" }
 
@@ -222,7 +222,7 @@ sonnet = "high"
 | `harness.review-md` | boolean | `false` | `true`: `init` writes `REVIEW.md`, the review policy. With `none`, spec-dna reads the key and ignores it. |
 | `harness.protect-tests` | string | `"off"` | When the hook `protect-tests` asks the person before an edit of a test file that git tracks: `"fix-branches"` (on a branch whose name starts with `fix/`), `"always"` or `"off"`. The test files are the globs of `[evidence] tests`. With `none`, spec-dna reads the key and ignores it. |
 | `harness.protect-approvals` | boolean | `false` | `true`: the harness writes the hook `protect-approvals`. The hook denies a `Bash` call that runs `spec-dna approve`, and a `git commit` that sets the status of an artifact of a change to its approval value ([harness.md](harness.md#spec-dna-hook-protect-approvals)). `init` writes `true` for `strict`, and it keeps the key of a file that has it. The hook needs a layer of the type `intent`. With `none`, spec-dna reads the key and ignores it. |
-| `harness.roles.<role>` | table | the default of the role | The model and the effort of a role. See [The table `harness`](#the-table-harness). |
+| `harness.roles.<role>` | table | the default of the role | The model and the effort of a role. The role `acceptor` also has the key `advisor`. See [The table `harness`](#the-table-harness). |
 | `harness.efforts` | table | `{ sonnet = "high" }` | Claude Code adapter. The effort for each model alias or model id. Claude Code uses it when the person selects another model with `/model`. A value is `low`, `medium`, `high`, `xhigh` or `inherit`. A table in the file replaces the default. The effort of the orchestrator applies to its own model, so an entry for the main model has no effect, and `init` prints a warning. |
 
 ## Details of keys
@@ -553,6 +553,7 @@ These keys select the parts of the harness that `init` writes besides the agents
 | `effort` | all but `helper` | `low`, `medium`, `high`, `xhigh`, `max` or `inherit` (no effort is written). For the advisor, it is the effort of the `fallback-advisor` agent. |
 | `agent` | `advisor` | The model of the `fallback-advisor` agent: a model or `none` (no agent file). Default `opus`. |
 | `fallback` | `orchestrator` | The models of `fallbackModel` in `.claude/settings.json`, in order. Default `["opus", "sonnet"]`. `[]` writes no `fallbackModel`. |
+| `advisor` | `acceptor` | `true` or `false`. `false` adds to `acceptor.md` a line that asks the agent not to consult the advisor. The default is `false` in `standard` and `true` in `strict`. See [The key `advisor` of the entry `acceptor`](#the-key-advisor-of-the-entry-acceptor). |
 
 The defaults:
 
@@ -567,13 +568,36 @@ The defaults:
 | `code-simplifier` | `sonnet` | `high` | `full` |
 | `helper` | `haiku` | none | `lean`, `full` |
 
-A role that the level does not include is an error, for example `harness.roles.implementer`: the role is in the level `full`. The role `acceptor` is in each level, but a configuration has it only with the skill `review`, and the profile `lite` has it never. A configuration that has no such role (no skill `review`, or the profile `lite`) keeps the entry of `acceptor` that a person set, and it writes no agent file. A new project with the default value writes no entry for it. These rules apply to the values:
+A role that the level does not include is an error, for example `harness.roles.implementer`: the role is in the level `full`. The role `acceptor` is in each level, but a configuration has it only with the skill `review`, and the profile `lite` has it never. A configuration that has no such role (no skill `review`, or the profile `lite`) writes no agent file. It keeps the entry of `acceptor` only when `claude-code` or `effort` is not the default, and a new project writes no entry for it. The key `advisor` alone never keeps the entry. These rules apply to the values:
 
 - A model is a string that is not empty and has no spaces.
 - The orchestrator cannot be `none`, and its effort cannot be `max`. The advisor model cannot be `inherit`, and cannot be `haiku` in any letter case.
 - A value in `[harness.efforts]` cannot be `max`.
 - For `modelSettings`, spec-dna maps an alias to a model id. A value with a context suffix, such as `opus[1m]`, and the values `opusplan`, `default` and `best` have no id. For such a main model, spec-dna writes no effort, and `init` reports it.
 - The advisor should not be a weaker model than the orchestrator. If it is weaker, the configuration is still valid, and `init` prints a warning. spec-dna ranks the known aliases from strong to weak: `fable`, `opus`, `sonnet`, `haiku`.
+
+### The key `advisor` of the entry `acceptor`
+
+`advisor` is a boolean key of the entry `acceptor`. No other role has it, so the key in another entry gives exit code 3 (``unknown key `harness.roles.verifier.advisor` ``). A value that is not `true` or `false` also gives exit code 3 (`` `harness.roles.acceptor.advisor` must be true or false ``).
+
+`false` adds one line to `.claude/agents/acceptor.md`: the agent must not consult the advisor. `true` adds no line, so the acceptor follows the instructions of the project. [harness.md](harness.md#the-advisor-of-the-acceptor) gives the line.
+
+A key that the file does not have gets the default of the profile. The key has an effect only where the role `acceptor` is on: the skill `review`, a level other than `none`, and a `claude-code` value other than `none`.
+
+| Profile | Value with no key | What `init` writes for a new project |
+| --- | --- | --- |
+| `lite` | none: the role does not exist | no entry `acceptor` |
+| `standard` | `false` | `acceptor = { claude-code = "opus", effort = "high", advisor = false }` |
+| `strict` | `true` | `acceptor = { claude-code = "opus", effort = "high", advisor = true }` |
+
+- A new project: `init` writes the default of the profile where the role is on. With the answer `acceptor=none` to question 13, it writes the entry with no key, and it writes the default when the model returns. The answer `acceptor=<model>[:effort]` changes the model and the effort, and it keeps `advisor`. No question asks for the key.
+- `init --reconfigure` keeps the value of the file. An entry with no key gets the default of the profile.
+- A new answer to question 1 moves a value that equals the default of the old profile to the default of the new profile. `standard` to `strict` turns `false` into `true`, and `strict` to `standard` turns `true` into `false`. Another value stays. The move reads the value only, so it also moves a value that a person set to the old default.
+- A change of `profile` by hand, with no `init`, moves no value.
+- `upgrade` writes no key. From 0.7.1, it adds `acceptor.md` where the role exists: the file has the line in `standard` and no line in `strict`.
+- A change of the key with no `init` gives SD502 for `acceptor.md`. A hand edit of the line gives SD501.
+
+The line is a soft rule: the agent can still consult the advisor. [harness.md](harness.md#the-advisor-of-the-acceptor) gives the tests and the way to turn the advisor off for a session. [evals.md](evals.md#the-measured-cost-of-one-acceptance-pass) gives the cost of a pass with and with no advisor, and the limits of that measure.
 
 ## The table `spec-dna-sha256`
 
@@ -699,6 +723,8 @@ How it works:
 The code tree is one hash of the code as it was when the tests ran. It covers each file that git tracks, with the bytes on the disk. A symbolic link counts with the text that it names, as git stores it, and a submodule counts with its entry in the git index (the tree does not look into it). It leaves out these paths: the files that `tree-exclude` matches (default: each Markdown file), the folders of the `intent` layer, `.spec-dna/`, the files that `init` writes with `spec-dna.toml` and the report files with their stamps. Thus a change of documents never makes a report stale, and a change of code does.
 
 An untracked file does not count. A file that git does not track yet is not in the tree, so a `git add` of a new file after the stamp makes the report stale. A test file that git does not track yet is not in the tree hash, but `check`, `finish` and `accept` read it for its `classname`. A test file that git ignores and does not track stays unread, as before. Stage new files before the stamp.
+
+Limit: a test file that git does not track can still prove a requirement, because the report binds the tag through its `classname`. The file is outside the tree hash, so an edit of it after the stamp does not make the report stale. Stage each test file that a tag uses. The rule for 0.8.1 is open ([issue 113](https://github.com/AlexGavrilov939/spec-dna/issues/113)).
 
 A tag binds to a test case in these ways:
 
