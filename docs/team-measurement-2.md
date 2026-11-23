@@ -26,7 +26,7 @@ Each arm has 1 run, so these numbers show the size of a run. They do not show a 
 
 The work stops when one of the rules of the ADR is true. This one is true:
 
-- The projected cost is `15 x (5.90 + 14.96 + 19.85) x 0.99`, or 604 USD. The room is 380 USD, minus the spend of the probes (40.71 USD), minus 10 USD of reserve, or 329 USD. The batch needs 604 USD plus the budget of one run, so it does not fit.
+- The projected cost is `15 x (5.90 + 14.96 + 19.85) x 0.99`, or about 605 USD (the script `gate.py` uses the exact ratio of sizes and prints 604). The room is 380 USD, minus the spend of the probes (40.71 USD), minus 10 USD of reserve, or 329 USD. The batch needs about 605 USD plus the budget of one run, so it does not fit.
 
 The other rules are false. The tasks are not at the ceiling or the floor on the probe task, no probe hit a limit, and the `models` of each probe match its arm (only `lean` lists the advisor model). The room pays for about 8 of the 15 task waves that the floor needs. A batch that the cap stops would end below the floor of ADR 0030, so it would give no verdict. No variant of the ADR fits the cap: without the arm `none`, the projection is still about 517 USD.
 
@@ -44,7 +44,7 @@ The owner decides each change of a default. A new protocol needs a new ADR, and 
 ## Limits
 
 - The probes have 1 run for each arm on 1 task. They give no interval and no verdict.
-- The runner gave `lean-no-advisor` 2 turns for a run of 75 minutes. The transcript of that run has 435 messages of the assistant, and the run used a background monitor, a message to a subagent and a subagent. The runner reads `num_turns` of the last `result` event, so a result event after a background wake-up could give this count. The cause is not proved, because the runner does not keep the output of `claude`. The turn limit of the batch (200) comes from the 2 other probes, and it would rest on this count. The code was not changed.
+- The runner gave `lean-no-advisor` 2 turns for a run of 75 minutes. The transcript of that run has 435 messages of the assistant, and the run used a background monitor, 6 messages to a subagent and 1 subagent. The runner reads `num_turns` of the last `result` event, so a result event after a background wake-up could give this count. The cause is not proved, because the runner does not keep the output of `claude`. The turn limit of the batch (200) comes from the 2 other probes, and it would rest on this count. The code was not changed.
 - The count of leaks marks the 3 probes as leaked, as the ADR defines it: 1 tool use of `none`, 5 of `lean-no-advisor` and 1 of `lean` match the pattern of `transcript_counts.py`. The matches are of 3 kinds: the folder of task output that Claude Code makes for the copy, a `git remote -v` inside the copy, and test text with the string `gh pr`. No tool input names the oracle, a checkout of this repository, the remote host or the pull request refs. The pattern has false positives, and the ADR fixes it, so it was not changed. Only tool inputs were checked by kind, not tool results.
 - One repository, one language, one model family, one version of Claude Code.
 - The tasks are public and the fixed code is on the public repository. A model may know them.
