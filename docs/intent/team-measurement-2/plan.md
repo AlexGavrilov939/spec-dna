@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 ---
 # Protocol 2 of the model-team measurement
 
