@@ -11,7 +11,8 @@ arm on the probe task). The command applies the rules of the ADR:
 - The projection is 15 x (a + b + c) x s. `a`, `b` and `c` are the costs of the 3
     probes. `s` is the mean of the sizes of the reference patches of the 5 tasks (in
     changed lines) divided by the size of the patch of the probe task.
-- The room is 380 USD, minus the spend of the probes, minus 10 USD of reserve.
+- The room is the cap, minus the spend of the probes, minus 10 USD of reserve. The
+    cap is 700 USD (the amendment of 2026-11-23 to ADR 0033; it was 380 USD).
 - The limits of the batch: `max-turns` is 2 times the largest number of turns of
     a probe, rounded up to a multiple of 10, from 80 to 300. `max-budget-usd` is 2
     times the largest cost of a probe, rounded up to a whole number, from 10 to 25.
@@ -29,7 +30,9 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from analyze import runs_of  # noqa: E402
 
-CAP = 380.0
+# The cap of the ADR was 380 USD. The amendment of 2026-11-23 sets 700 USD in total,
+# with the spend of the probes (40.71 USD) inside it. No other rule changed.
+CAP = 700.0
 RESERVE = 10.0
 PROBE_TASK = "t2-05-approver-hook"
 RUNS = 15

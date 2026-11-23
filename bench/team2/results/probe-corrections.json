@@ -1,0 +1,26 @@
+{
+  "about": "Correction of the stored turns of the 3 probes of 2026-11-23, made before the batch. The runner records num_turns of the last result event of claude. A background wake-up gives a new result event that counts its own segment only. The corrected value is the count of user entries of the main transcript (transcript_counts.py --copy).",
+  "files": [
+    "bench/team2/results/arms-20261123T145413Z.json",
+    "bench/results/evals/20261123T145413Z-harness.jsonl"
+  ],
+  "probes": {
+    "lean-no-advisor": {
+      "turns_recorded": 2,
+      "turns_corrected": 152,
+      "segments": [101, 8, 4, 18, 8, 5, 4, 2, 2],
+      "note": "9 result events: the prompt and 8 wake-ups. The last segment has 2 user entries, which is the recorded value."
+    },
+    "none": {
+      "turns_recorded": 93,
+      "turns_corrected": 93,
+      "note": "No wake-up. The count of the transcript agrees with the record."
+    },
+    "lean": {
+      "turns_recorded": 98,
+      "turns_corrected": 98,
+      "note": "No wake-up. The count of the transcript agrees with the record."
+    }
+  },
+  "unchanged": "The scores, the costs, the minutes, the tokens and the models of the 3 probes. The cost and the tokens of the runner are totals of the session, and they agree with the cost-state entry of the transcript of each probe."
+}

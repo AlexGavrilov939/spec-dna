@@ -1,6 +1,6 @@
 # Measurement of the model team: protocol 2, real slices from the history
 
-This page gives the result of protocol 2 in [ADR 0033](adr/0033-protocol-2-of-the-model-team-measurement.md). It is for the owner, who decides the default harness level, the advisor rule of 0.8.1 and the advisor gate. The gate of the ADR stopped the work after the 3 probes, so the batch did not run. This page gives no verdict.
+This page gives the result of protocol 2 in [ADR 0033](adr/0033-protocol-2-of-the-model-team-measurement.md). It is for the owner, who decides the default harness level, the advisor rule of 0.8.1 and the advisor gate. The gate of the ADR first stopped the work after the 3 probes. On 2026-11-23 the owner raised the cap to 700 USD ([the amendment of the ADR](adr/0033-protocol-2-of-the-model-team-measurement.md#2026-11-23-the-cap-rises-to-700-usd)), and the batch follows. The section [Rules before the batch](#rules-before-the-batch) gives the rules that were set before its first run. The sections after it give the result.
 
 ## What ran
 
@@ -8,7 +8,7 @@ This page gives the result of protocol 2 in [ADR 0033](adr/0033-protocol-2-of-th
 - The oracle has 2 parts. Part 1 holds the tests that the slice merged. Part 2 holds one test for each later defect, and a run that changes nothing scores 0 in it. The oracle is hidden from the agent.
 - The self-test `bench/team2/selftest.py` proved the 5 tasks on a stub agent, with no cost. The start tree fails part 1, the solution with the defects passes part 1 and fails part 2, and the reference passes both.
 - Models: Claude Opus 5.5 as the main model and Claude Fable 5.2 as the advisor, Claude Code 2.1.330, spec-dna 0.8.0, effort `xhigh`.
-- The order is fixed by the history. The commit of ADR 0033 (`d320f84`) has the time 14:53:59Z. The first probe started at 14:54:13Z. No rule of the ADR changed after that.
+- The order is fixed by the history. The commit of ADR 0033 (`d320f84`) has the time 14:53:59Z. The first probe started at 14:54:13Z. The only change of a rule of the ADR after that is the amendment of the cap of 2026-11-23, which came before the batch.
 
 ## The probes
 
@@ -17,35 +17,32 @@ This page gives the result of protocol 2 in [ADR 0033](adr/0033-protocol-2-of-th
 | Arm | Part 1 | Part 2 (main measure) | Cost (USD) | Minutes | Turns | Advisor calls |
 | --- | --- | --- | --- | --- | --- | --- |
 | `none` | 5 of 12 | 1 of 3 | 5.90 | 27.9 | 93 | 0 |
-| `lean-no-advisor` | 5 of 12 | 2 of 3 | 14.96 | 75.2 | 2 (see Limits) | 0 |
+| `lean-no-advisor` | 5 of 12 | 2 of 3 | 14.96 | 75.2 | 152 (the runner recorded 2, see below) | 0 |
 | `lean` | 9 of 12 | 2 of 3 | 19.85 | 65.0 | 98 | 6 (5 results) |
 
 Each arm has 1 run, so these numbers show the size of a run. They do not show a difference between the arms. The task is not at the ceiling or at the floor: part 2 is neither 1 nor 0 in each arm.
 
 ## The gate
 
-The work stops when one of the rules of the ADR is true. This one is true:
+The gate of the ADR stopped the work first. The projected cost is `15 x (5.90 + 14.96 + 19.85) x 0.99`, or about 605 USD (the script `gate.py` uses the exact ratio of sizes and prints 604). The room was 380 USD, minus the spend of the probes (40.71 USD), minus 10 USD of reserve, or 329 USD, so the batch did not fit. The other rules are false. The tasks are not at the ceiling or the floor on the probe task, no probe hit a limit, and the `models` of each probe match its arm (only `lean` lists the advisor model).
 
-- The projected cost is `15 x (5.90 + 14.96 + 19.85) x 0.99`, or about 605 USD (the script `gate.py` uses the exact ratio of sizes and prints 604). The room is 380 USD, minus the spend of the probes (40.71 USD), minus 10 USD of reserve, or 329 USD. The batch needs about 605 USD plus the budget of one run, so it does not fit.
+With the cap of 700 USD the room is 649.29 USD, and the gate is open: 604 USD plus 25 USD for the budget of one run is below it. The limits of the batch are 300 turns and 25 USD for a run, the same as in the probes (`bench/team2/limits.json`). The corrected turns of the probe of `lean-no-advisor` (152) give 2 times 152, rounded to 310, which the ADR caps at 300. The recorded value (2) had given 200.
 
-The other rules are false. The tasks are not at the ceiling or the floor on the probe task, no probe hit a limit, and the `models` of each probe match its arm (only `lean` lists the advisor model). The room pays for about 8 of the 15 task waves that the floor needs. A batch that the cap stops would end below the floor of ADR 0030, so it would give no verdict. No variant of the ADR fits the cap: without the arm `none`, the projection is still about 517 USD.
+## Rules before the batch
 
-## Decision
+These rules were set and committed before the first batch run. They change no rule of ADR 0033, except where the text says so.
 
-No batch ran. There is no verdict for the 2 comparisons, so they are below the floor, and the tables of the ADR give:
-
-| Comparison | Meaning |
-| --- | --- |
-| `lean` against `none` | No change to the default harness level |
-| `lean` against `lean-no-advisor` | No change to the rule "advisor only on a change of class `higher-risk`" of 0.8.1, and no change to the advisor gate |
-
-The owner decides each change of a default. A new protocol needs a new ADR, and a new cap or fewer tasks. The probes give the size: a full wave of 3 arms costs about 40 USD on this task, and the 5 tasks have a mean size of 99% of it.
+1. **The turn count of the runner.** The runner of `spec-dna eval run` reads `num_turns` of the last `result` event of `claude -p`. A background task that ends after the agent has stopped wakes the agent, and each wake-up ends with its own `result` event whose `num_turns` counts that segment only. The transcript of the `lean-no-advisor` probe has 9 segments (the prompt and 8 wake-ups) with 101, 8, 4, 18, 8, 5, 4, 2 and 2 turns. The last one has 2 turns, which is the recorded value. The count of the user entries of the main transcript gives 93 and 98 for the 2 probes with no wake-up, as recorded, so it is the right count. The cost and the tokens of the runner are totals of the session, and they agree with the `cost-state` entry of each transcript. The stored value of the probe is corrected to 152 in the result file and in its record (`bench/team2/results/probe-corrections.json` keeps the old value and the method). The batch takes the turns of a run from its transcript (`transcript_counts.py`). The runner stays as it is, because the batch must run the binary of 0.8.0 of the probes, and ADR 0033 says that the work changes no code of `src/`. The defect is open for 0.8.1. The runner did not keep the output of `claude`, so the cause is proved by the transcript only. A consequence: `--max-turns` probably bounds each segment and not the whole run.
+2. **A second leak column.** The pattern of the ADR stays. A second column, `strict`, reads the target of a call only, and not the text that a call writes: the command of a shell call and the path, the glob or the URL of another call. It matches the oracle, a checkout of the repository (a path under `/var/www/`), the code host, `refs/pull`, a call of `gh`, and `git clone` or `git ls-remote`. The report gives both columns for each run, and 3 verdicts: all runs, without the runs that the pattern of the ADR marks, and without the runs that `strict` marks. The ADR rule stays: if the verdicts have different classes, the owner reads the result as `inconclusive`. The ADR pattern flagged all 3 probes. `strict` flags none of them, and a synthetic test shows that it flags the real cases. The pattern of the ADR can mark most of the runs of the batch. Then the verdict without them has no data, and the report says so.
+3. **The probes count as wave 1 of `t2-05-approver-hook`.** The rule of the owner is: the probes count as wave 1 if the fixes change no score. They change none: the scores come from the checks, and the fixes change only the turns and the reports. The limits are the same (300 turns, 25 USD, 7,200 seconds for the agent, 1,800 seconds for a check), and so are the binary, Claude Code 2.1.330, the models and the effort. This sets aside the sentence of the ADR "The probes do not count in the verdict" for this batch. The differences are: the probes ran alone, in the order `none`, `lean-no-advisor`, `lean` of the first start, and with no tap log. The report gives the means of `t2-05` with and without the probe run as a description. The batch has 14 jobs, so it runs 42 new runs.
+4. **The jobs.** The runner runs the arms of one command one after the other, and `--arms` needs 2 arms at least, so the arms of one task cannot run at the same time. The batch runs up to 3 jobs at the same time, and a job is the command of the ADR for one task and one wave (`eval run --arms ... <task> --runs 1`), in the order of the waves. Each job has its own result file, and `merge.py` joins them. The arms of a job come in the rotation of the ADR. The concurrency changes the minutes of a run (3 builds at once), and it can raise the risk of the 7,200 seconds limit for the agent.
+5. **The cap.** The room of the batch is 649.29 USD. A job gets a cap of 80 USD (3 runs of 25 USD, and 5 USD of slack for a run that passes its budget a little). A job starts when the room, minus the spend of the finished jobs, minus the cap of each job in flight or waiting to run again, is at least 80 USD. It starts with a lower cap (the rest, at least 25 USD) only when no other job runs or waits. A job that the API stopped or a signal stopped goes on with `--resume` after 30 minutes. A job of a wave starts only after the job of the same task in the wave before it is done. A job whose attempt a signal stopped counts its whole cap as spent, because the runner does not write the cost of such an attempt. A stop by the cap ends the batch, and only the complete waves count. After each complete wave, the running totals go to this page, with a commit.
 
 ## Limits
 
 - The probes have 1 run for each arm on 1 task. They give no interval and no verdict.
-- The runner gave `lean-no-advisor` 2 turns for a run of 75 minutes. The transcript of that run has 435 messages of the assistant, and the run used a background monitor, 6 messages to a subagent and 1 subagent. The runner reads `num_turns` of the last `result` event, so a result event after a background wake-up could give this count. The cause is not proved, because the runner does not keep the output of `claude`. The turn limit of the batch (200) comes from the 2 other probes, and it would rest on this count. The code was not changed.
-- The count of leaks marks the 3 probes as leaked, as the ADR defines it: 1 tool use of `none`, 5 of `lean-no-advisor` and 1 of `lean` match the pattern of `transcript_counts.py`. The matches are of 3 kinds: the folder of task output that Claude Code makes for the copy, a `git remote -v` inside the copy, and test text with the string `gh pr`. No tool input names the oracle, a checkout of this repository, the remote host or the pull request refs. The pattern has false positives, and the ADR fixes it, so it was not changed. Only tool inputs were checked by kind, not tool results.
+- The runner recorded 2 turns for `lean-no-advisor` for a run of 152 turns. See the rule 1 above for the cause and the correction.
+- The count of leaks marks the 3 probes as leaked, as the ADR defines it: 1 tool use of `none`, 5 of `lean-no-advisor` and 1 of `lean` match the pattern of `transcript_counts.py`. The matches are of 3 kinds: the folder of task output that Claude Code makes for the copy, a `git remote -v` inside the copy, and test text with the string `gh pr`. No tool input names the oracle, a checkout of this repository, the remote host or the pull request refs. The pattern has false positives, and the ADR fixes it, so it was not changed. The column `strict` of the rule 2 flags none of the 3 probes. Only tool inputs were checked by kind, not tool results.
 - Before the probes, the person deleted the folders `team2-target-*` and an old scratch copy of the runner from the temporary folder of the system. No tool input of a probe names a folder `team2-` or the copy of another run.
 - One repository, one language, one model family, one version of Claude Code.
 - The tasks are public and the fixed code is on the public repository. A model may know them.
@@ -53,4 +50,4 @@ The owner decides each change of a default. A new protocol needs a new ADR, and 
 
 ## Spend
 
-The probes cost 40.71 USD of the 380 USD cap. The dry run and the self-test cost nothing, because they use the stub agent. The pilot of protocol 1 is on [its page](team-measurement.md).
+The probes cost 40.71 USD of the 700 USD cap. The dry run and the self-test cost nothing, because they use the stub agent. The pilot of protocol 1 is on [its page](team-measurement.md).
