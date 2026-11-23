@@ -1,0 +1,89 @@
+{
+  "t2-01-tree-binary": {
+    "slug": "tree-binary",
+    "start": "3d37214440ca6f0308f87c6da4ad8455efef9c9a",
+    "slice": "1418da13214d88b993d9a91c9ec082e4c9567143",
+    "mode": "forward",
+    "fixes": [
+      "88e3b2a41a1e527131d2226094279f483f7cf263",
+      "e86211d0bc9fb1ee67956ba153af2b1a63224800",
+      "0d13efaa367afbc19c5d0908204d685afd886208"
+    ],
+    "refs": [
+      "refs/pull/60/head"
+    ],
+    "scope": "Do tasks t1 and t2 of the plan."
+  },
+  "t2-02-change-feedback": {
+    "slug": "change-feedback",
+    "start": "19b2e9ffccfd4f4f5b5dee9e37ed3a07cd250a21",
+    "slice": "c5a0787db72eb17ac5c7ff791d64dbd6aa278a32",
+    "mode": "reverse",
+    "fixes": [
+      "b22c28152a9381b42fde997dcacedc03d9747de7",
+      "1124ab1da7d4fb1c754e2a51abc9aea8a42c3c34",
+      "d0313ed23e0903c3340ef01f2057b22f9bdd311b"
+    ],
+    "refs": [
+      "refs/pull/58/head"
+    ],
+    "scope": "Do tasks t1 to t13 of the plan."
+  },
+  "t2-03-task-checks": {
+    "slug": "task-checks",
+    "start": "ac77b00dbd8fb121d97c0bef49203784571692d5",
+    "slice": "d5a243c21b18987ccf224b3e56e12d09207847ec",
+    "mode": "reverse",
+    "fixes": [
+      "fa9fa5164f83ae2c2fe31d061f7dc08fb88a8a5f",
+      "2340ad40779a1dafab1a6110cc056fd200dadfae",
+      "d0b5f00a471acc56c479bbedcb54dd754e1f1c08"
+    ],
+    "refs": [
+      "refs/pull/48/head"
+    ],
+    "scope": "Do tasks t1 to t8 of the plan."
+  },
+  "t2-04-locked-links": {
+    "slug": "hours-and-links",
+    "start": "d5a243c21b18987ccf224b3e56e12d09207847ec",
+    "slice": "71bd70a55ae5857d4e4bfc92e5f3d66fa86ee7e7",
+    "mode": "reverse",
+    "fixes": [
+      "80dbe932fad195f7cfd67aae5190fe4b590cbecf",
+      "ba81da40df2037cc66092b9c89c52451e149abaa"
+    ],
+    "refs": [
+      "refs/pull/49/head"
+    ],
+    "test_files": [
+      "layers_checks.rs",
+      "lifecycle_finished.rs"
+    ],
+    "scope": "Do tasks t2, t3, t6, t7 and t8 of the plan, and no other task."
+  },
+  "t2-05-approver-hook": {
+    "slug": "approver-safety",
+    "start": "c5a0787db72eb17ac5c7ff791d64dbd6aa278a32",
+    "mode": "pick",
+    "commits": [
+      "808e8bde9d0590aa18bdcf6f42ff235855986ff8",
+      "f178d23e1eb079e0b6cf83b64fa456de2dafd595",
+      "19cefbf871b8af1ab8acda07817798d9a9d20585"
+    ],
+    "fixes": [
+      "c82523b18f15a41ba9fc3abe5cf20370d375aeb6",
+      "fdf3d7a171ab6aee921b0a6e27f7490f4a0c1ded",
+      "d2688ec4046645f51a6a8114d13bf69643f966ad",
+      "43621419c289d747715e18d2afff05202418fbe4"
+    ],
+    "refs": [
+      "refs/pull/59/head"
+    ],
+    "test_files": [
+      "hook_approvals.rs",
+      "harness.rs"
+    ],
+    "scope": "Do tasks t4, t9 and t10 of the plan, and no other task."
+  }
+}

@@ -1,0 +1,2797 @@
+diff --git a/schema/spec-dna.schema.json b/schema/spec-dna.schema.json
+index c84f06d..bc453ae 100644
+--- a/schema/spec-dna.schema.json
++++ b/schema/spec-dna.schema.json
+@@ -37,7 +37,7 @@
+       "default": "en"
+     },
+     "change": {
+-      "description": "The change process. Without this table the policy is `none`. With `none`, no check of the change process runs (SD905 and SD910 to SD922 are off, and no rule can turn them on).",
++      "description": "The change process. Without this table the policy is `none`. With `none`, no check of the change process runs (SD905 and SD910 to SD925 are off, and no rule can turn them on).",
+       "type": "object",
+       "additionalProperties": false,
+       "required": [
+@@ -45,7 +45,7 @@
+       ],
+       "properties": {
+         "policy": {
+-          "description": "The change classes. With `none`, the codes SD905 and SD910 to SD922 are off and no rule can turn them on.",
++          "description": "The change classes. With `none`, the codes SD905 and SD910 to SD925 are off and no rule can turn them on.",
+           "enum": [
+             "three-class",
+             "two-class",
+@@ -83,6 +83,13 @@
+           "minimum": 0,
+           "default": 8
+         },
++        "max-task-files": {
++          "description": "The most paths that one task of an approved plan lists in its label `Files:` before SD924. An integer from 1 to 20. Default 3.",
++          "type": "integer",
++          "minimum": 1,
++          "maximum": 20,
++          "default": 3
++        },
+         "base": {
+           "description": "The name of a local branch. It is the base of the change checks when `--base` and `refs/remotes/origin/HEAD` give none. Use it in a repository with no remote. The name is not empty. It has no space and no `..`, and none of `~ ^ : ? * [ \\`. It does not start with `-` or `/`, and it does not end with `/` or `.lock`. If the branch does not exist, the base is unknown, and the commands print a note. Without the key, there is no such base.",
+           "type": "string",
+diff --git a/src/change.rs b/src/change.rs
+index e7536c0..96abe41 100644
+--- a/src/change.rs
++++ b/src/change.rs
+@@ -166,18 +166,81 @@ impl Change {
+         self.has_none_item(corpus) && self.files(corpus).is_empty()
+     }
+ 
+-    /// True if the `Files` section has one item only, and the item starts with
+-    /// the word `none`.
++    /// True if the `Files` section states "no files". With list items, it has
++    /// one item only, and the item starts with the word `none` (the rule of
++    /// 0.6.1). With no list item, its first paragraph is the form of D28
++    /// ([`is_none_text`]), such as `None: this change is research.`.
+     fn has_none_item(&self, corpus: &Corpus) -> bool {
+         let Some(a) = &self.plan else {
+             return false;
+         };
+-        let mut items = section_items(&corpus.docs[a.doc as usize], ItemSection::Files);
++        let doc = &corpus.docs[a.doc as usize];
++        let mut items = section_items(doc, ItemSection::Files);
+         match (items.next(), items.next()) {
+             (Some(item), None) => starts_with_none(&item.text),
+-            _ => false,
++            (Some(_), Some(_)) => false,
++            (None, _) => doc
++                .parsed
++                .files_paragraph
++                .as_ref()
++                .is_some_and(|p| is_none_text(&p.text)),
+         }
+     }
++
++    /// True if the `Files` section of the plan has a paragraph and no list
++    /// item, and the paragraph does not state "no files" (design 0.7.0, D28).
++    /// The section then lists no path, and the person must write a list.
++    pub fn files_paragraph_only(&self, corpus: &Corpus) -> bool {
++        let Some(a) = &self.plan else {
++            return false;
++        };
++        let doc = &corpus.docs[a.doc as usize];
++        section_items(doc, ItemSection::Files).next().is_none()
++            && doc
++                .parsed
++                .files_paragraph
++                .as_ref()
++                .is_some_and(|p| !is_none_text(&p.text))
++    }
++}
++
++/// The line that `next`, `status` and the messages of SD913 and SD915 give for
++/// a `Files` section with a paragraph and no list item (design 0.7.0, D28).
++pub const FILES_PARAGRAPH_LINE: &str = "the section `Files` has a paragraph and no list item; write the paths as a list, or write `- none`";
++
++/// True if `text` states "nothing" in the form of D28: its first word is
++/// `none`, in any case, and `:`, `.` or the end of the text follows the word.
++/// The text is a paragraph under `Files`, or the one item of `Interfaces`,
++/// `Concerns` or `Open questions`, without its task box. `None of the old files
++/// stay` is not this form. A list item under `Files` keeps the rule of 0.6.1
++/// (the first word is `none`).
++pub fn is_none_text(text: &str) -> bool {
++    let t = text.trim();
++    let end = t
++        .char_indices()
++        .find(|&(_, c)| !c.is_alphanumeric())
++        .map_or(t.len(), |(i, _)| i);
++    t[..end].eq_ignore_ascii_case("none")
++        && matches!(t[end..].chars().next(), None | Some(':' | '.'))
++}
++
++/// The open concerns of a spec: the items `- [ ]` of its `Concerns` section. A
++/// resolved concern, an item with no task box and the one item that states
++/// "nothing" (`- [ ] None.`) are not open.
++pub fn open_concerns(spec: &Doc) -> Vec<&ListItem> {
++    if states_nothing(spec, ItemSection::Concerns) {
++        return Vec::new();
++    }
++    section_items(spec, ItemSection::Concerns)
++        .filter(|i| i.task == Some(false))
++        .collect()
++}
++
++/// True if a section of a document has one item only, and the item states
++/// "nothing" ([`is_none_text`]). The task box of the item does not matter.
++pub fn states_nothing(doc: &Doc, section: ItemSection) -> bool {
++    let mut items = section_items(doc, section);
++    matches!((items.next(), items.next()), (Some(item), None) if is_none_text(&item.text))
+ }
+ 
+ /// True if the first word of `text` is `none`, in any case. The word ends at
+@@ -206,7 +269,7 @@ fn usable_code(code: &str) -> bool {
+ }
+ 
+ /// The text on one line, with at most 80 characters, for a message.
+-fn shown(text: &str) -> String {
++pub(crate) fn shown(text: &str) -> String {
+     let t = text.split_whitespace().collect::<Vec<_>>().join(" ");
+     if t.chars().count() > 80 {
+         format!("{}...", t.chars().take(77).collect::<String>().trim_end())
+@@ -499,6 +562,10 @@ pub struct PlanTask {
+     /// spans, and the plain paths of the entries that have no code span
+     /// ([`plain_path`]).
+     pub files: Vec<String>,
++    /// The text after the label `Files:`, on one line, with one final `.`
++    /// removed. `None` if the label is absent. A label with no text gives an
++    /// empty string. SD923 reads it (design 0.7.0, D40).
++    pub files_text: Option<String>,
+     /// The text after the label `Verify:`, on one line. One final `.` is
+     /// removed. `None` if the label is absent or has no text.
+     pub verify: Option<String>,
+@@ -544,11 +611,13 @@ pub fn parse_task(item: &ListItem) -> Option<PlanTask> {
+         return None;
+     }
+     let mut files = None;
++    let mut files_text = None;
+     let mut verify = None;
+     for (n, &(_, end, is_files)) in labels.iter().enumerate() {
+         let stop = labels.get(n + 1).map_or(text.len(), |l| l.0);
+         let seg = &text[end..stop];
+         if is_files {
++            files_text.get_or_insert_with(|| one_line(seg));
+             files.get_or_insert_with(|| label_paths(seg));
+         } else if verify.is_none() {
+             let v = one_line(seg);
+@@ -560,6 +629,7 @@ pub fn parse_task(item: &ListItem) -> Option<PlanTask> {
+         done,
+         text: one_line(after),
+         files: files.unwrap_or_default(),
++        files_text,
+         verify: verify.flatten(),
+         line: item.line,
+         range: item.range.clone(),
+@@ -743,13 +813,19 @@ impl Change {
+     }
+ 
+     /// The open questions of the spec: the items `- [ ]` of its `Open
+-    /// questions` section. A resolved question (`- [x]`) and an item with no
+-    /// task box are not open.
++    /// questions` section. A resolved question (`- [x]`), an item with no task
++    /// box and the one item that states "nothing" (`- [ ] None.`) are not
++    /// open.
+     pub fn open_questions<'a>(&self, corpus: &'a Corpus) -> Vec<&'a ListItem> {
+         let Some(a) = &self.spec else {
+             return Vec::new();
+         };
+-        section_items(&corpus.docs[a.doc as usize], ItemSection::OpenQuestions)
++        let doc = &corpus.docs[a.doc as usize];
++        // One item that states "nothing" is no open question (D28).
++        if states_nothing(doc, ItemSection::OpenQuestions) {
++            return Vec::new();
++        }
++        section_items(doc, ItemSection::OpenQuestions)
+             .filter(|i| i.task == Some(false))
+             .collect()
+     }
+@@ -1178,6 +1254,114 @@ mod tests {
+         assert!(!collect(&c)[0].no_files(&c));
+     }
+ 
++    #[test]
++    fn the_none_form_of_d28_needs_a_colon_a_full_stop_or_the_end() {
++        for t in [
++            "none",
++            "None",
++            "NONE.",
++            "none: research only",
++            "None. This change is research.",
++            "  none  ",
++            "none:",
++        ] {
++            assert!(is_none_text(t), "{t}");
++        }
++        for t in [
++            "",
++            "None of the old files stay",
++            "none, research only",
++            "nonexistent",
++            "`none`",
++            "no files",
++            "none-of",
++            "- none",
++            "nonexistent.md",
++            "none/x",
++            "nones.",
++        ] {
++            assert!(!is_none_text(t), "{t}");
++        }
++    }
++
++    #[test]
++    fn a_paragraph_under_files_states_no_files_or_asks_for_a_list() {
++        let plan = |files: &str, order: &str| {
++            format!(
++                "---\nstatus: approved\n---\n# P\n\n## Files\n\n{files}\n\n## Order\n\n{order}\n"
++            )
++        };
++        // (no_files, paragraph only)
++        let check = |files: &str, order: &str| {
++            let c = corpus(&[("docs/intent/x/plan.md", &plan(files, order))]);
++            let ch = &collect(&c)[0];
++            (ch.no_files(&c), ch.files_paragraph_only(&c))
++        };
++        for para in [
++            "None.",
++            "none",
++            "NONE: this change is research.",
++            "None. The change\nedits no file.",
++        ] {
++            assert_eq!(check(para, ""), (true, false), "{para}");
++        }
++        for para in [
++            "None of the old files stay.",
++            "The code of the dose.",
++            "nonexistent.md",
++            "`none`",
++        ] {
++            assert_eq!(check(para, ""), (false, true), "{para}");
++        }
++        // A task that lists a path names a file, so the plan lists files.
++        assert_eq!(
++            check("None.", "- [ ] t1: Edit. Files: `src/a.py`."),
++            (false, false)
++        );
++        // A list item decides: the paragraph is only text.
++        assert_eq!(check("The code.\n\n- `src/a.py`", ""), (false, false));
++        assert_eq!(check("None.\n\n- `src/a.py`", ""), (false, false));
++        assert_eq!(check("None.\n\n- None.", ""), (true, false));
++        // No paragraph and no item: nothing.
++        assert_eq!(check("", ""), (false, false));
++        // A paragraph gives no `files_not_paths` entry.
++        let c = corpus(&[("docs/intent/x/plan.md", &plan("The code.", ""))]);
++        assert!(collect(&c)[0].files_not_paths(&c).is_empty());
++    }
++
++    #[test]
++    fn one_none_item_states_nothing_in_the_sections_of_a_spec() {
++        let spec = |body: &str| {
++            let c = corpus(&[(
++                "docs/intent/x/spec.md",
++                &format!("---\nstatus: approved\n---\n# S\n\n{body}"),
++            )]);
++            let d = &c.docs[0];
++            (
++                states_nothing(d, ItemSection::Concerns),
++                open_concerns(d).len(),
++                collect(&c)[0].open_questions(&c).len(),
++            )
++        };
++        assert_eq!(spec("## Concerns\n\n- [ ] None.\n"), (true, 0, 0));
++        assert_eq!(spec("## Concerns\n\n- none\n"), (true, 0, 0));
++        assert_eq!(spec("## Concerns\n\n- [x] None: no risk.\n"), (true, 0, 0));
++        assert_eq!(
++            spec("## Concerns\n\n- [ ] None of the risks is open.\n"),
++            (false, 1, 0)
++        );
++        assert_eq!(
++            spec("## Concerns\n\n- [ ] None.\n- [ ] A risk.\n"),
++            (false, 2, 0)
++        );
++        assert_eq!(spec("## Open questions\n\n- [ ] None.\n"), (false, 0, 0));
++        assert_eq!(
++            spec("## Open questions\n\n- [ ] None.\n- [ ] Who?\n"),
++            (false, 0, 2)
++        );
++        assert_eq!(spec("## Open questions\n\n- [ ] Who?\n"), (false, 0, 1));
++    }
++
+     #[test]
+     fn scope_matches_globs_and_folders() {
+         let p = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+diff --git a/src/config.rs b/src/config.rs
+index 35feeec..ccd5ff1 100644
+--- a/src/config.rs
++++ b/src/config.rs
+@@ -97,6 +97,10 @@ pub struct Config {
+     /// `[change] max-fanout`: the most requirement documents that one change
+     /// can touch before SD905. The default is `DEFAULT_MAX_FANOUT`.
+     pub max_fanout: u32,
++    /// `[change] max-task-files`: the most paths that one task of an approved
++    /// plan lists before SD924. An integer from 1 to 20. The default is
++    /// `DEFAULT_MAX_TASK_FILES` (design 0.7.0, D40).
++    pub max_task_files: u32,
+     /// `[change] base`: the name of a local branch that is the base of the
+     /// change checks when `--base` and `refs/remotes/origin/HEAD` give none
+     /// (design 0.6.1, D35 and D36). `None`: the key is absent.
+@@ -246,6 +250,9 @@ impl Approval {
+ /// The default of `[change] max-fanout`.
+ pub const DEFAULT_MAX_FANOUT: u32 = 8;
+ 
++/// The default of `[change] max-task-files`.
++pub const DEFAULT_MAX_TASK_FILES: u32 = 3;
++
+ /// The default of `[change] high-risk-layers`. A layer that the graph does
+ /// not have is dropped.
+ pub const DEFAULT_HIGH_RISK_LAYERS: [&str; 2] = ["interfaces", "rules"];
+@@ -257,6 +264,7 @@ struct ChangeTable {
+     high_risk_layers: Vec<String>,
+     high_risk_paths: Vec<String>,
+     max_fanout: u32,
++    max_task_files: u32,
+     base: Option<String>,
+     approval: Approval,
+     approvers: Vec<String>,
+@@ -271,6 +279,7 @@ impl ChangeTable {
+             high_risk_layers: default_high_risk_layers(graph),
+             high_risk_paths: Vec::new(),
+             max_fanout: DEFAULT_MAX_FANOUT,
++            max_task_files: DEFAULT_MAX_TASK_FILES,
+             base: None,
+             approval: Approval::Base,
+             approvers: Vec::new(),
+@@ -327,6 +336,13 @@ impl ChangeTable {
+         };
+         let high_risk_paths = high_risk_paths_value(&f.opt_strs("high-risk-paths")?)?;
+         let max_fanout = f.opt_u32("max-fanout")?.unwrap_or(DEFAULT_MAX_FANOUT);
++        let max_task_files = match f.take("max-task-files") {
++            None => DEFAULT_MAX_TASK_FILES,
++            Some(Value::Integer(n)) if (1..=20).contains(n) => *n as u32,
++            Some(_) => {
++                return Err("`change.max-task-files` must be an integer from 1 to 20".into());
++            }
++        };
+         let base = f.opt_str("base")?;
+         if let Some(b) = &base {
+             branch_name_problem(b).map_or(Ok(()), |why| {
+@@ -372,6 +388,7 @@ impl ChangeTable {
+             high_risk_layers,
+             high_risk_paths,
+             max_fanout,
++            max_task_files,
+             base,
+             approval,
+             approvers,
+@@ -844,7 +861,7 @@ impl Profile {
+             }
+             "SD911" | "SD913" => (None, Some(W), Some(W)),
+             "SD912" => (None, Some(W), Some(E)),
+-            "SD917" | "SD921" => (None, Some(W), Some(E)),
++            "SD917" | "SD921" | "SD923" | "SD924" | "SD925" => (None, Some(W), Some(E)),
+             "SD918" => (None, Some(W), Some(W)),
+             _ => return Some(code.severity()),
+         };
+@@ -873,12 +890,12 @@ pub const GROUPS: [(&str, &[&str]); 8] = [
+         "changes",
+         &[
+             "SD905", "SD910", "SD911", "SD912", "SD913", "SD914", "SD915", "SD916", "SD917",
+-            "SD918", "SD919", "SD920", "SD921", "SD922",
++            "SD918", "SD919", "SD920", "SD921", "SD922", "SD923", "SD924", "SD925",
+         ],
+     ),
+ ];
+ 
+-/// True for a code of the group `changes`: SD905 and SD910 to SD922.
++/// True for a code of the group `changes`: SD905 and SD910 to SD925.
+ fn is_change_code(code: Code) -> bool {
+     GROUPS
+         .iter()
+@@ -1376,6 +1393,7 @@ impl Config {
+             high_risk_layers: change.high_risk_layers,
+             high_risk_paths: change.high_risk_paths,
+             max_fanout: change.max_fanout,
++            max_task_files: change.max_task_files,
+             change_base: change.base,
+             change_approval: change.approval,
+             change_approvers: change.approvers,
+@@ -2980,6 +2998,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
+             // The other keys keep their defaults.
+             assert_eq!(c.change_gate, None);
+             assert_eq!(c.max_fanout, DEFAULT_MAX_FANOUT);
++            assert_eq!(c.max_task_files, 3);
+         }
+         for (tail, want) in [
+             ("[change]\n", "`change.policy` is required"),
+@@ -3050,6 +3069,24 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
+                 "{bad}: {e}"
+             );
+         }
++        // max-task-files
++        for good in [1, 3, 20] {
++            assert_eq!(ok(&format!("max-task-files = {good}")).max_task_files, good);
++        }
++        for bad in [
++            "max-task-files = 0",
++            "max-task-files = 21",
++            "max-task-files = -1",
++            "max-task-files = \"3\"",
++            "max-task-files = 1.5",
++            "max-task-files = true",
++        ] {
++            let e = err(bad);
++            assert!(
++                e.contains("`change.max-task-files` must be an integer from 1 to 20"),
++                "{bad}: {e}"
++            );
++        }
+         // high-risk-paths
+         assert_eq!(
+             ok("high-risk-paths = [\"src/api/**\", \"./db/*.sql\"]").high_risk_paths,
+@@ -3136,12 +3173,15 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
+                 "truth-changed-without-change",
+             ),
+             (Code::QuestionOpen, "question-open"),
++            (Code::TaskIncomplete, "task-incomplete"),
++            (Code::TaskTooLarge, "task-too-large"),
++            (Code::CheckboxMissing, "checkbox-missing"),
+         ] {
+             assert_eq!(code.name(), name);
+             assert_eq!(Code::from_code(code.code()), Some(code));
+         }
+         // The group `layers` holds SD901 to SD904. The group `changes` holds
+-        // SD905 and SD910 to SD922.
++        // SD905 and SD910 to SD925.
+         let c = with(
+             "profile = \"lite\"\n[rules]\nlayers = \"error\"\nchanges = \"warning\"\nSD902 = \"off\"",
+             "[change]\npolicy = \"two-class\"\n",
+@@ -3161,7 +3201,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
+         use Severity::{Error as E, Warning as W};
+         // The design table: code, lite, standard, strict.
+         type Sev = Option<Severity>;
+-        let rows: [(Code, Sev, Sev, Sev); 13] = [
++        let rows: [(Code, Sev, Sev, Sev); 16] = [
+             (Code::FanOut, None, Some(W), Some(W)),
+             (Code::GateApprovalMissing, Some(W), Some(E), Some(E)),
+             (Code::ChangeStale, None, Some(W), Some(W)),
+@@ -3175,6 +3215,9 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
+             (Code::QuestionOpen, Some(W), Some(E), Some(E)),
+             (Code::DecisionNeededUnaccepted, Some(W), Some(E), Some(E)),
+             (Code::IncidentEvalMissing, None, Some(W), Some(W)),
++            (Code::TaskIncomplete, None, Some(W), Some(E)),
++            (Code::TaskTooLarge, None, Some(W), Some(E)),
++            (Code::CheckboxMissing, None, Some(W), Some(E)),
+         ];
+         for (code, lite, standard, strict) in rows {
+             for (profile, want) in [("lite", lite), ("standard", standard), ("strict", strict)] {
+@@ -3300,6 +3343,9 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
+             Code::QuestionOpen,
+             Code::DecisionNeededUnaccepted,
+             Code::TruthChangedWithoutChange,
++            Code::TaskIncomplete,
++            Code::TaskTooLarge,
++            Code::CheckboxMissing,
+         ];
+         for change in [
+             "",
+@@ -3440,6 +3486,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
+                 "high-risk-layers",
+                 "high-risk-paths",
+                 "max-fanout",
++                "max-task-files",
+                 "policy"
+             ]
+         );
+@@ -3451,6 +3498,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
+             ("high-risk-layers", "1"),
+             ("high-risk-paths", "1"),
+             ("max-fanout", "\"x\""),
++            ("max-task-files", "\"x\""),
+         ] {
+             let e = with("", &format!("[change]\npolicy = \"none\"\n{k} = {bad}\n")).unwrap_err();
+             assert!(
+diff --git a/src/diag.rs b/src/diag.rs
+index bc544ec..a184925 100644
+--- a/src/diag.rs
++++ b/src/diag.rs
+@@ -114,6 +114,9 @@ codes! {
+     IncidentEvalMissing = "SD918", "incident-eval-missing", Warning, "Add an eval for the incident to [evals] dir in the same change. Name its file in the `Eval` section of the incident.";
+     TruthChangedWithoutChange = "SD921", "truth-changed-without-change", Warning, "Write the change as an intent folder of the `intent` layer in the same pull request (`spec-dna new intent <slug>`). A move that keeps the text of each requirement gives no SD921.";
+     QuestionOpen = "SD922", "question-open", Warning, "Answer each open question of the spec, or remove it, before the spec is `approved`. Check the box (`- [x]`) and write the answer after the question.";
++    TaskIncomplete = "SD923", "task-incomplete", Warning, "Complete the task of the approved plan. Write `Files:` with each exact path of the task (no glob, no folder), or `Files: none`. Write `Verify:` with a command in a code span, or the check in words.";
++    TaskTooLarge = "SD924", "task-too-large", Warning, "Split the task. Write each part as its own task with at most `[change] max-task-files` paths in `Files:` and one `Verify:`.";
++    CheckboxMissing = "SD925", "checkbox-missing", Warning, "Write the task box at the start of the item: `- [ ]` for an open item, `- [x]` for a resolved item. SD919 and SD922 read the box. To state that the section has no item, write one item that starts with the word `none`, followed by `:`, `.` or the end.";
+ }
+ 
+ #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+diff --git a/src/finish.rs b/src/finish.rs
+index 97d0a4d..cfa2d03 100644
+--- a/src/finish.rs
++++ b/src/finish.rs
+@@ -239,7 +239,15 @@ pub fn plan(cx: &Ctx) -> Result<Plan, Failure> {
+                 None => todo.push(d),
+             }
+         }
+-        lifecycle::interfaces(head, spec, &mut diags);
++        lifecycle::interfaces(cx.config, head, spec, &mut diags);
++        // A new interface needs its document, or a delta line that adds it.
++        let added: HashSet<String> = lines
++            .iter()
++            .filter_map(|l| l.parsed.as_ref().ok())
++            .filter(|d| d.verb == Verb::Add)
++            .map(|d| d.id.clone())
++            .collect();
++        diags.extend(lifecycle::interfaces_absent(head, spec, &added));
+         let diff = cx.diff;
+         let own: HashSet<String> = todo.iter().map(|d| target_path(cx, ch, d)).collect();
+         let changed = |p: &str| diff.is_some_and(|d| d.kind(p).is_some()) || own.contains(p);
+diff --git a/src/index.rs b/src/index.rs
+index be8d25c..cd9a5d0 100644
+--- a/src/index.rs
++++ b/src/index.rs
+@@ -13,7 +13,9 @@ use std::path::{Path, PathBuf};
+ use std::sync::Arc;
+ 
+ const MAGIC: &[u8; 8] = b"SPECDNA\0";
+-const FORMAT: u32 = 1;
++/// The layout of the file. Format 2 adds the first paragraph of `Files`
++/// (design 0.7.0, D28).
++const FORMAT: u32 = 2;
+ 
+ pub struct Index {
+     pub path: PathBuf,
+@@ -248,6 +250,14 @@ fn doc(w: &mut W, d: &ParsedDoc) {
+         w.u32(i.range.start);
+         w.u32(i.range.end);
+     }
++    match &d.files_paragraph {
++        None => w.u8(0),
++        Some(t) => {
++            w.u8(1);
++            w.str(&t.text);
++            w.u32(t.line);
++        }
++    }
+ }
+ 
+ fn read_doc(r: &mut R) -> Option<ParsedDoc> {
+@@ -369,6 +379,13 @@ fn read_doc(r: &mut R) -> Option<ParsedDoc> {
+             range: r.u32()?..r.u32()?,
+         });
+     }
++    d.files_paragraph = match r.u8()? {
++        0 => None,
++        _ => Some(Token {
++            text: r.str()?,
++            line: r.u32()?,
++        }),
++    };
+     Some(d)
+ }
+ 
+@@ -434,4 +451,42 @@ mod tests {
+         assert_eq!(tasks[0].verify.as_deref(), Some("`cargo test`"));
+         assert!(tasks[1].done);
+     }
++
++    #[test]
++    fn round_trip_keeps_the_paragraph_of_files_and_the_hours() {
++        let text = "---\nstatus: draft\n---\n# P\n\n## Files\n\nNone: research.\n\n## Hours\n\n- 1.5: code\n- 2: review\n";
++        let mut m = HashMap::new();
++        m.insert("p".to_string(), Arc::new(crate::parse::parse(text)));
++        m.insert("q".to_string(), Arc::new(crate::parse::parse("# Q\n")));
++        let para = m["p"].files_paragraph.clone().expect("a paragraph");
++        assert_eq!((para.text.as_str(), para.line), ("None: research.", 8));
++        assert!(m["q"].files_paragraph.is_none());
++        let back = decode(&encode(&m)).unwrap();
++        assert_eq!(*back["p"], *m["p"]);
++        assert_eq!(*back["q"], *m["q"]);
++        assert_eq!(back["p"].files_paragraph, Some(para));
++        let hours: Vec<_> = back["p"]
++            .items
++            .iter()
++            .filter(|i| i.section == ItemSection::Hours)
++            .map(|i| i.text.as_str())
++            .collect();
++        assert_eq!(hours, ["1.5: code", "2: review"]);
++    }
++
++    #[test]
++    fn the_header_has_format_2_and_the_parser_version() {
++        let bytes = encode(&HashMap::new());
++        assert_eq!(&bytes[..8], MAGIC);
++        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), 2);
++        assert_eq!(
++            u32::from_le_bytes(bytes[12..16].try_into().unwrap()),
++            PARSER_VERSION
++        );
++        // A cache of the older format is not read.
++        let mut old = bytes.clone();
++        old[8..12].copy_from_slice(&1u32.to_le_bytes());
++        assert!(decode(&old).is_none());
++        assert!(decode(&bytes).is_some());
++    }
+ }
+diff --git a/src/init.rs b/src/init.rs
+index 07b2812..b933445 100644
+--- a/src/init.rs
++++ b/src/init.rs
+@@ -255,6 +255,9 @@ pub struct Plan {
+     pub high_risk_paths: Vec<String>,
+     /// `[change] max-fanout`.
+     pub max_fanout: u32,
++    /// `[change] max-task-files`. No question asks for it. `--reconfigure`
++    /// keeps the value if the current file sets the key. `None`: no key.
++    pub max_task_files: Option<u32>,
+     /// `[change] base`. No question asks for it. `--reconfigure` keeps the
+     /// value that the file sets. The config loader has checked the name.
+     pub change_base: Option<String>,
+@@ -384,6 +387,11 @@ impl Plan {
+                 toml_list(&self.approvers)
+             ));
+         }
++        if let Some(n) = self.max_task_files {
++            out.push_str(&format!(
++                "max-task-files = {n}  # tasks of an approved plan: paths in `Files:` before SD924\n"
++            ));
++        }
+         if let Some(b) = &self.change_base {
+             out.push_str(&format!(
+                 "base = {}  # the local branch that the change checks use as the base\n",
+@@ -606,6 +614,7 @@ fn defaults(facts: &Facts, root: Option<&str>) -> Plan {
+         high_risk_layers: None,
+         high_risk_paths: Vec::new(),
+         max_fanout: config::DEFAULT_MAX_FANOUT,
++        max_task_files: None,
+         change_base: None,
+         approval: Approval::Base,
+         approvers: Vec::new(),
+@@ -702,6 +711,16 @@ fn current(cfg: &Config, text: &str, facts: &Facts) -> Plan {
+     .then(|| cfg.high_risk_layers.clone());
+     p.high_risk_paths = cfg.high_risk_paths.clone();
+     p.max_fanout = cfg.max_fanout;
++    p.max_task_files = text
++        .parse::<toml::Table>()
++        .ok()
++        .and_then(|t| {
++            t.get("change")
++                .and_then(toml::Value::as_table)
++                .map(|c| c.contains_key("max-task-files"))
++        })
++        .unwrap_or(false)
++        .then_some(cfg.max_task_files);
+     p.change_base = cfg.change_base.clone();
+     p.approval = cfg.change_approval;
+     p.approvers = cfg.change_approvers.clone();
+diff --git a/src/lifecycle.rs b/src/lifecycle.rs
+index fd54059..0ed3abe 100644
+--- a/src/lifecycle.rs
++++ b/src/lifecycle.rs
+@@ -340,6 +340,9 @@ pub fn tree_checks(
+             Code::ConcernOpen,
+             Code::QuestionOpen,
+             Code::DecisionNeededUnaccepted,
++            Code::TaskIncomplete,
++            Code::TaskTooLarge,
++            Code::CheckboxMissing,
+         ]
+         .iter()
+         .all(|&k| config.is_off(k))
+@@ -355,9 +358,11 @@ pub fn tree_checks(
+         if ch.intent_status() == "closed" {
+             continue;
+         }
++        task_diags(config, c, ch, &mut out);
+         let Some(spec) = &ch.spec else { continue };
+         let d = &c.docs[spec.doc as usize];
+         out.extend(question_diags(c, ch));
++        boxes_missing(d, &mut out);
+         if spec.status == "approved" {
+             concerns(d, &mut out);
+             decisions(c, d, &mut out);
+@@ -395,7 +400,7 @@ pub fn tree_checks(
+                 ));
+             }
+         }
+-        interfaces(c, d, &mut out);
++        interfaces(config, c, d, &mut out);
+         let limit = config.max_fanout as usize;
+         if targets.len() > limit {
+             out.push(crate::check::diag(
+@@ -547,10 +552,16 @@ pub(crate) fn delta_problem(
+     }
+ }
+ 
+-/// SD914 for the items of `Interfaces`: `CHANGE <interface id>: <text>`. An
+-/// item with another form, an absent document and a document that is not an
+-/// interface give SD914.
+-pub(crate) fn interfaces(c: &Corpus, spec: &Doc, out: &mut Vec<Diag>) {
++/// SD914 for the items of `Interfaces`: `CHANGE <interface id>: <text>` for an
++/// interface that exists, `ADD <interface id>: <text>` for a new interface, or
++/// one item `none` (design 0.7.0, section 15). An item with another form, an
++/// absent document of a `CHANGE` item, a document that is not an interface and
++/// a place of an `ADD` item that gives another type give SD914. A section that
++/// states "nothing" gives none.
++pub(crate) fn interfaces(config: &Config, c: &Corpus, spec: &Doc, out: &mut Vec<Diag>) {
++    if change::states_nothing(spec, ItemSection::Interfaces) {
++        return;
++    }
+     for item in change::section_items(spec, ItemSection::Interfaces) {
+         let mut push = |target: String, message: String| {
+             out.push(crate::check::diag(
+@@ -561,13 +572,22 @@ pub(crate) fn interfaces(c: &Corpus, spec: &Doc, out: &mut Vec<Diag>) {
+                 message,
+             ))
+         };
+-        let Some(id) = interface_id(item) else {
++        let Some((verb, id)) = interface_item(item) else {
+             push(
+                 short(&item.text),
+-                "an item of `Interfaces` is `CHANGE <interface id>: <text>`".to_string(),
++                "an item of `Interfaces` is `CHANGE <interface id>: <text>`, `ADD <interface id>: <text>` or `none`".to_string(),
+             );
+             continue;
+         };
++        if bad_interface_id(id) {
++            push(
++                id.to_string(),
++                format!(
++                    "`{id}` is not a document id (no `*`, `?` or `[`, no `..` and no leading `/`)"
++                ),
++            );
++            continue;
++        }
+         match c.resolve(id) {
+             Res::Found(i, None, _) if c.docs[i as usize].ty == DocType::Interface => {}
+             Res::Found(i, None, _) => push(
+@@ -581,6 +601,32 @@ pub(crate) fn interfaces(c: &Corpus, spec: &Doc, out: &mut Vec<Diag>) {
+                 id.to_string(),
+                 format!("`{id}` names {} documents", v.len()),
+             ),
++            Res::Missing if verb == Verb::Add => {
++                if id.ends_with(".md") {
++                    push(
++                        id.to_string(),
++                        format!(
++                            "`{id}` ends in `.md`, and `finish` adds `.md` to the id of a new document; write the id without `.md`"
++                        ),
++                    );
++                    continue;
++                }
++                // A new document: it is at the place of its id.
++                match config.layers.place_type(&format!("{id}.md")) {
++                    Some(DocType::Interface) => {}
++                    Some(ty) => push(
++                        id.to_string(),
++                        format!(
++                            "the place of `{id}` gives the type `{}`, not `interface`",
++                            ty.name()
++                        ),
++                    ),
++                    None => push(
++                        id.to_string(),
++                        format!("the place of `{id}` gives no type, not `interface`"),
++                    ),
++                }
++            }
+             _ => push(
+                 id.to_string(),
+                 format!("`{id}` names no interface document"),
+@@ -589,6 +635,62 @@ pub(crate) fn interfaces(c: &Corpus, spec: &Doc, out: &mut Vec<Diag>) {
+     }
+ }
+ 
++/// SD914 for an `ADD` item of `Interfaces` whose document the tree does not
++/// have. `finish` and a pull request that deletes the folder of the change need
++/// the document: it exists, or a delta line `ADD <id>#<key>` adds it. `head` is
++/// the tree that must have the document, and `added` the ids of the valid `ADD`
++/// lines of the delta.
++pub fn interfaces_absent(head: &Corpus, spec: &Doc, added: &HashSet<String>) -> Vec<Diag> {
++    let mut out = Vec::new();
++    for item in change::section_items(spec, ItemSection::Interfaces) {
++        let Some((Verb::Add, id)) = interface_item(item) else {
++            continue;
++        };
++        if bad_interface_id(id) {
++            continue;
++        }
++        match head.resolve(id) {
++            // A document of another type is no interface: it is absent.
++            Res::Found(i, None, _) if head.docs[i as usize].ty != DocType::Interface => {
++                out.push(crate::check::diag(
++                    spec,
++                    item.line,
++                    Code::DeltaInvalid,
++                    id,
++                    format!(
++                        "the spec adds the interface `{id}`, and `{id}` is a `{}` document, not an interface",
++                        head.docs[i as usize].ty.name()
++                    ),
++                ));
++                continue;
++            }
++            Res::Missing if !added.contains(id) => {}
++            _ => continue,
++        }
++        out.push(crate::check::diag(
++            spec,
++            item.line,
++            Code::DeltaInvalid,
++            id,
++            format!(
++                "the spec adds the interface `{id}`, and the tree has no such document; write it in this pull request, or add its requirements with `ADD {id}#<key>` lines"
++            ),
++        ));
++    }
++    out
++}
++
++/// The ids of the valid `ADD` lines of the delta of a change, as the lines
++/// write them.
++pub fn added_ids(ch: &Change, corpus: &Corpus) -> HashSet<String> {
++    ch.delta(corpus)
++        .into_iter()
++        .filter_map(|l| l.parsed.ok())
++        .filter(|d| d.verb == Verb::Add)
++        .map(|d| d.id)
++        .collect()
++}
++
+ /// SD914 for an interface of `Interfaces` that the diff does not change: the
+ /// pull request must change the interface document, or one file that it cites.
+ /// `changed` tells if a path (from the repository root) is in the diff. An item
+@@ -633,37 +735,165 @@ pub fn interfaces_unchanged(c: &Corpus, spec: &Doc, changed: &dyn Fn(&str) -> bo
+     out
+ }
+ 
+-/// The id of an item of `Interfaces`, or `None` if the item is not in the form
+-/// `CHANGE <interface id>: <text>`. The id can be in `[[ ]]` or in a code span.
+-fn interface_id(item: &ListItem) -> Option<&str> {
+-    let rest = item.text.strip_prefix("CHANGE")?;
++/// The verb and the id of an item of `Interfaces`, or `None` if the item is not
++/// in the form `CHANGE <interface id>: <text>` or `ADD <interface id>: <text>`.
++/// The id can be in `[[ ]]` or in a code span.
++fn interface_item(item: &ListItem) -> Option<(Verb, &str)> {
++    let (verb, rest) = match item.text.strip_prefix("CHANGE") {
++        Some(rest) => (Verb::Change, rest),
++        None => (Verb::Add, item.text.strip_prefix("ADD")?),
++    };
+     if !rest.starts_with(char::is_whitespace) {
+         return None;
+     }
+     let (id, text) = rest.split_once(':')?;
+-    let id = id.trim().trim_matches(['[', ']', '`']);
+-    (!id.is_empty() && !id.contains(char::is_whitespace) && !text.trim().is_empty()).then_some(id)
++    // Strip a pair of backticks, then a pair of `[[ ]]`. A single `[` stays in
++    // the id, so a glob `[ab]` is not cut.
++    let id = id.trim();
++    let id = id
++        .strip_prefix('`')
++        .and_then(|r| r.strip_suffix('`'))
++        .unwrap_or(id);
++    let id = id
++        .strip_prefix("[[")
++        .and_then(|r| r.strip_suffix("]]"))
++        .unwrap_or(id);
++    (!id.is_empty() && !id.contains(char::is_whitespace) && !text.trim().is_empty())
++        .then_some((verb, id))
++}
++
++/// True if `id` cannot be a document id: it has a glob character (`*`, `?`,
++/// `[`), a `..` segment, or a leading `/`. Such an id would match more than one
++/// path, so it never gets into the scope of SD913.
++fn bad_interface_id(id: &str) -> bool {
++    id.contains(['*', '?', '[']) || id.starts_with('/') || id.split('/').any(|s| s == "..")
++}
++
++/// The id of an item of `Interfaces` in the form of [`interface_item`], if the
++/// id can be a document id. A bad id is `None`, and `interfaces` reports it.
++pub(crate) fn interface_id(item: &ListItem) -> Option<&str> {
++    interface_item(item)
++        .map(|(_, id)| id)
++        .filter(|id| !bad_interface_id(id))
++}
++
++/// SD923 and SD924: the tasks of an `approved` plan. A task needs the label
++/// `Files:` with exact paths (`none` is a value), and the label `Verify:`
++/// (SD923). It lists at most `max-task-files` paths (SD924). A draft plan is
++/// not checked. A task whose id an earlier task has is not checked: the first
++/// task with an id counts. One diagnostic of SD923 names every problem of the
++/// task. The target of both codes is the id of the task.
++fn task_diags(config: &Config, c: &Corpus, ch: &Change, out: &mut Vec<Diag>) {
++    let Some(plan) = &ch.plan else { return };
++    if plan.status != "approved" {
++        return;
++    }
++    let doc = &c.docs[plan.doc as usize];
++    let limit = config.max_task_files as usize;
++    for t in ch.tasks(c).iter().filter(|t| !t.duplicate) {
++        let mut problems: Vec<String> = Vec::new();
++        match &t.files_text {
++            None => problems.push("it has no `Files:`".to_string()),
++            Some(text) => {
++                if t.files.is_empty() && !change::is_none_text(text) {
++                    problems.push(
++                        "its `Files:` lists no path; write each exact path, or `none`".to_string(),
++                    );
++                }
++                for p in &t.files {
++                    let dir = p.trim_start_matches("./").trim_end_matches('/');
++                    if p.contains(['*', '?', '[']) {
++                        problems.push(format!("its `Files:` has the glob `{p}`"));
++                    } else if p.ends_with('/') || c.dirs.contains(dir) {
++                        problems.push(format!("its `Files:` has the folder `{p}`"));
++                    }
++                }
++            }
++        }
++        if t.verify.is_none() {
++            problems.push("it has no `Verify:`".to_string());
++        }
++        if !problems.is_empty() {
++            out.push(crate::check::diag(
++                doc,
++                t.line,
++                Code::TaskIncomplete,
++                &t.id,
++                format!(
++                    "the plan is `approved`, and the task `{}` is incomplete: {}; write the exact paths in `Files:` and the check in `Verify:`",
++                    t.id,
++                    problems.join("; ")
++                ),
++            ));
++        }
++        let mut paths: Vec<&String> = t.files.iter().collect();
++        paths.sort();
++        paths.dedup();
++        if paths.len() > limit {
++            out.push(crate::check::diag(
++                doc,
++                t.line,
++                Code::TaskTooLarge,
++                &t.id,
++                format!(
++                    "the plan is `approved`, and the task `{}` lists {} paths, more than `max-task-files = {limit}`; split the task",
++                    t.id,
++                    paths.len()
++                ),
++            ));
++        }
++    }
+ }
+ 
+-/// SD919: each open concern (`- [ ]`) of a spec that is `approved`. The
+-/// function does not read the status: the caller does.
+-pub(crate) fn concerns(spec: &Doc, out: &mut Vec<Diag>) {
+-    for item in change::section_items(spec, ItemSection::Concerns) {
+-        if item.task == Some(false) {
++/// SD925: each item of `Concerns` and `Open questions` of a spec that has no
++/// task box. SD919 and SD922 read the box, so they cannot see such an item. A
++/// section that states "nothing" (`- none`) gives none. The check reads a spec
++/// of each status. The caller skips the spec of a `closed` change.
++fn boxes_missing(spec: &Doc, out: &mut Vec<Diag>) {
++    for (section, name, code, what) in [
++        (ItemSection::Concerns, "Concerns", "SD919", "concern"),
++        (
++            ItemSection::OpenQuestions,
++            "Open questions",
++            "SD922",
++            "question",
++        ),
++    ] {
++        if change::states_nothing(spec, section) {
++            continue;
++        }
++        for item in change::section_items(spec, section).filter(|i| i.task.is_none()) {
++            let text = change::shown(&item.text);
+             out.push(crate::check::diag(
+                 spec,
+                 item.line,
+-                Code::ConcernOpen,
+-                short(&item.text),
++                Code::CheckboxMissing,
++                &text,
+                 format!(
+-                    "the spec is `approved`, and the concern `{}` is open",
+-                    short(&item.text)
++                    "an item of `{name}` has no task box, so {code} cannot see if it is open; write `- [ ]` for an open {what} or `- [x]` for a resolved one"
+                 ),
+             ));
+         }
+     }
+ }
+ 
++/// SD919: each open concern (`- [ ]`) of a spec that is `approved`. The
++/// function does not read the status: the caller does.
++pub(crate) fn concerns(spec: &Doc, out: &mut Vec<Diag>) {
++    for item in change::open_concerns(spec) {
++        out.push(crate::check::diag(
++            spec,
++            item.line,
++            Code::ConcernOpen,
++            short(&item.text),
++            format!(
++                "the spec is `approved`, and the concern `{}` is open",
++                short(&item.text)
++            ),
++        ));
++    }
++}
++
+ /// SD922: each open question (`- [ ]` of `Open questions`) of a spec that is
+ /// `approved`. `check` and `finish` use this function. It returns nothing for a
+ /// change with no spec, for a spec with another status, and for an item with
+@@ -852,6 +1082,9 @@ struct DiffChange {
+     files: Vec<String>,
+     /// The items of `Files` that are not paths, as the plan has them.
+     not_paths: Vec<String>,
++    /// True if `Files` has a paragraph and no list item, and the paragraph
++    /// does not state "no files" (D28).
++    paragraph: bool,
+     /// The scope of SD913 from the tree of `side`: the folder, the patterns of
+     /// the plan, and the documents that the delta and `Interfaces` name.
+     scope: Vec<String>,
+@@ -1196,6 +1429,9 @@ struct BranchScope {
+     files: Vec<String>,
+     /// The items of `Files` of the plan of the branch that are not paths.
+     not_paths: Vec<String>,
++    /// True if `Files` of the plan of the branch has a paragraph and no list
++    /// item (D28).
++    paragraph: bool,
+     /// The documents that its delta and `Interfaces` name.
+     scope: Vec<String>,
+ }
+@@ -1216,6 +1452,7 @@ impl DiffChange {
+                 Some(BranchScope {
+                     files: newest.files(&corpus),
+                     not_paths: newest.files_not_paths(&corpus),
++                    paragraph: newest.files_paragraph_only(&corpus),
+                     scope,
+                 })
+             })
+@@ -1243,6 +1480,7 @@ fn make(ctx: &Ctx, change: Change, origin: Origin, side: Side) -> DiffChange {
+     let mut scope = vec![format!("{}/", change.dir)];
+     let mut targets = Vec::new();
+     let not_paths = change.files_not_paths(corpus);
++    let paragraph = change.files_paragraph_only(corpus);
+     scope_paths(ctx, &change, corpus, &mut scope, Some(&mut targets));
+     scope.extend(files.iter().cloned());
+     DiffChange {
+@@ -1252,6 +1490,7 @@ fn make(ctx: &Ctx, change: Change, origin: Origin, side: Side) -> DiffChange {
+         side,
+         files,
+         not_paths,
++        paragraph,
+         scope,
+         branch: OnceCell::new(),
+         targets,
+@@ -1669,9 +1908,9 @@ fn outside_plan(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
+ }
+ 
+ /// The note of a message when the plan of a change has no path at all, and an
+-/// item of `Files` that is not a path. A plan that has a path gives no note: the
+-/// path that the message is about is not in it for another reason, and an
+-/// unrelated item would mislead.
++/// item of `Files` that is not a path, or a paragraph and no list item (D28). A
++/// plan that has a path gives no note: the path that the message is about is
++/// not in it for another reason, and an unrelated item would mislead.
+ fn not_paths_cause(ch: &DiffChange, branch: Option<&BranchScope>) -> Option<String> {
+     if !ch.files.is_empty() || branch.is_some_and(|b| !b.files.is_empty()) {
+         return None;
+@@ -1679,8 +1918,16 @@ fn not_paths_cause(ch: &DiffChange, branch: Option<&BranchScope>) -> Option<Stri
+     let first = ch
+         .not_paths
+         .first()
+-        .or_else(|| branch.and_then(|b| b.not_paths.first()))?;
+-    Some(not_paths_note(&ch.change.slug, first))
++        .or_else(|| branch.and_then(|b| b.not_paths.first()));
++    match first {
++        Some(first) => Some(not_paths_note(&ch.change.slug, first)),
++        None if ch.paragraph || branch.is_some_and(|b| b.paragraph) => Some(format!(
++            "; the plan of the change `{}`: {}",
++            ch.change.slug,
++            change::FILES_PARAGRAPH_LINE
++        )),
++        None => None,
++    }
+ }
+ 
+ /// The note for the first item of `Files` that is not a path.
+@@ -1904,6 +2151,9 @@ fn finished_checks(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
+             let spec = &ctx.base.docs[a.doc as usize];
+             let changed = |p: &str| ctx.diff.kind(p).is_some();
+             out.extend(interfaces_unchanged(ctx.base, spec, &changed));
++            // A new interface needs its document in the head tree.
++            let added = added_ids(&ch.change, ctx.base);
++            out.extend(interfaces_absent(ctx.head, spec, &added));
+         }
+     }
+     out
+diff --git a/src/main.rs b/src/main.rs
+index 091960c..1ef6727 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -1958,7 +1958,7 @@ fn new_doc(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
+                 }
+                 (
+                     format!("{dir}/{slug}/{}.md", ty.name()),
+-                    templates::title_of(slug),
++                    templates::CHANGE_TITLE.to_string(),
+                 )
+             }
+             Some(dir) => {
+diff --git a/src/parse.rs b/src/parse.rs
+index e15443e..678deba 100644
+--- a/src/parse.rs
++++ b/src/parse.rs
+@@ -10,7 +10,7 @@ use std::ops::Range;
+ 
+ /// Increase this number when the parsed data changes, so that the index
+ /// removes old entries.
+-pub const PARSER_VERSION: u32 = 13;
++pub const PARSER_VERSION: u32 = 14;
+ 
+ pub const FLAG_REQUIREMENT: u8 = 1;
+ pub const FLAG_BCP14: u8 = 2;
+@@ -47,11 +47,15 @@ pub struct ParsedDoc {
+     /// Only a `terms` document uses them (SD904).
+     pub terms: Vec<TermRow>,
+     /// The top-level list items of the sections that carry a change (`Delta`,
+-    /// `Interfaces`, `Decisions`, `Concerns`, `Files`, `Follow-ups`, `Order`
+-    /// and `Open questions`), in the order of the file. The parser stores
+-    /// them for every document. Only the documents of a change and an
++    /// `Interfaces`, `Decisions`, `Concerns`, `Files`, `Follow-ups`, `Order`,
++    /// `Open questions` and `Hours`), in the order of the file. The parser
++    /// stores them for every document. Only the documents of a change and an
+     /// incident use them.
+     pub items: Vec<ListItem>,
++    /// The first paragraph of the section `Files` that is not in a list: its
++    /// text as it is in the source, on one line, and the line of its start
++    /// (design 0.7.0, D28). The model reads it for a plan.
++    pub files_paragraph: Option<Token>,
+ }
+ 
+ /// The sections whose list items the parser keeps. The heading text must be
+@@ -66,10 +70,11 @@ pub enum ItemSection {
+     FollowUps = 5,
+     Order = 6,
+     OpenQuestions = 7,
++    Hours = 8,
+ }
+ 
+ impl ItemSection {
+-    pub const ALL: [ItemSection; 8] = [
++    pub const ALL: [ItemSection; 9] = [
+         ItemSection::Delta,
+         ItemSection::Interfaces,
+         ItemSection::Decisions,
+@@ -78,6 +83,7 @@ impl ItemSection {
+         ItemSection::FollowUps,
+         ItemSection::Order,
+         ItemSection::OpenQuestions,
++        ItemSection::Hours,
+     ];
+ 
+     pub fn heading(self) -> &'static str {
+@@ -90,6 +96,7 @@ impl ItemSection {
+             ItemSection::FollowUps => "Follow-ups",
+             ItemSection::Order => "Order",
+             ItemSection::OpenQuestions => "Open questions",
++            ItemSection::Hours => "Hours",
+         }
+     }
+ 
+@@ -517,6 +524,7 @@ pub fn parse(text: &str) -> ParsedDoc {
+ 
+     doc.body_chars = (body.chars().count() - code_chars) as u32;
+     doc.items.sort_by_key(|i| i.range.start);
++    doc.files_paragraph = scan.files_paragraph.take();
+     doc
+ }
+ 
+@@ -530,6 +538,12 @@ struct ItemScan {
+     section: Option<ItemSection>,
+     /// The list items that are open now, outer first.
+     open: Vec<OpenItem>,
++    /// The depth of the block quotes that are open now.
++    quotes: u32,
++    /// The start of the paragraph of `Files` that the parser reads now.
++    paragraph: Option<usize>,
++    /// The first paragraph of the section `Files` outside a list.
++    files_paragraph: Option<Token>,
+ }
+ 
+ struct OpenItem {
+@@ -562,6 +576,29 @@ impl ItemScan {
+                     h.push_str(t);
+                 }
+             }
++            Event::Start(Tag::BlockQuote(_)) => self.quotes += 1,
++            Event::End(TagEnd::BlockQuote(_)) => self.quotes = self.quotes.saturating_sub(1),
++            Event::Start(Tag::Paragraph) => {
++                if self.section == Some(ItemSection::Files)
++                    && self.open.is_empty()
++                    && self.quotes == 0
++                    && self.files_paragraph.is_none()
++                {
++                    self.paragraph = Some(range.start);
++                }
++            }
++            Event::End(TagEnd::Paragraph) => {
++                if let Some(start) = self.paragraph.take() {
++                    let text = body[start..range.end]
++                        .split_whitespace()
++                        .collect::<Vec<_>>()
++                        .join(" ");
++                    self.files_paragraph = Some(Token {
++                        text,
++                        line: lines.line(body_start + start),
++                    });
++                }
++            }
+             Event::Start(Tag::Item) => {
+                 let top = self.open.is_empty();
+                 self.open.push(OpenItem {
+@@ -1592,4 +1629,68 @@ mod tests {
+             "Text."
+         );
+     }
++
++    fn paragraph(src: &str) -> Option<(String, u32)> {
++        parse(src).files_paragraph.map(|t| (t.text, t.line))
++    }
++
++    #[test]
++    fn the_first_paragraph_of_files_is_kept_on_one_line_with_its_line() {
++        assert_eq!(
++            paragraph("# P\n\n## Files\n\nNone.\n"),
++            Some(("None.".to_string(), 5))
++        );
++        // Lines join with one space. The text is as it is in the source.
++        assert_eq!(
++            paragraph("# P\n\n## files\n\nThe `dose` code,\n   and the test.\n\nMore.\n"),
++            Some(("The `dose` code, and the test.".to_string(), 5))
++        );
++        // The text is in the file with its front matter.
++        assert_eq!(
++            paragraph("---\nstatus: draft\n---\n# P\n\n## Files\n\nnone\n"),
++            Some(("none".to_string(), 8))
++        );
++        // A list item is no paragraph, also a loose item. A paragraph after
++        // the list is the first paragraph that is not in a list.
++        assert_eq!(paragraph("## Files\n\n- `a`\n\n  more\n"), None);
++        assert_eq!(paragraph("## Files\n\n1. `a`\n- `b`\n"), None);
++        assert_eq!(
++            paragraph("## Files\n\n- `a`\n\nAfter the list.\n"),
++            Some(("After the list.".to_string(), 5))
++        );
++        // A block quote, another section, a table and a section with no
++        // paragraph give none.
++        assert_eq!(paragraph("## Files\n\n> Note.\n"), None);
++        assert_eq!(paragraph("## Risks\n\nText.\n\n## Files\n"), None);
++        assert_eq!(paragraph("## Order\n\nText.\n"), None);
++        assert_eq!(paragraph("## Files\n\n| a |\n| - |\n| b |\n"), None);
++        assert_eq!(paragraph("Text.\n\n## Files and paths\n\nText.\n"), None);
++        // Only the first paragraph, and the first section.
++        assert_eq!(
++            paragraph("## Files\n\nOne.\n\nTwo.\n\n## Files\n\nThree.\n"),
++            Some(("One.".to_string(), 3))
++        );
++    }
++
++    #[test]
++    fn items_under_hours_are_kept() {
++        let d =
++            parse("# P\n\n## Hours\n\n- 1.5: t1 code\n- 2: review\n- [ ] 0.5\n\n## Other\n\n- x\n");
++        let got: Vec<_> = d
++            .items
++            .iter()
++            .map(|i| (i.section, i.task, i.text.as_str(), i.line))
++            .collect();
++        assert_eq!(
++            got,
++            [
++                (ItemSection::Hours, None, "1.5: t1 code", 5),
++                (ItemSection::Hours, None, "2: review", 6),
++                (ItemSection::Hours, Some(false), "0.5", 7),
++            ]
++        );
++        assert_eq!(ItemSection::from_heading("hours"), Some(ItemSection::Hours));
++        assert_eq!(ItemSection::ALL.len(), 9);
++        assert_eq!(PARSER_VERSION, 14);
++    }
+ }
+diff --git a/src/sdlc.rs b/src/sdlc.rs
+index ab1f552..b8d63de 100644
+--- a/src/sdlc.rs
++++ b/src/sdlc.rs
+@@ -24,7 +24,7 @@ use crate::git::{ArtifactTouch, DeletedIntent, Git, PathChange};
+ use crate::json::{self, Obj};
+ use crate::lifecycle;
+ use crate::model::{Class, Corpus, DocType};
+-use crate::parse::{ItemSection, ListItem, parse};
++use crate::parse::{ItemSection, parse};
+ use crate::registry;
+ use crate::repo::{self, Fatal, Repo, Snapshot};
+ use std::collections::{BTreeMap, HashMap, HashSet};
+@@ -182,7 +182,7 @@ fn facts(cfg: &Config, folder: &str, tree: &Tree) -> Facts {
+     if let Some(a) = &ch.spec {
+         let doc = &corpus.docs[a.doc as usize];
+         for item in change::section_items(doc, ItemSection::Interfaces) {
+-            if let Some(id) = interface_id(item) {
++            if let Some(id) = crate::lifecycle::interface_id(item) {
+                 out.named.extend(named_paths(cfg, id));
+             }
+         }
+@@ -193,19 +193,6 @@ fn facts(cfg: &Config, folder: &str, tree: &Tree) -> Facts {
+     out
+ }
+ 
+-/// The id of an item of `Interfaces`: `CHANGE <interface id>: <text>`. The id
+-/// can be in `[[ ]]` or in a code span. This is a copy of `interface_id` in
+-/// `lifecycle.rs`, which is private there. Keep the two the same.
+-fn interface_id(item: &ListItem) -> Option<&str> {
+-    let rest = item.text.strip_prefix("CHANGE")?;
+-    if !rest.starts_with(char::is_whitespace) {
+-        return None;
+-    }
+-    let (id, text) = rest.split_once(':')?;
+-    let id = id.trim().trim_matches(['[', ']', '`']);
+-    (!id.is_empty() && !id.contains(char::is_whitespace) && !text.trim().is_empty()).then_some(id)
+-}
+-
+ /// The date of a time in seconds, as `YYYY-MM-DD` in UTC.
+ fn utc_date(secs: i64) -> String {
+     // "civil_from_days" (Howard Hinnant).
+diff --git a/src/stage.rs b/src/stage.rs
+index ad8a950..68fc5e3 100644
+--- a/src/stage.rs
++++ b/src/stage.rs
+@@ -341,9 +341,7 @@ impl<'a> Ctx<'a> {
+             return Vec::new();
+         };
+         let dir = &ch.dir;
+-        let concerns = change::section_items(&head.docs[a.doc as usize], ItemSection::Concerns)
+-            .filter(|i| i.task == Some(false))
+-            .count();
++        let concerns = change::open_concerns(&head.docs[a.doc as usize]).len();
+         let questions = ch.open_questions(head).len();
+         let mut out = Vec::new();
+         if concerns > 0 {
+@@ -527,6 +525,15 @@ impl<'a> Ctx<'a> {
+                     items.push(item(true, Step::Execute, NO_FILES_LINE));
+                 }
+             }
++            // A paragraph under `Files` lists no path. A draft plan gets the
++            // line first, so that the approval stays the last line.
++            if !approved && ch.files_paragraph_only(head) && ch.files(head).is_empty() {
++                items.push(item(
++                    false,
++                    Step::WritePlan,
++                    crate::change::FILES_PARAGRAPH_LINE,
++                ));
++            }
+             // The tasks of the plan, also if the plan is a draft.
+             let t = tasks(ch, head);
+             if t.total > 0 {
+@@ -553,7 +560,9 @@ impl<'a> Ctx<'a> {
+                 items.push(item(
+                     false,
+                     Step::Execute,
+-                    if files.is_empty() {
++                    if files.is_empty() && ch.files_paragraph_only(head) {
++                        crate::change::FILES_PARAGRAPH_LINE.to_string()
++                    } else if files.is_empty() {
+                         match ch.files_not_paths(head).first() {
+                             Some(item) => format!(
+                                 "the items of `Files` in {dir}/plan.md are not paths, so it lists no path (the first is \"{item}\"); write each path or glob in a code span, as `src/valve.py`"
+diff --git a/src/templates.rs b/src/templates.rs
+index 886eb53..c749f4a 100644
+--- a/src/templates.rs
++++ b/src/templates.rs
+@@ -234,7 +234,7 @@ Chosen option: {{option}}, because {{reason}}.
+ 
+ ## Concerns
+ 
+-- {{An open concern.}}
++- [ ] {{An open concern.}}
+ 
+ ## Open questions
+ 
+@@ -508,6 +508,11 @@ pub fn instantiate(text: &str, ty: DocType, title: &str, with_type: bool) -> Str
+     out
+ }
+ 
++/// The H1 of a new `intent.md`, `spec.md` or `plan.md`. A slug is a short
++/// folder name, and no rule makes a title from it, so the author writes the
++/// title. SD306 reports the placeholder until then (design 0.7.0, section 15).
++pub const CHANGE_TITLE: &str = "{{The title of the change.}}";
++
+ /// Makes a title from the last segment of an id: `cache-policy` gives
+ /// "Cache policy".
+ pub fn title_of(id: &str) -> String {
+diff --git a/tests/change_model.rs b/tests/change_model.rs
+index fb6240b..1670094 100644
+--- a/tests/change_model.rs
++++ b/tests/change_model.rs
+@@ -53,7 +53,9 @@ fn new_intent_writes_class_routine_for_each_of_the_3_templates() {
+         assert_eq!(code, 0, "{args:?}: {out}{err}");
+         let text = r.read("docs/intent/drip/intent.md");
+         assert!(
+-            text.starts_with("---\nstatus: draft\nclass: routine\n---\n# Drip\n"),
++            text.starts_with(
++                "---\nstatus: draft\nclass: routine\n---\n# {{The title of the change.}}\n"
++            ),
+             "{args:?}: {text}"
+         );
+         // The new document has no problem with its front matter.
+@@ -99,14 +101,13 @@ fn a_project_template_of_an_intent_keeps_its_own_front_matter() {
+     );
+     assert_eq!(r.run(&["new", "intent", "a", "--template", "hr"]).0, 0);
+     assert_eq!(r.run(&["new", "intent", "b", "--template", "plain"]).0, 0);
+-    assert!(
+-        r.read("docs/intent/a/intent.md")
+-            .starts_with("---\nclass: higher-risk\nstatus: draft\n---\n# A\n")
+-    );
++    assert!(r.read("docs/intent/a/intent.md").starts_with(
++        "---\nclass: higher-risk\nstatus: draft\n---\n# {{The title of the change.}}\n"
++    ));
+     // A template with no `class` stays without it: an absent class is routine.
+     assert!(
+         r.read("docs/intent/b/intent.md")
+-            .starts_with("---\nstatus: draft\n---\n# B\n")
++            .starts_with("---\nstatus: draft\n---\n# {{The title of the change.}}\n")
+     );
+ }
+ 
+@@ -233,3 +234,123 @@ fn a_change_folder_gives_the_same_result_with_a_cold_and_a_warm_cache() {
+     assert_eq!(new, bytes, "the run writes the cache again");
+     assert_ne!(u32::from_le_bytes(new[12..16].try_into().unwrap()), 11);
+ }
++
++// The paragraph under `Files` (design 0.7.0, D28)
++
++const D28_LINE: &str = "the section `Files` has a paragraph and no list item; write the paths as a list, or write `- none`";
++
++const LIFECYCLE_CONFIG: &str = "profile = \"standard\"\n\n[change]\npolicy = \"three-class\"\ngate = \"block\"\n\n[rules]\nSD608 = \"off\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.intent]\ntypes = [\"intent\", \"spec\", \"plan\"]\nmoves-to = [\"requirements\"]\nkeep = \"until-finished\"\n";
++
++fn plan_with(files: &str) -> String {
++    format!(
++        "---\nstatus: approved\n---\n# Plan\n\n## Files\n\n{files}\n\n## Order\n\n- Edit the code.\n\n## Risks\n\n- None.\n\n## Proof\n\n- A test.\n"
++    )
++}
++
++/// The base commit on `main` with an approved routine plan whose `Files`
++/// section is `files`, `origin/HEAD` on it, and the branch `feature`.
++fn with_plan(files: &str) -> Repo {
++    let r = Repo::with_config(LIFECYCLE_CONFIG);
++    r.write(
++        "docs/intent/dose/intent.md",
++        "---\nstatus: accepted\nclass: routine\n---\n# Dose\n\n## Intent\n\nThe dose is too high.\n",
++    );
++    r.write("docs/intent/dose/plan.md", &plan_with(files));
++    r.write("src/dose.py", "x = 1\n");
++    r.commit("base");
++    origin_head(&r.dir, "main");
++    r.git(&["checkout", "-q", "-b", "feature"]);
++    r
++}
++
++/// An edit of a code file and of the intent: the intent puts the change in the
++/// diff, so SD913 reads its plan.
++fn work(r: &Repo) {
++    r.write("src/dose.py", "x = 2\n");
++    r.write(
++        "docs/intent/dose/intent.md",
++        "---\nstatus: accepted\nclass: routine\n---\n# Dose\n\n## Intent\n\nThe dose is far too high.\n",
++    );
++    r.commit("work");
++}
++
++#[test]
++fn sd913_names_a_paragraph_under_files_and_not_a_none_paragraph() {
++    // A paragraph that is not `none` lists no path, and the message says why.
++    for files in ["The dose code and its test.", "None of the old files stay."] {
++        let r = with_plan(files);
++        work(&r);
++        let (_, out, _) = r.run(&["check"]);
++        let line = out
++            .lines()
++            .find(|l| l.contains(" SD913 "))
++            .unwrap_or_else(|| panic!("{files}: {out}"));
++        assert!(line.contains(D28_LINE), "{files}: {line}");
++        assert!(!line.contains("is not a path"), "{files}: {line}");
++    }
++    // A `none` paragraph states "no files", so a path is outside the plan, and
++    // the message does not blame the paragraph.
++    for files in ["None.", "none: this change is research.", "NONE"] {
++        let r = with_plan(files);
++        work(&r);
++        let (_, out, _) = r.run(&["check"]);
++        let line = out
++            .lines()
++            .find(|l| l.contains(" SD913 "))
++            .unwrap_or_else(|| panic!("{files}: {out}"));
++        assert!(!line.contains("paragraph"), "{files}: {line}");
++    }
++    // A list item next to the paragraph is a list, and the list decides.
++    let r = with_plan("The code.\n\n- `src/other.py`");
++    work(&r);
++    let (_, out, _) = r.run(&["check"]);
++    let line = out.lines().find(|l| l.contains(" SD913 ")).expect("SD913");
++    assert!(!line.contains("paragraph"), "{line}");
++}
++
++#[test]
++fn sd915_names_a_paragraph_under_files() {
++    let r = with_plan("The dose code and its test.");
++    std::fs::remove_dir_all(r.dir.join("docs/intent/dose")).unwrap();
++    r.commit("delete the folder");
++    let (_, out, _) = r.run(&["check"]);
++    let line = out
++        .lines()
++        .find(|l| l.contains(" SD915 "))
++        .unwrap_or_else(|| panic!("{out}"));
++    assert!(line.contains(D28_LINE), "{line}");
++}
++
++#[test]
++fn the_cache_header_has_format_2_and_parser_version_14() {
++    let r = repo();
++    r.write(
++        "docs/intent/drip/plan.md",
++        "---\nstatus: draft\n---\n# Plan\n\n## Files\n\nNone.\n\n## Hours\n\n- 1.5: code\n",
++    );
++    assert_eq!(check(&r).0, 0);
++    let cache = r.dir.join(".git/spec-dna/index-v1.bin");
++    let bytes = std::fs::read(&cache).unwrap();
++    assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), 2);
++    assert_eq!(u32::from_le_bytes(bytes[12..16].try_into().unwrap()), 14);
++    // A cache of format 1 is not used. The run replaces it.
++    let mut old = bytes.clone();
++    old[8..12].copy_from_slice(&1u32.to_le_bytes());
++    std::fs::write(&cache, &old).unwrap();
++    let (_, json) = check(&r);
++    assert!(json.contains("\"parsed\":1"), "{json}");
++    assert_eq!(std::fs::read(&cache).unwrap(), bytes);
++}
++
++#[test]
++fn a_paragraph_under_files_gives_the_same_result_with_a_cold_and_a_warm_cache() {
++    // The parser keeps the paragraph, and the cache stores it.
++    let r = with_plan("The dose code and its test.");
++    work(&r);
++    let cold = r.run(&["check", "--no-cache"]).1;
++    let first = r.run(&["check"]).1;
++    let warm = r.run(&["check"]).1;
++    assert!(cold.contains(D28_LINE), "{cold}");
++    assert_eq!(first, cold);
++    assert_eq!(warm, cold);
++}
+diff --git a/tests/finish.rs b/tests/finish.rs
+index d211489..4b0504e 100644
+--- a/tests/finish.rs
++++ b/tests/finish.rs
+@@ -713,6 +713,52 @@ fn an_interface_that_the_diff_does_not_change_gives_sd914() {
+     assert_eq!(code, 0, "{out}{err}");
+ }
+ 
++const EVENTS: &str = "---\nstatus: active\n---\n# Events\n\n## Requirements\n\n- **emit**: The interface SHALL emit one event for a change.\n";
++
++#[test]
++fn an_add_item_of_interfaces_needs_its_document_or_a_delta_line_that_adds_it() {
++    let fx = Fx {
++        moves_to: "\"requirements\", \"contracts\"",
++        spec_extra: "## Interfaces\n\n- ADD contracts/events: add the event contract.\n",
++        ..Fx::default()
++    };
++    // No document and no delta line: step 3 stops, and nothing changes.
++    let r = fx.start();
++    let before = tree(&r);
++    let (code, out, err) = fin(&r, &[]);
++    assert_eq!(code, 1, "{out}{err}");
++    assert!(
++        out.contains(
++            ": error SD914 "
++        ) && out.contains(
++            "the spec adds the interface `contracts/events`, and the tree has no such document; write it in this pull request, or add its requirements with `ADD contracts/events#<key>` lines"
++        ),
++        "{out}"
++    );
++    assert_eq!(tree(&r), before);
++    // The document is in the pull request.
++    r.write("docs/contracts/events.md", EVENTS);
++    r.write("tests/test_events.py", "# covers: contracts/events#emit\n");
++    let (code, out, err) = fin(&r, &[]);
++    assert_eq!(code, 0, "{out}{err}");
++
++    // A delta line that adds the document is also enough. `finish` writes it.
++    let r = Fx {
++        delta: &["- ADD contracts/events#emit: The interface SHALL emit one event for a change."],
++        extra: &[("tests/test_events.py", "# covers: contracts/events#emit\n")],
++        ..fx
++    }
++    .start();
++    let (code, out, err) = fin(&r, &[]);
++    assert_eq!(code, 0, "{out}{err}");
++    assert!(r.dir.join("docs/contracts/events.md").exists());
++    // The pull request of `finish` deletes the folder. `check` reads the spec
++    // of the base, and it finds the document in the head.
++    r.commit("finish dose");
++    let (_, out) = check(&r, "main");
++    assert!(!has(&out, "SD914"), "{out}");
++}
++
+ #[test]
+ fn an_added_requirement_in_a_new_document_with_a_required_section_gives_sd305_only_after() {
+     let new = "- ADD requirements/pump/priming#prime: The pump SHALL prime for 4 seconds.";
+diff --git a/tests/init_change.rs b/tests/init_change.rs
+index a648d5f..3a9cdc5 100644
+--- a/tests/init_change.rs
++++ b/tests/init_change.rs
+@@ -949,3 +949,30 @@ fn a_switch_to_strict_writes_base() {
+     let (code, out, err) = r.run(&["check", "--all"]);
+     assert_eq!(code, 0, "{out}{err}");
+ }
++
++#[test]
++fn reconfigure_keeps_max_task_files() {
++    let r = Repo::empty();
++    let (code, out, err) = r.init_with("graph = \"default\"\n", &[]);
++    assert_eq!(code, 0, "{out}{err}");
++    // The project adds the key by hand. A new `init` never proposes it.
++    assert!(r.change().unwrap().get("max-task-files").is_none());
++    let cfg = r
++        .read("spec-dna.toml")
++        .replace("\nmax-fanout = 8", "\nmax-task-files = 5\nmax-fanout = 8");
++    assert!(cfg.contains("max-task-files = 5"), "{cfg}");
++    r.write("spec-dna.toml", &cfg);
++    r.commit("adopt and edit");
++    let (code, out, err) = r.run(&["init", "--reconfigure", "--non-interactive"]);
++    assert_eq!(code, 0, "{out}{err}");
++    assert_eq!(
++        r.change()
++            .unwrap()
++            .get("max-task-files")
++            .and_then(toml::Value::as_integer),
++        Some(5)
++    );
++    r.commit("reconfigure");
++    let (code, out, err) = r.run(&["check", "--all"]);
++    assert_eq!(code, 0, "{out}{err}");
++}
+diff --git a/tests/lifecycle_base.rs b/tests/lifecycle_base.rs
+index a3a1f19..afca886 100644
+--- a/tests/lifecycle_base.rs
++++ b/tests/lifecycle_base.rs
+@@ -1184,3 +1184,34 @@ fn finish_reads_the_branch_of_the_config_for_each_policy() {
+         assert!(!r.dir.join("docs/intent/dose").exists(), "{policy}");
+     }
+ }
++
++#[test]
++fn an_add_item_with_a_glob_id_does_not_widen_the_scope_of_sd913() {
++    let r = start(|r| {
++        r.write(INTENT, &intent("accepted", "higher-risk"));
++        r.write(
++            SPEC,
++            "---\nstatus: approved\n---\n# Spec\n\n## Interfaces\n\n- ADD interfaces/*: anything.\n",
++        );
++        r.write(PLAN, &plan("approved", &["src/a.txt"]));
++    });
++    r.write(
++        INTENT,
++        &intent("accepted", "higher-risk").replace("too high", "too big"),
++    );
++    r.write("docs/interfaces/http.md", &HTTP.replace("200", "201"));
++    r.write("src/other.py", "y = 2\n");
++    let (_, out) = check(&r);
++    let found = lines(&out, "SD913");
++    assert_eq!(found.len(), 2, "{out}");
++    assert!(
++        found
++            .iter()
++            .any(|l| l.starts_with("docs/interfaces/http.md:")),
++        "{out}"
++    );
++    assert!(
++        found.iter().any(|l| l.starts_with("src/other.py:")),
++        "{out}"
++    );
++}
+diff --git a/tests/lifecycle_checks.rs b/tests/lifecycle_checks.rs
+index b808ee3..e4f5144 100644
+--- a/tests/lifecycle_checks.rs
++++ b/tests/lifecycle_checks.rs
+@@ -875,3 +875,347 @@ fn from_in_a_document_that_is_not_an_intent_is_not_a_reference() {
+     let (_, out) = check(&r);
+     assert!(severities(&out, "SD101").is_empty(), "{out}");
+ }
++
++// SD914: the forms of `Interfaces`
++
++const EVENTS: &str = "---\nstatus: active\n---\n# Events\n\n## Requirements\n\n- **emit**: The interface SHALL emit one event for a change.\n";
++
++#[test]
++fn interfaces_accept_none_and_add_of_a_new_interface() {
++    // `none` states "no interface", in each form of the `none` rule.
++    for item in [
++        "- none",
++        "- None.",
++        "- none: no contract changes",
++        "- [ ] None.",
++        "- [x] none",
++    ] {
++        never("SD914", |r| {
++            change(
++                r,
++                "dose",
++                "draft",
++                "draft",
++                &format!("## Interfaces\n\n{item}\n"),
++            );
++        });
++    }
++    // `ADD` names a document that is absent, at the place of an interface.
++    never("SD914", |r| {
++        change(
++            r,
++            "dose",
++            "draft",
++            "draft",
++            "## Interfaces\n\n- ADD contracts/events: add the event contract.\n",
++        );
++    });
++    // `ADD` of an interface that exists is also valid.
++    never("SD914", |r| {
++        change(
++            r,
++            "dose",
++            "draft",
++            "draft",
++            "## Interfaces\n\n- ADD contracts/http: add a field.\n- CHANGE contracts/http: change a field.\n",
++        );
++    });
++    // The place of the id gives another type.
++    let r = repo("standard");
++    change(
++        &r,
++        "dose",
++        "draft",
++        "draft",
++        "## Interfaces\n\n- ADD requirements/events: add it.\n",
++    );
++    let (_, out) = check(&r);
++    let got = messages(&out, "SD914");
++    assert_eq!(got.len(), 1, "{out}");
++    assert!(got[0].contains("not `interface`"), "{out}");
++    assert!(got[0].contains("`requirements/events`"), "{out}");
++}
++
++#[test]
++fn a_none_item_that_is_not_alone_or_not_the_word_is_not_none() {
++    // `none` states "nothing" only as the one item of the section. The
++    // item of 0.6.1 gave SD914 as a bad form, and it still does.
++    for item in [
++        "- none\n- CHANGE contracts/http: Text.",
++        "- None of the contracts change.",
++        "- nonexistent",
++        "- `none`",
++    ] {
++        let r = repo("standard");
++        change(
++            &r,
++            "dose",
++            "draft",
++            "draft",
++            &format!("## Interfaces\n\n{item}\n"),
++        );
++        let (_, out) = check(&r);
++        let got = messages(&out, "SD914");
++        assert_eq!(got.len(), 1, "{item}: {out}");
++        assert!(
++            got[0].contains("an item of `Interfaces` is `CHANGE <interface id>: <text>`"),
++            "{item}: {out}"
++        );
++    }
++}
++
++#[test]
++fn an_add_item_needs_its_document_when_the_diff_deletes_the_folder() {
++    let setup = |with_document: bool| {
++        let r = repo("standard");
++        change(
++            &r,
++            "dose",
++            "accepted",
++            "approved",
++            "## Interfaces\n\n- ADD contracts/events: add the event contract.\n",
++        );
++        r.commit("base");
++        r.git(&["checkout", "-q", "-b", "feature"]);
++        std::fs::remove_dir_all(r.dir.join("docs/intent/dose")).unwrap();
++        if with_document {
++            r.write("docs/contracts/events.md", EVENTS);
++        }
++        r.commit("finish dose");
++        r
++    };
++    // No document and no delta line that adds it.
++    let r = setup(false);
++    let (_, out, _) = r.run(&["check", "--all", "--base", "main"]);
++    let got = messages(&out, "SD914");
++    assert_eq!(got.len(), 1, "{out}");
++    assert!(
++        got[0].contains(
++            "the spec adds the interface `contracts/events`, and the tree has no such document; write it in this pull request, or add its requirements with `ADD contracts/events#<key>` lines"
++        ),
++        "{out}"
++    );
++    // The document is in the diff.
++    let r = setup(true);
++    let (_, out, _) = r.run(&["check", "--all", "--base", "main"]);
++    assert!(severities(&out, "SD914").is_empty(), "{out}");
++}
++
++// SD925
++
++#[test]
++fn an_item_with_no_box_in_concerns_gives_sd925() {
++    matrix("SD925", [None, Some("warning"), Some("error")], |r| {
++        change(
++            r,
++            "dose",
++            "accepted",
++            "approved",
++            "## Concerns\n\n- The cache can grow without a limit.\n",
++        )
++    });
++    let r = repo("standard");
++    change(
++        &r,
++        "dose",
++        "accepted",
++        "approved",
++        &format!(
++            "{}\n## Concerns\n\n- The cache can grow without a limit.\n",
++            delta(&["- ADD requirements/valves#flush: The controller SHALL flush the line."])
++        ),
++    );
++    let (code, out) = check(&r);
++    assert_eq!(code, 0, "a warning does not fail check: {out}");
++    let got = messages(&out, "SD925");
++    assert_eq!(got.len(), 1, "{out}");
++    assert!(
++        got[0].starts_with("docs/intent/dose/spec.md:12: warning SD925 checkbox-missing: "),
++        "{out}"
++    );
++    assert!(
++        got[0].contains(
++            "an item of `Concerns` has no task box, so SD919 cannot see if it is open; write `- [ ]` for an open concern or `- [x]` for a resolved one"
++        ),
++        "{out}"
++    );
++    // The spec has no other diagnostic for the item.
++    assert!(severities(&out, "SD919").is_empty(), "{out}");
++}
++
++#[test]
++fn an_item_with_no_box_in_open_questions_names_sd922() {
++    matrix("SD925", [None, Some("warning"), Some("error")], |r| {
++        change(
++            r,
++            "dose",
++            "accepted",
++            "approved",
++            "## Open questions\n\n- Who owns the timer?\n",
++        )
++    });
++    let r = repo("standard");
++    change(
++        &r,
++        "dose",
++        "accepted",
++        "approved",
++        "## Open questions\n\n- Who owns the timer?\n",
++    );
++    let (_, out) = check(&r);
++    let got = messages(&out, "SD925");
++    assert_eq!(got.len(), 1, "{out}");
++    assert!(
++        got[0].contains(
++            "an item of `Open questions` has no task box, so SD922 cannot see if it is open"
++        ),
++        "{out}"
++    );
++}
++
++#[test]
++fn sd925_reads_a_spec_of_each_status_except_a_closed_change() {
++    let body = "## Concerns\n\n- No box.\n";
++    for spec in ["draft", "approved"] {
++        matrix("SD925", [None, Some("warning"), Some("error")], |r| {
++            change(r, "dose", "draft", spec, body)
++        });
++    }
++    never("SD925", |r| change(r, "dose", "closed", "approved", body));
++}
++
++#[test]
++fn an_item_with_a_box_gives_no_sd925() {
++    never("SD925", |r| {
++        change(
++            r,
++            "dose",
++            "accepted",
++            "draft",
++            "## Concerns\n\n- [x] Resolved.\n- [ ] Open.\n\n## Open questions\n\n- [x] Answered. Yes.\n- [ ] Open.\n",
++        )
++    });
++}
++
++#[test]
++fn a_none_item_states_nothing_in_concerns_and_open_questions() {
++    // The box does not matter: one item that starts with `none` states
++    // "nothing", so no SD919, SD922 or SD925 reads it.
++    for item in [
++        "- [ ] None.",
++        "- None.",
++        "- [x] none",
++        "- none",
++        "- None: no risk.",
++    ] {
++        let setup = |r: &Repo| {
++            change(
++                r,
++                "dose",
++                "accepted",
++                "approved",
++                &format!("## Concerns\n\n{item}\n\n## Open questions\n\n{item}\n"),
++            )
++        };
++        never("SD925", setup);
++        never("SD919", setup);
++        never("SD922", setup);
++    }
++    // The 0.6.1 result for a real concern that starts with the word `None`.
++    let r = repo("standard");
++    change(
++        &r,
++        "dose",
++        "accepted",
++        "approved",
++        "## Concerns\n\n- [ ] None of the old files stay.\n",
++    );
++    let (_, out) = check(&r);
++    assert_eq!(severities(&out, "SD919"), ["error"], "{out}");
++    // A `none` item with other items is an item like the others.
++    let r = repo("standard");
++    change(
++        &r,
++        "dose",
++        "accepted",
++        "approved",
++        "## Open questions\n\n- [ ] None.\n- [ ] Who owns it?\n",
++    );
++    let (_, out) = check(&r);
++    assert_eq!(severities(&out, "SD922"), ["error", "error"], "{out}");
++}
++
++#[test]
++fn an_add_item_with_a_bad_id_gives_sd914() {
++    // A glob, `..` and an absolute path are no document id. The id would
++    // widen the scope of SD913 if it passed.
++    for id in [
++        "contracts/*",
++        "contracts/a?",
++        "contracts/[ab]",
++        "contracts/../x",
++        "/abs",
++    ] {
++        let r = repo("standard");
++        change(
++            &r,
++            "dose",
++            "draft",
++            "draft",
++            &format!("## Interfaces\n\n- ADD {id}: anything.\n"),
++        );
++        let (_, out) = check(&r);
++        let got = messages(&out, "SD914");
++        assert_eq!(got.len(), 1, "{id}: {out}");
++        assert!(
++            got[0].contains(&format!("`{id}` is not a document id")),
++            "{id}: {out}"
++        );
++    }
++}
++
++#[test]
++fn a_place_with_no_type_is_not_named_as_requirements() {
++    let r = repo("standard");
++    change(
++        &r,
++        "dose",
++        "draft",
++        "draft",
++        "## Interfaces\n\n- ADD foo/bar: anything.\n",
++    );
++    let (_, out) = check(&r);
++    let got = messages(&out, "SD914");
++    assert_eq!(got.len(), 1, "{out}");
++    assert!(
++        got[0].contains("the place of `foo/bar` gives no type, not `interface`"),
++        "{out}"
++    );
++}
++
++#[test]
++fn a_document_of_another_type_does_not_satisfy_an_add_item_after_the_folder_is_deleted() {
++    let r = repo("standard");
++    change(
++        &r,
++        "dose",
++        "accepted",
++        "approved",
++        "## Interfaces\n\n- ADD contracts/new: add the contract.\n",
++    );
++    r.commit("base");
++    r.git(&["checkout", "-q", "-b", "feature"]);
++    std::fs::remove_dir_all(r.dir.join("docs/intent/dose")).unwrap();
++    r.write(
++        "docs/contracts/new.md",
++        &EVENTS.replace("status: active\n", "status: active\ntype: requirements\n"),
++    );
++    r.commit("finish dose");
++    let (_, out, _) = r.run(&["check", "--all", "--base", "main"]);
++    let got = messages(&out, "SD914");
++    assert!(
++        got.iter()
++            .any(|l| l.contains("`contracts/new` is a `requirements` document, not an interface")),
++        "{out}"
++    );
++}
+diff --git a/tests/lifecycle_commands.rs b/tests/lifecycle_commands.rs
+index 449f3f0..01ab21b 100644
+--- a/tests/lifecycle_commands.rs
++++ b/tests/lifecycle_commands.rs
+@@ -1257,3 +1257,206 @@ fn the_help_of_the_commands_names_the_skills_and_the_exit_codes() {
+         "{out}"
+     );
+ }
++
++// A paragraph under `Files` (design 0.7.0, D28)
++
++const D28_LINE: &str = "the section `Files` has a paragraph and no list item; write the paths as a list, or write `- none`";
++
++#[test]
++fn a_none_paragraph_under_files_states_no_files() {
++    for para in [
++        "None.",
++        "none",
++        "NONE: this change is research.",
++        "None: the change edits no file.",
++    ] {
++        let r = start();
++        stage(
++            &r,
++            &[
++                (INTENT, &intent("accepted", "routine", "")),
++                (
++                    PLAN,
++                    &plan_with_item("approved", para, "- [x] t1: Read the code."),
++                ),
++            ],
++        );
++        let text = next_text(&r);
++        assert_stage(&r, "deploy");
++        assert!(
++            text.contains("[x] the plan lists no files: the change edits no file"),
++            "{para}: {text}"
++        );
++        assert!(!text.contains("lists none"), "{para}: {text}");
++        assert!(!text.contains(D28_LINE), "{para}: {text}");
++    }
++    // An open task keeps the stage at build, and the paragraph is no wrong text.
++    let r = start();
++    stage(
++        &r,
++        &[
++            (INTENT, &intent("accepted", "routine", "")),
++            (
++                PLAN,
++                &plan_with_item("approved", "None.", "- [ ] t1: Read the code."),
++            ),
++        ],
++    );
++    let text = next_text(&r);
++    assert_stage(&r, "build");
++    assert!(!text.contains(D28_LINE), "{text}");
++    assert!(
++        items(&text).last().unwrap().starts_with("[ ] task t1"),
++        "{text}"
++    );
++}
++
++#[test]
++fn another_paragraph_under_files_gives_the_line_of_d28() {
++    // "None of the old files stay" is no `none` paragraph: the next character
++    // after the word is a space.
++    for para in [
++        "The dose code and its test.",
++        "None of the old files stay.",
++        "nonexistent.md",
++    ] {
++        let r = start();
++        stage(
++            &r,
++            &[
++                (INTENT, &intent("accepted", "routine", "")),
++                (PLAN, &plan_with_item("approved", para, "- [x] t1: Done.")),
++            ],
++        );
++        let text = next_text(&r);
++        assert_stage(&r, "build");
++        // The line is the last line, in place of the line "it lists none".
++        assert_eq!(
++            *items(&text).last().unwrap(),
++            format!("[ ] {D28_LINE} [skill: execute]"),
++            "{para}: {text}"
++        );
++        assert!(!text.contains("it lists none"), "{para}: {text}");
++        assert!(!text.contains("the plan lists no files"), "{para}: {text}");
++        let json = next_json(&r);
++        assert_eq!(field(&json, "next"), D28_LINE, "{para}: {json}");
++        let (code, status, err) = r.run(&["status"]);
++        assert_eq!(code, 0, "{status}{err}");
++        assert!(status.contains(&format!("next: {D28_LINE}")), "{status}");
++    }
++}
++
++#[test]
++fn a_draft_plan_with_a_paragraph_under_files_gives_the_line_before_the_approval() {
++    let r = start();
++    stage(
++        &r,
++        &[
++            (INTENT, &intent("accepted", "routine", "")),
++            (
++                PLAN,
++                &plan_with_item("draft", "The dose code.", "- [ ] t1: Edit the code."),
++            ),
++        ],
++    );
++    let text = next_text(&r);
++    assert_in_order(
++        &text,
++        &[
++            D28_LINE,
++            "tasks of `Order`: 0 of 1 done",
++            "task t1: Edit the code",
++            "set `status: approved` in docs/intent/dose/plan.md",
++        ],
++    );
++    // The approval line stays the last line.
++    assert!(
++        items(&text)
++            .last()
++            .unwrap()
++            .starts_with("[ ] set `status: approved` in docs/intent/dose/plan.md"),
++        "{text}"
++    );
++    let json = next_json(&r);
++    assert!(
++        field(&json, "next").starts_with("set `status: approved`"),
++        "{json}"
++    );
++    // A draft plan with a `none` paragraph has no such line.
++    let r = start();
++    stage(
++        &r,
++        &[
++            (INTENT, &intent("accepted", "routine", "")),
++            (
++                PLAN,
++                &plan_with_item("draft", "None.", "- [ ] t1: Edit the code."),
++            ),
++        ],
++    );
++    assert!(!next_text(&r).contains(D28_LINE));
++}
++
++#[test]
++fn a_list_item_under_files_decides_over_a_paragraph() {
++    // The paragraph is text before the list. The list gives the paths.
++    let r = start();
++    stage(
++        &r,
++        &[
++            (INTENT, &intent("accepted", "routine", "")),
++            (
++                PLAN,
++                &plan_with_item(
++                    "approved",
++                    "The files of the work.\n\n- `src/dose.py`",
++                    "- [x] t1: Done.",
++                ),
++            ),
++        ],
++    );
++    let text = next_text(&r);
++    assert!(!text.contains(D28_LINE), "{text}");
++    assert!(
++        text.contains("change a file that `Files` of docs/intent/dose/plan.md lists"),
++        "{text}"
++    );
++    // A `none` paragraph and a path in the list: the plan lists a path.
++    let r = start();
++    stage(
++        &r,
++        &[
++            (INTENT, &intent("accepted", "routine", "")),
++            (
++                PLAN,
++                &plan_with_item("approved", "None.\n\n- `src/dose.py`", "- [x] t1: Done."),
++            ),
++        ],
++    );
++    let text = next_text(&r);
++    assert!(!text.contains("the plan lists no files"), "{text}");
++    assert!(!text.contains(D28_LINE), "{text}");
++}
++
++#[test]
++fn a_higher_risk_plan_with_a_paragraph_under_files_gives_the_line_of_d28() {
++    let r = start();
++    stage(
++        &r,
++        &[
++            (INTENT, &intent("accepted", "higher-risk", "")),
++            (SPEC, &spec("approved", ADD_FLUSH)),
++            (
++                PLAN,
++                &plan_with_item("approved", "The dose code.", "- [x] t1: Done."),
++            ),
++        ],
++    );
++    let text = next_text(&r);
++    assert_stage(&r, "build");
++    assert_eq!(
++        *items(&text).last().unwrap(),
++        format!("[ ] {D28_LINE} [skill: execute]"),
++        "{text}"
++    );
++}
+diff --git a/tests/new_place.rs b/tests/new_place.rs
+index e7ef4ef..77e9cb9 100644
+--- a/tests/new_place.rs
++++ b/tests/new_place.rs
+@@ -165,8 +165,11 @@ fn intent_writes_its_folder_and_spec_and_plan_need_it() {
+         let path = format!("docs/intent/add-drip-lines/{ty}.md");
+         let text = r.read(&path);
+         assert!(!text.contains("type:"), "{text}");
+-        // The title is the slug, not the file name.
+-        assert!(text.contains("\n# Add drip lines\n"), "{text}");
++        // The title is a placeholder: no rule makes a title from a slug.
++        assert!(
++            text.contains("\n# {{The title of the change.}}\n"),
++            "{text}"
++        );
+         assert_eq!(r.type_of(&path), ty);
+     }
+     // A file that exists stops the command. A slug has one name.
+diff --git a/tests/task_checks.rs b/tests/task_checks.rs
+new file mode 100644
+index 0000000..0835a2e
+--- /dev/null
++++ b/tests/task_checks.rs
+@@ -0,0 +1,409 @@
++//! Integration tests of SD923 (`task-incomplete`) and SD924 (`task-too-large`),
++//! and of the key `[change] max-task-files` (design 0.7.0, D40). The checks
++//! read the tasks of an `approved` plan. They read one tree: a task has a
++//! `Files:` label with exact paths, and a `Verify:` label, and it lists no
++//! more paths than the limit. A draft plan is not checked.
++
++mod common;
++
++use common::*;
++
++fn config(profile: &str, change: &str) -> String {
++    format!(
++        "profile = \"{profile}\"\n\n[change]\npolicy = \"three-class\"\n{change}\n[rules]\nSD608 = \"off\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.intent]\ntypes = [\"intent\", \"spec\", \"plan\"]\nmoves-to = [\"requirements\"]\nkeep = \"until-finished\"\n"
++    )
++}
++
++/// A repository with the folder `src` in its tree, so that `src` names a
++/// folder.
++fn repo_with(cfg: &str) -> Repo {
++    let r = Repo::with_config(cfg);
++    r.write("src/a.rs", "fn a() {}\n");
++    r.git(&["add", "src/a.rs"]);
++    r
++}
++
++/// The change `dose`: an intent and a plan with the status `plan` and the
++/// task lines `order`. The plan lists no file in `Files`.
++fn change(r: &Repo, intent: &str, plan: &str, order: &str) {
++    r.write(
++        "docs/intent/dose/intent.md",
++        &format!("---\nstatus: {intent}\n---\n# Dose\n\n## Intent\n\nText.\n"),
++    );
++    r.write(
++        "docs/intent/dose/plan.md",
++        &format!(
++            "---\nstatus: {plan}\n---\n# Plan\n\n## Files\n\n- none\n\n## Order\n\n{order}\n\n## Proof\n\n- A test.\n"
++        ),
++    );
++}
++
++fn check(r: &Repo) -> (i32, String) {
++    let (code, out, _) = r.run(&["check", "--all"]);
++    (code, out)
++}
++
++/// The lines of `out` for `code`.
++fn lines<'a>(out: &'a str, code: &str) -> Vec<&'a str> {
++    out.lines()
++        .filter(|l| {
++            l.contains(&format!(": error {code} ")) || l.contains(&format!(": warning {code} "))
++        })
++        .collect()
++}
++
++const PROFILES: [&str; 3] = ["lite", "standard", "strict"];
++
++/// Asserts the severity of one code in each profile. `want` has the severity
++/// for `lite`, `standard` and `strict` (`None`: no diagnostic). `order` is the
++/// text of the section `Order` of an `approved` plan.
++fn matrix(code: &str, want: [Option<&str>; 3], change_keys: &str, order: &str) {
++    for (profile, want) in PROFILES.iter().zip(want) {
++        let r = repo_with(&config(profile, change_keys));
++        change(&r, "accepted", "approved", order);
++        let (_, out) = check(&r);
++        let got = lines(&out, code);
++        match want {
++            Some(w) => {
++                assert_eq!(got.len(), 1, "{code} in {profile}: {out}");
++                assert!(
++                    got[0].contains(&format!(": {w} {code} ")),
++                    "{code} in {profile}: {out}"
++                );
++            }
++            None => assert!(got.is_empty(), "{code} in {profile}: {out}"),
++        }
++    }
++}
++
++fn never(code: &str, change_keys: &str, order: &str) {
++    matrix(code, [None, None, None], change_keys, order);
++}
++
++const FULL: &str = "- [ ] t1: Write it. Files: `src/a.rs`. Verify: `cargo test`.";
++
++// SD923
++
++#[test]
++fn a_task_with_no_files_label_gives_sd923() {
++    matrix(
++        "SD923",
++        [None, Some("warning"), Some("error")],
++        "",
++        "- [ ] t1: Write it. Verify: `cargo test`.",
++    );
++}
++
++#[test]
++fn a_task_with_no_verify_label_gives_sd923() {
++    matrix(
++        "SD923",
++        [None, Some("warning"), Some("error")],
++        "",
++        "- [ ] t1: Write it. Files: `src/a.rs`.",
++    );
++    // A label with no text is no label.
++    matrix(
++        "SD923",
++        [None, Some("warning"), Some("error")],
++        "",
++        "- [ ] t1: Write it. Files: `src/a.rs`. Verify:",
++    );
++}
++
++#[test]
++fn a_task_that_misses_both_labels_gives_one_diagnostic_with_both_reasons() {
++    let r = repo_with(&config("standard", ""));
++    change(&r, "accepted", "approved", "- [ ] t1: Write it.");
++    let (code, out) = check(&r);
++    // A warning never fails `check`.
++    assert_eq!(code, 0, "{out}");
++    let got = lines(&out, "SD923");
++    assert_eq!(got.len(), 1, "{out}");
++    assert!(
++        got[0].starts_with("docs/intent/dose/plan.md:"),
++        "{}",
++        got[0]
++    );
++    assert!(got[0].contains("the task `t1`"), "{}", got[0]);
++    assert!(got[0].contains("no `Files:`"), "{}", got[0]);
++    assert!(got[0].contains("no `Verify:`"), "{}", got[0]);
++}
++
++#[test]
++fn a_complete_task_gives_no_sd923_or_sd924() {
++    never("SD923", "", FULL);
++    never("SD924", "", FULL);
++    // Three paths and a command.
++    never(
++        "SD924",
++        "",
++        "- [ ] t1: Write it. Files: `src/a.rs`, `src/b.rs`, `src/c.rs`. Verify: `cargo test`.",
++    );
++    // A task with plain paths and a done box.
++    never(
++        "SD923",
++        "",
++        "- [x] t1: Write it. Files: src/a.rs, src/b.rs. Verify: run the tests.",
++    );
++}
++
++#[test]
++fn files_none_is_a_complete_label() {
++    never(
++        "SD923",
++        "",
++        "- [ ] t1: Read it. Files: none. Verify: `cargo test`.",
++    );
++    never(
++        "SD923",
++        "",
++        "- [ ] t1: Read it. Files: None: research only. Verify: read the note.",
++    );
++    // Prose that is not `none` and gives no path is not a list of paths.
++    matrix(
++        "SD923",
++        [None, Some("warning"), Some("error")],
++        "",
++        "- [ ] t1: Read it. Files: the parser. Verify: `cargo test`.",
++    );
++}
++
++#[test]
++fn a_glob_or_a_folder_in_files_gives_sd923() {
++    let cases = [
++        ("`src/*.rs`", "the glob `src/*.rs`"),
++        ("`src/**/a.rs`", "the glob `src/**/a.rs`"),
++        ("`src/a?.rs`", "the glob `src/a?.rs`"),
++        ("`src/[ab].rs`", "the glob `src/[ab].rs`"),
++        ("`docs/guides/`", "the folder `docs/guides/`"),
++        // The tree has the folder `src`, so it is a folder with no final `/`.
++        ("`src`", "the folder `src`"),
++        ("src/*.rs", "the glob `src/*.rs`"),
++    ];
++    for (files, reason) in cases {
++        let r = repo_with(&config("standard", ""));
++        change(
++            &r,
++            "accepted",
++            "approved",
++            &format!("- [ ] t1: Write it. Files: {files}. Verify: `cargo test`."),
++        );
++        let (_, out) = check(&r);
++        let got = lines(&out, "SD923");
++        assert_eq!(got.len(), 1, "{files}: {out}");
++        assert!(got[0].contains(reason), "{files}: {}", got[0]);
++    }
++    // A path that is a file is exact, also if a folder has the same start.
++    never(
++        "SD923",
++        "",
++        "- [ ] t1: Write it. Files: `src/a.rs`. Verify: `cargo test`.",
++    );
++}
++
++#[test]
++fn each_task_of_the_plan_is_checked_and_the_target_is_its_id() {
++    let r = repo_with(&config("standard", ""));
++    change(
++        &r,
++        "accepted",
++        "approved",
++        "- [ ] t1: One. Files: `src/a.rs`. Verify: `cargo test`.\n- [ ] t2: Two. Files: `src/a.rs`.\n- [ ] t3: Three. Verify: `cargo test`.",
++    );
++    let (_, out) = check(&r);
++    let got = lines(&out, "SD923");
++    assert_eq!(got.len(), 2, "{out}");
++    assert!(got[0].contains("the task `t2`"), "{out}");
++    assert!(got[1].contains("the task `t3`"), "{out}");
++    let (_, json, _) = r.run(&["check", "--all", "--json"]);
++    assert!(json.contains("\"target\":\"t2\""), "{json}");
++    assert!(json.contains("\"target\":\"t3\""), "{json}");
++}
++
++#[test]
++fn an_item_that_is_not_a_task_is_not_checked() {
++    // No task box, or no id: the item is not a task of the plan.
++    never("SD923", "", "- Write the code.\n- [ ] Write the tests.");
++}
++
++#[test]
++fn a_task_id_that_an_earlier_task_has_is_checked_once() {
++    let r = repo_with(&config("standard", ""));
++    change(&r, "accepted", "approved", "- [ ] t1: One.\n- [ ] t1: Two.");
++    let (_, out) = check(&r);
++    assert_eq!(lines(&out, "SD923").len(), 1, "{out}");
++}
++
++#[test]
++fn a_draft_plan_is_not_checked() {
++    // 0.6.1 plans are drafts or approved: only an `approved` plan has tasks
++    // that must hold the labels.
++    for order in [
++        "- [ ] t1: Write it.",
++        "- [ ] t1: Write it. Files: `src/*`. Verify: `cargo test`.",
++        "- [ ] t1: Write it. Files: `src/a.rs`, `src/b.rs`, `src/c.rs`, `src/d.rs`. Verify: x.",
++    ] {
++        for profile in PROFILES {
++            let r = repo_with(&config(profile, ""));
++            change(&r, "accepted", "draft", order);
++            let (code, out) = check(&r);
++            assert_eq!(code, 0, "{profile}: {out}");
++            assert!(lines(&out, "SD923").is_empty(), "{profile}: {out}");
++            assert!(lines(&out, "SD924").is_empty(), "{profile}: {out}");
++        }
++    }
++}
++
++#[test]
++fn a_closed_change_is_not_checked() {
++    let r = repo_with(&config("strict", ""));
++    change(&r, "closed", "approved", "- [ ] t1: Write it.");
++    let (_, out) = check(&r);
++    assert!(lines(&out, "SD923").is_empty(), "{out}");
++}
++
++#[test]
++fn the_plan_of_an_intent_that_is_not_accepted_is_checked() {
++    // The check reads the plan, not the stage of the intent.
++    let r = repo_with(&config("standard", ""));
++    change(&r, "draft", "approved", "- [ ] t1: Write it.");
++    let (_, out) = check(&r);
++    assert_eq!(lines(&out, "SD923").len(), 1, "{out}");
++}
++
++#[test]
++fn a_new_error_of_strict_fails_check_and_a_warning_does_not() {
++    let r = repo_with(&config("strict", ""));
++    change(&r, "accepted", "approved", "- [ ] t1: Write it.");
++    let (code, out) = check(&r);
++    assert_eq!(code, 1, "{out}");
++    let r = repo_with(&config("standard", ""));
++    change(&r, "accepted", "approved", "- [ ] t1: Write it.");
++    let (code, out) = check(&r);
++    assert_eq!(code, 0, "{out}");
++}
++
++#[test]
++fn the_policy_none_and_a_rule_set_the_severity() {
++    let none = "profile = \"strict\"\n[change]\npolicy = \"none\"\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n\n[layers.intent]\ntypes = [\"intent\", \"spec\", \"plan\"]\n";
++    let r = repo_with(none);
++    change(&r, "accepted", "approved", "- [ ] t1: Write it.");
++    let (_, out) = check(&r);
++    assert!(lines(&out, "SD923").is_empty(), "{out}");
++    // A rule of the file changes the severity of one code.
++    let cfg =
++        config("standard", "").replace("SD608 = \"off\"", "SD608 = \"off\"\nSD923 = \"error\"");
++    let r = repo_with(&cfg);
++    change(&r, "accepted", "approved", "- [ ] t1: Write it.");
++    let (code, out) = check(&r);
++    assert_eq!(code, 1, "{out}");
++    assert!(lines(&out, "SD923")[0].contains(": error SD923 "), "{out}");
++    // The group `changes` sets the 3 new codes too.
++    let cfg =
++        config("lite", "").replace("SD608 = \"off\"", "SD608 = \"off\"\nchanges = \"warning\"");
++    let r = repo_with(&cfg);
++    change(&r, "accepted", "approved", "- [ ] t1: Write it.");
++    let (_, out) = check(&r);
++    assert_eq!(lines(&out, "SD923").len(), 1, "{out}");
++}
++
++// SD924
++
++const FOUR: &str = "- [ ] t1: Write it. Files: `src/a.rs`, `src/b.rs`, `src/c.rs`, `src/d.rs`. Verify: `cargo test`.";
++
++#[test]
++fn a_task_with_more_than_3_paths_gives_sd924() {
++    matrix("SD924", [None, Some("warning"), Some("error")], "", FOUR);
++    let r = repo_with(&config("standard", ""));
++    change(&r, "accepted", "approved", FOUR);
++    let (_, out) = check(&r);
++    let got = lines(&out, "SD924");
++    assert!(got[0].contains("the task `t1`"), "{}", got[0]);
++    assert!(
++        got[0].contains("lists 4 paths, more than `max-task-files = 3`"),
++        "{}",
++        got[0]
++    );
++    // The task gives no SD923: the labels are there.
++    assert!(lines(&out, "SD923").is_empty(), "{out}");
++}
++
++#[test]
++fn a_path_that_a_task_lists_twice_counts_once() {
++    never(
++        "SD924",
++        "",
++        "- [ ] t1: Write it. Files: `src/a.rs`, `src/b.rs`, `src/a.rs`, `src/c.rs`. Verify: `cargo test`.",
++    );
++}
++
++#[test]
++fn max_task_files_sets_the_limit() {
++    never("SD924", "max-task-files = 4\n", FOUR);
++    never("SD924", "max-task-files = 20\n", FOUR);
++    matrix(
++        "SD924",
++        [None, Some("warning"), Some("error")],
++        "max-task-files = 1\n",
++        "- [ ] t1: Write it. Files: `src/a.rs`, `src/b.rs`. Verify: `cargo test`.",
++    );
++    never(
++        "SD924",
++        "max-task-files = 1\n",
++        "- [ ] t1: Write it. Files: `src/a.rs`. Verify: `cargo test`.",
++    );
++}
++
++#[test]
++fn max_task_files_takes_an_integer_from_1_to_20() {
++    for bad in ["0", "21", "-1", "\"3\"", "1.5", "true"] {
++        let r = repo_with(&config("standard", &format!("max-task-files = {bad}\n")));
++        let (code, _, err) = r.run(&["check", "--all"]);
++        assert_eq!(code, 3, "{bad}: {err}");
++        assert!(
++            err.contains("`change.max-task-files` must be an integer from 1 to 20"),
++            "{bad}: {err}"
++        );
++    }
++    for good in ["1", "3", "20"] {
++        let r = repo_with(&config("standard", &format!("max-task-files = {good}\n")));
++        let (code, out, err) = r.run(&["check", "--all"]);
++        assert_eq!(code, 0, "{good}: {out}{err}");
++    }
++}
++
++#[test]
++fn a_draft_plan_gives_no_sd924() {
++    let r = repo_with(&config("strict", ""));
++    change(&r, "accepted", "draft", FOUR);
++    let (code, out) = check(&r);
++    assert_eq!(code, 0, "{out}");
++}
++
++// The fingerprint of the gate
++
++#[test]
++fn only_a_new_task_diagnostic_fails_the_gate() {
++    // The base has an approved plan with an incomplete task. A branch that
++    // adds another incomplete task gives one new diagnostic, and the old one
++    // is not new.
++    let r = repo_with(&config("strict", ""));
++    change(&r, "accepted", "approved", "- [ ] t1: Write it.");
++    r.commit("base");
++    r.git(&["checkout", "-q", "-b", "feature"]);
++    let (code, out, _) = r.run(&["check", "--base", "main"]);
++    assert_eq!(code, 0, "no new diagnostic: {out}");
++    change(
++        &r,
++        "accepted",
++        "approved",
++        "- [ ] t1: Write it.\n- [ ] t2: Test it.",
++    );
++    r.commit("a task");
++    let (code, out, _) = r.run(&["check", "--base", "main"]);
++    assert_eq!(code, 1, "{out}");
++    let got = lines(&out, "SD923");
++    assert_eq!(got.len(), 1, "{out}");
++    assert!(got[0].contains("the task `t2`"), "{out}");
++}
+diff --git a/tests/templates_new.rs b/tests/templates_new.rs
+index 3564712..1ea85e3 100644
+--- a/tests/templates_new.rs
++++ b/tests/templates_new.rs
+@@ -220,7 +220,7 @@ fn spec_and_plan_have_their_required_sections() {
+         assert!(text.contains(section), "{text}");
+         assert!(text.len() < 700, "{ty}: {} bytes", text.len());
+         assert!(
+-            text.starts_with("---\nstatus: draft\n---\n# Drip\n"),
++            text.starts_with("---\nstatus: draft\n---\n# {{The title of the change.}}\n"),
+             "{text}"
+         );
+     }
+@@ -580,3 +580,82 @@ fn an_amendment_goes_after_the_status_section() {
+     assert_eq!(code, 0, "{out}");
+     assert!(!out.contains("SD405"), "{out}");
+ }
++
++// The title of a document of a change (design 0.7.0, section 15)
++
++#[test]
++fn a_change_document_gets_a_title_placeholder_not_a_title_from_the_slug() {
++    let r = Repo::mixed();
++    for (ty, line) in [("intent", 5), ("spec", 4), ("plan", 4)] {
++        let (code, out, err) = r.run(&["new", ty, "v2-api-client"]);
++        assert_eq!(code, 0, "{ty}: {out}{err}");
++        let path = format!("docs/intent/v2-api-client/{ty}.md");
++        let text = r.read(&path);
++        assert!(
++            text.lines().any(|l| l == "# {{The title of the change.}}"),
++            "{ty}: {text}"
++        );
++        assert!(!text.contains("# V2 api client"), "{ty}: {text}");
++        // The H1 is the line `line`, and SD306 reports it.
++        assert_eq!(
++            text.lines().nth(line - 1),
++            Some("# {{The title of the change.}}"),
++            "{ty}: {text}"
++        );
++        git(&r.dir, &["add", "-A"]);
++        let (_, out, _) = r.run(&["check", "--all"]);
++        assert!(
++            out.lines()
++                .any(|l| l.starts_with(&format!("{path}:{line}: error SD306 "))),
++            "{ty}: {out}"
++        );
++    }
++}
++
++#[test]
++fn a_project_template_of_a_change_gets_the_title_placeholder_too() {
++    let r = Repo::mixed();
++    r.write(
++        ".spec-dna/templates/plain.md",
++        "---\ntype: intent\n---\n# T\n\n## Intent\n\n{{Text.}}\n",
++    );
++    assert_eq!(
++        r.run(&["new", "intent", "drip", "--template", "plain"]).0,
++        0
++    );
++    assert!(
++        r.read("docs/intent/drip/intent.md")
++            .contains("\n# {{The title of the change.}}\n")
++    );
++}
++
++#[test]
++fn a_document_that_is_not_of_a_change_keeps_the_title_of_its_id() {
++    let r = Repo::mixed();
++    assert_eq!(r.run(&["new", "requirements", "water-supply"]).0, 0);
++    assert!(
++        r.read("docs/requirements/water-supply.md")
++            .contains("\n# Water supply\n")
++    );
++    assert_eq!(r.run(&["new", "decision", "use-a-timer"]).0, 0);
++    assert!(
++        r.read("docs/decisions/use-a-timer.md")
++            .contains("# Use a timer\n")
++    );
++}
++
++#[test]
++fn the_spec_template_writes_a_task_box_in_the_concern() {
++    let r = Repo::mixed();
++    assert_eq!(r.run(&["new", "intent", "drip"]).0, 0);
++    assert_eq!(r.run(&["new", "spec", "drip"]).0, 0);
++    let text = r.read("docs/intent/drip/spec.md");
++    assert!(
++        text.contains("## Concerns\n\n- [ ] {{An open concern.}}\n"),
++        "{text}"
++    );
++    assert!(
++        text.contains("## Open questions\n\n- [ ] {{A question that has no answer yet.}}\n"),
++        "{text}"
++    );
++}

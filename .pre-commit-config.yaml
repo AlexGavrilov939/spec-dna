@@ -21,9 +21,11 @@ repos:
       - id: check-yaml
       - id: detect-private-key
       - id: end-of-file-fixer
+        exclude: ^bench/team2/tasks/.*\.patch$
       - id: mixed-line-ending
         args: [--fix=lf]
       - id: trailing-whitespace
+        exclude: ^bench/team2/tasks/.*\.patch$
       - id: no-commit-to-branch
         args: [--branch, master]
 
@@ -32,6 +34,7 @@ repos:
     hooks:
       - id: editorconfig-checker
         alias: ec
+        exclude: ^bench/team2/tasks/.*\.patch$
 
   - repo: https://github.com/DavidAnson/markdownlint-cli2
     rev: v0.24.0

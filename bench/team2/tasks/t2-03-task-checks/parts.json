@@ -1,0 +1,151 @@
+{
+  "part1": [
+    [
+      "tests/change_model.rs",
+      "new_intent_writes_class_routine_for_each_of_the_3_templates"
+    ],
+    [
+      "tests/change_model.rs",
+      "a_project_template_of_an_intent_keeps_its_own_front_matter"
+    ],
+    [
+      "tests/change_model.rs",
+      "sd913_names_a_paragraph_under_files_and_not_a_none_paragraph"
+    ],
+    [
+      "tests/change_model.rs",
+      "sd915_names_a_paragraph_under_files"
+    ],
+    [
+      "tests/change_model.rs",
+      "the_cache_header_has_format_2_and_parser_version_14"
+    ],
+    [
+      "tests/change_model.rs",
+      "a_paragraph_under_files_gives_the_same_result_with_a_cold_and_a_warm_cache"
+    ],
+    [
+      "tests/finish.rs",
+      "an_add_item_of_interfaces_needs_its_document_or_a_delta_line_that_adds_it"
+    ],
+    [
+      "tests/lifecycle_checks.rs",
+      "interfaces_accept_none_and_add_of_a_new_interface"
+    ],
+    [
+      "tests/lifecycle_checks.rs",
+      "an_add_item_needs_its_document_when_the_diff_deletes_the_folder"
+    ],
+    [
+      "tests/lifecycle_checks.rs",
+      "an_item_with_no_box_in_concerns_gives_sd925"
+    ],
+    [
+      "tests/lifecycle_checks.rs",
+      "an_item_with_no_box_in_open_questions_names_sd922"
+    ],
+    [
+      "tests/lifecycle_checks.rs",
+      "sd925_reads_a_spec_of_each_status_except_a_closed_change"
+    ],
+    [
+      "tests/lifecycle_checks.rs",
+      "a_none_item_states_nothing_in_concerns_and_open_questions"
+    ],
+    [
+      "tests/new_place.rs",
+      "intent_writes_its_folder_and_spec_and_plan_need_it"
+    ],
+    [
+      "tests/task_checks.rs",
+      "a_task_with_no_files_label_gives_sd923"
+    ],
+    [
+      "tests/task_checks.rs",
+      "a_task_with_no_verify_label_gives_sd923"
+    ],
+    [
+      "tests/task_checks.rs",
+      "a_task_that_misses_both_labels_gives_one_diagnostic_with_both_reasons"
+    ],
+    [
+      "tests/task_checks.rs",
+      "files_none_is_a_complete_label"
+    ],
+    [
+      "tests/task_checks.rs",
+      "a_glob_or_a_folder_in_files_gives_sd923"
+    ],
+    [
+      "tests/task_checks.rs",
+      "each_task_of_the_plan_is_checked_and_the_target_is_its_id"
+    ],
+    [
+      "tests/task_checks.rs",
+      "a_task_id_that_an_earlier_task_has_is_checked_once"
+    ],
+    [
+      "tests/task_checks.rs",
+      "the_plan_of_an_intent_that_is_not_accepted_is_checked"
+    ],
+    [
+      "tests/task_checks.rs",
+      "a_new_error_of_strict_fails_check_and_a_warning_does_not"
+    ],
+    [
+      "tests/task_checks.rs",
+      "the_policy_none_and_a_rule_set_the_severity"
+    ],
+    [
+      "tests/task_checks.rs",
+      "a_task_with_more_than_3_paths_gives_sd924"
+    ],
+    [
+      "tests/task_checks.rs",
+      "max_task_files_sets_the_limit"
+    ],
+    [
+      "tests/task_checks.rs",
+      "max_task_files_takes_an_integer_from_1_to_20"
+    ],
+    [
+      "tests/task_checks.rs",
+      "only_a_new_task_diagnostic_fails_the_gate"
+    ],
+    [
+      "tests/templates_new.rs",
+      "spec_and_plan_have_their_required_sections"
+    ]
+  ],
+  "part2": [
+    [
+      "tests/init_change.rs",
+      "reconfigure_keeps_max_task_files"
+    ],
+    [
+      "tests/lifecycle_checks.rs",
+      "an_add_item_with_a_bad_id_gives_sd914"
+    ],
+    [
+      "tests/lifecycle_checks.rs",
+      "a_place_with_no_type_is_not_named_as_requirements"
+    ],
+    [
+      "tests/lifecycle_checks.rs",
+      "a_document_of_another_type_does_not_satisfy_an_add_item_after_the_folder_is_deleted"
+    ]
+  ],
+  "dropped": {
+    "tests/lifecycle_checks.rs::a_none_item_that_is_not_alone_or_not_the_word_is_not_none": "part 1: none=True wrong=True reference=True",
+    "tests/lifecycle_checks.rs::an_item_with_a_box_gives_no_sd925": "part 1: none=True wrong=True reference=True",
+    "tests/lifecycle_commands.rs::the_stage_build_has_3_sub_cases": "part 1: none=True wrong=True reference=True",
+    "tests/task_checks.rs::a_complete_task_gives_no_sd923_or_sd924": "part 1: none=True wrong=True reference=True",
+    "tests/task_checks.rs::an_item_that_is_not_a_task_is_not_checked": "part 1: none=True wrong=True reference=True",
+    "tests/task_checks.rs::a_draft_plan_is_not_checked": "part 1: none=True wrong=True reference=True",
+    "tests/task_checks.rs::a_closed_change_is_not_checked": "part 1: none=True wrong=True reference=True",
+    "tests/task_checks.rs::a_path_that_a_task_lists_twice_counts_once": "part 1: none=True wrong=True reference=True",
+    "tests/task_checks.rs::a_draft_plan_gives_no_sd924": "part 1: none=True wrong=True reference=True",
+    "tests/templates_new.rs::a_project_template_replaces_the_embedded_default_and_keeps_its_own_text": "part 1: none=True wrong=True reference=True",
+    "tests/lifecycle_base.rs::an_add_item_with_a_glob_id_does_not_widen_the_scope_of_sd913": "part 2: none=True wrong=False reference=True"
+  }
+}

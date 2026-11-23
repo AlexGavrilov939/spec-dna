@@ -1,0 +1,568 @@
+diff --git a/src/config.rs b/src/config.rs
+index d04d141..1c6ab5f 100644
+--- a/src/config.rs
++++ b/src/config.rs
+@@ -566,6 +566,56 @@ pub fn scan_pin(text: &str) -> Option<String> {
+     None
+ }
+ 
++/// True if `line` is the pin line `spec-dna = "..."`. It follows the rule of
++/// `scan_pin`, so the key `spec-dna-sha256` is not a pin line.
++fn is_pin_line(line: &str) -> bool {
++    let line = line.trim().trim_start_matches('\u{feff}');
++    let Some(rest) = line.strip_prefix("spec-dna") else {
++        return false;
++    };
++    let Some(rest) = rest.trim_start().strip_prefix('=') else {
++        return false;
++    };
++    rest.trim_start().starts_with(['"', '\''])
++}
++
++/// True if `old` and `new` differ in the pin line and in no other line
++/// (ADR 0013, D19). The pin line is a line before the first table header.
++/// Two texts that are equal, or that differ in another way, give `false`.
++/// The compare reads `\r\n` as `\n` in both texts (ADR 0019): git reads a
++/// working tree with `core.autocrlf` as LF, and TOML has the same meaning for
++/// both line ends. A change of the line ends alone has no pin change, so it
++/// gives `false`.
++pub fn pin_line_only_change(old: &str, new: &str) -> bool {
++    fn without_pin(text: &str) -> String {
++        let mut in_header = true;
++        text.split_inclusive('\n')
++            .filter(|line| {
++                if line.trim().starts_with('[') {
++                    in_header = false;
++                }
++                !(in_header && is_pin_line(line))
++            })
++            .collect()
++    }
++    let (old, new) = (old.replace("\r\n", "\n"), new.replace("\r\n", "\n"));
++    old != new && without_pin(&old) == without_pin(&new)
++}
++
++/// True if the text of a `Cargo.toml` is the package `spec-dna` with the
++/// version `version` (ADR 0013, the 2 facts of the tree binary). A text that
++/// does not parse, or that has no such `[package]`, gives `false`.
++pub fn is_tree_manifest(text: &str, version: &str) -> bool {
++    let Ok(table) = text.parse::<Table>() else {
++        return false;
++    };
++    let Some(package) = table.get("package").and_then(Value::as_table) else {
++        return false;
++    };
++    package.get("name").and_then(Value::as_str) == Some("spec-dna")
++        && package.get("version").and_then(Value::as_str) == Some(version)
++}
++
+ /// The message of a pin mismatch (ADR 0003). `sums` is `[spec-dna-sha256]`,
+ /// if the file has the table. The release form needs the public install
+ /// source and the sum of the asset of this binary. The last sentence follows
+@@ -2358,6 +2408,81 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
+         assert_eq!(scan_pin("spec-dna = 5\n"), None);
+     }
+ 
++    #[test]
++    fn a_pin_line_is_the_key_spec_dna_with_a_string() {
++        assert!(is_pin_line("spec-dna = \"1.2.3\""));
++        assert!(is_pin_line("  spec-dna='1.2.3' # c\r\n"));
++        assert!(is_pin_line("\u{feff}spec-dna = \"1.2.3\""));
++        assert!(!is_pin_line("spec-dna-sha256 = \"x\""));
++        assert!(!is_pin_line("spec-dna = 5"));
++        assert!(!is_pin_line("# spec-dna = \"1.2.3\""));
++        assert!(!is_pin_line("name = \"spec-dna\""));
++    }
++
++    #[test]
++    fn a_pin_only_change_differs_in_the_pin_line_and_nowhere_else() {
++        let old = "spec-dna = \"0.6.0\"\n[[roots]]\npath = \"docs\"\n";
++        let new = "spec-dna = \"0.7.0\"\n[[roots]]\npath = \"docs\"\n";
++        assert!(pin_line_only_change(old, new));
++        // The comment above the pin is part of the text.
++        assert!(!pin_line_only_change(old, &format!("# c\n{new}")));
++        // Another line changes with the pin.
++        assert!(!pin_line_only_change(old, &new.replace("docs", "doc")));
++        assert!(!pin_line_only_change(old, &format!("{new}\n")));
++        // The same text, or a pin line that moves into a table, is no pin-only change.
++        assert!(!pin_line_only_change(old, old));
++        assert!(!pin_line_only_change(
++            old,
++            "[[roots]]\nspec-dna = \"0.7.0\"\npath = \"docs\"\n"
++        ));
++        // The sums table is another line.
++        assert!(!pin_line_only_change(
++            "spec-dna = \"0.6.0\"\nspec-dna-sha256 = \"a\"\n",
++            "spec-dna = \"0.7.0\"\nspec-dna-sha256 = \"b\"\n"
++        ));
++    }
++
++    #[test]
++    fn a_crlf_text_and_its_lf_base_differ_in_the_pin_only() {
++        let old = "spec-dna = \"0.6.0\"\n[[roots]]\npath = \"docs\"\n";
++        let new = "spec-dna = \"0.7.0\"\n[[roots]]\npath = \"docs\"\n";
++        let crlf = |t: &str| t.replace('\n', "\r\n");
++        // `\r\n` is read as `\n`, in the head text and in the base text.
++        assert!(pin_line_only_change(old, &crlf(new)));
++        assert!(pin_line_only_change(&crlf(old), new));
++        assert!(pin_line_only_change(&crlf(old), &crlf(new)));
++        // A change of the line ends alone has no pin change.
++        assert!(!pin_line_only_change(old, &crlf(old)));
++        // Another line changes with the pin.
++        assert!(!pin_line_only_change(
++            old,
++            &crlf(&new.replace("docs", "doc"))
++        ));
++    }
++
++    #[test]
++    fn a_tree_manifest_is_the_package_spec_dna_at_the_version() {
++        let m = |name: &str, version: &str| {
++            format!("[package]\nname = \"{name}\"\nversion = \"{version}\"\n")
++        };
++        assert!(is_tree_manifest(&m("spec-dna", "0.7.0"), "0.7.0"));
++        assert!(!is_tree_manifest(&m("spec-dna", "0.7.1"), "0.7.0"));
++        assert!(!is_tree_manifest(&m("tool", "0.7.0"), "0.7.0"));
++        assert!(!is_tree_manifest("[workspace]\nmembers = []\n", "0.7.0"));
++        assert!(!is_tree_manifest(
++            "name = \"spec-dna\"\nversion = \"0.7.0\"\n",
++            "0.7.0"
++        ));
++        // A workspace version is not a string, and a text that does not parse
++        // is not a manifest.
++        assert!(!is_tree_manifest(
++            "[package]\nname = \"spec-dna\"\nversion.workspace = true\n",
++            "0.7.0"
++        ));
++        assert!(!is_tree_manifest("[package\nname = ", "0.7.0"));
++        assert!(!is_tree_manifest("", "0.7.0"));
++    }
++
+     #[test]
+     fn the_pin_mismatch_message_has_a_release_form() {
+         let Some(own) = release::own_asset("0.5.0") else {
+diff --git a/src/git.rs b/src/git.rs
+index f9db944..02409b7 100644
+--- a/src/git.rs
++++ b/src/git.rs
+@@ -942,6 +942,33 @@ impl Git {
+         Ok(out)
+     }
+ 
++    /// Reads a file of the head tree: the git index for a `staged` `Git`, else
++    /// the file of the working tree. `None` if the file is absent or is not a
++    /// file. The path is from the repository root.
++    pub fn head_file(&self, path: &str) -> Result<Option<Vec<u8>>, String> {
++        if self.staged {
++            // The spec `:<path>` names the entry of the index (stage 0).
++            let got = self.read_at(&[(String::new(), path.to_string())])?;
++            return Ok(got.into_iter().next().flatten());
++        }
++        Ok(std::fs::read(self.root.join(path)).ok())
++    }
++
++    /// True if the head entry of `path` is a symbolic link: the file of the
++    /// working tree, or the entry of the git index (mode 120000) for a
++    /// `staged` `Git`. The path is from the repository root. A path that is
++    /// absent gives `false`. The 2 modes give one answer for a link, where
++    /// `head_file` gives the target in the working tree and the link text in
++    /// the index (ADR 0019).
++    pub fn head_is_symlink(&self, path: &str) -> bool {
++        if self.staged {
++            return self
++                .run(&["ls-files", "-s", "-z", "--", path])
++                .is_ok_and(|out| out.starts_with(b"120000 "));
++        }
++        std::fs::symlink_metadata(self.root.join(path)).is_ok_and(|m| m.file_type().is_symlink())
++    }
++
+     /// Runs a git command with `input` on its standard input.
+     fn run_with_input(&self, args: &[&str], input: String) -> Result<Vec<u8>, String> {
+         let mut child = self
+diff --git a/src/main.rs b/src/main.rs
+index d1ba7a7..be15051 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -1422,12 +1422,34 @@ fn base_pin(repo: &Repo, commit: &str) -> Result<Option<String>, Fatal> {
+         .and_then(|b| config::scan_pin(&String::from_utf8_lossy(&b))))
+ }
+ 
++/// True if `spec-dna.toml` differs from its text in `base` in the pin line
++/// and in no other line. The head text is the working tree, or the git index
++/// for `--staged`.
++fn pin_line_only_change(repo: &Repo, base: &str) -> Result<bool, Fatal> {
++    let old = repo
++        .git
++        .read_at(&[(base.to_string(), config::FILE_NAME.to_string())])
++        .map_err(Fatal::Io)?
++        .into_iter()
++        .next()
++        .flatten();
++    let new = repo.git.head_file(config::FILE_NAME).map_err(Fatal::Io)?;
++    Ok(match (old, new) {
++        (Some(old), Some(new)) => config::pin_line_only_change(
++            &String::from_utf8_lossy(&old),
++            &String::from_utf8_lossy(&new),
++        ),
++        _ => false,
++    })
++}
++
+ /// SD503: a change that edits `spec-dna.toml` together with documents or
+ /// code. A configuration change must be a change of its own. The files that
+ /// `init` writes with it (the adapters, the harness files, the hook files
+ /// that `init` writes or upgrades, the starter files of the evals, and files
+ /// named `spec-dna*`) do not count,
+-/// and a new `spec-dna.toml` (the adoption) is not checked.
++/// and a new `spec-dna.toml` (the adoption) is not checked. In a tree binary,
++/// a change of the pin line alone is not a change of `spec-dna.toml`.
+ fn config_not_alone(
+     repo: &Repo,
+     cfg: &config::Config,
+@@ -1441,6 +1463,11 @@ fn config_not_alone(
+     if *added {
+         return Ok(None);
+     }
++    // In a tree binary, a change of the pin line alone is not a change of
++    // `spec-dna.toml` (ADR 0013, D19).
++    if repo.is_tree_binary() && pin_line_only_change(repo, base)? {
++        return Ok(None);
++    }
+     // The starter files of `skeleton` come with the table `[evals]`.
+     let starter: Vec<String> = cfg
+         .evals
+diff --git a/src/repo.rs b/src/repo.rs
+index c9a4eac..5cc29fa 100644
+--- a/src/repo.rs
++++ b/src/repo.rs
+@@ -131,6 +131,21 @@ impl Repo {
+         Self::parse_config(&text)
+     }
+ 
++    /// True if this binary is a tree binary (ADR 0013): the file `Cargo.toml`
++    /// at the top level of the repository is the package `spec-dna` with the
++    /// version of this binary. It reads the head tree: the git index for
++    /// `check --staged`, else the working tree. A file that is absent or that
++    /// cannot be read gives `false`. A `Cargo.toml` that is a symbolic link is
++    /// no manifest, in the working tree and in the index: the 2 modes read it
++    /// differently, and the target can be outside the repository (ADR 0019).
++    pub fn is_tree_binary(&self) -> bool {
++        !self.git.head_is_symlink("Cargo.toml")
++            && matches!(
++                self.git.head_file("Cargo.toml"),
++                Ok(Some(bytes)) if config::is_tree_manifest(&String::from_utf8_lossy(&bytes), VERSION)
++            )
++    }
++
+     /// Reads `spec-dna.toml` as the git index has it.
+     pub fn load_staged_config(&self) -> Result<Config, Fatal> {
+         let blob = self
+diff --git a/tests/tree_binary.rs b/tests/tree_binary.rs
+new file mode 100644
+index 0000000..d80f8c8
+--- /dev/null
++++ b/tests/tree_binary.rs
+@@ -0,0 +1,303 @@
++//! Tests of the tree binary (ADR 0013, D18 to D20). A binary is a tree binary
++//! when the file `Cargo.toml` at the top level of the repository has
++//! `name = "spec-dna"` and a `version` equal to the version of the binary. In
++//! this mode, SD503 does not count a change of the line `spec-dna = "..."` of
++//! `spec-dna.toml`. Each other rule of the pin stays.
++//!
++//! Reading of the rule for a pin change together with a document: the pin line
++//! is not a change. Thus `spec-dna.toml` has no change, and SD503 (which needs
++//! `spec-dna.toml` and another counted file) does not fire. Any other changed
++//! line of `spec-dna.toml` counts, so SD503 fires with a document or with
++//! `Cargo.toml`.
++
++mod common;
++
++use common::*;
++
++/// The pin of the base commit. It is 0.6.0 or later, so SD503 applies, and it
++/// is not the version of the binary.
++const OLD: &str = "0.6.0";
++
++fn config(pin: &str, extra: &str) -> String {
++    format!("spec-dna = \"{pin}\"\n{extra}[[roots]]\npath = \"docs\"\n")
++}
++
++fn cargo(name: &str, version: &str) -> String {
++    format!("[package]\nname = \"{name}\"\nversion = \"{version}\"\nedition = \"2024\"\n")
++}
++
++/// A repository with 1 commit: the configuration that pins `OLD`, a
++/// `Cargo.toml` with `name` and `cargo_version`, and 1 document.
++fn base(name: &str, cargo_version: &str) -> Repo {
++    let r = Repo::new();
++    r.write("spec-dna.toml", &config(OLD, ""));
++    r.write("Cargo.toml", &cargo(name, cargo_version));
++    r.write("docs/a.md", "# A\n\nA text.\n");
++    r.commit("base");
++    r
++}
++
++/// The release shape: the pin moves to the version of the binary.
++fn move_pin(r: &Repo, extra: &str) {
++    r.write("spec-dna.toml", &config(VERSION, extra));
++}
++
++fn sd503(out: &str) -> usize {
++    out.lines()
++        .filter(|l| l.contains("error SD503 config-not-alone"))
++        .count()
++}
++
++/// The 3 ways to read the head tree: the working tree with no base, the
++/// working tree against a base, and the git index. The change is staged, so
++/// the 3 ways see the same change.
++fn modes(r: &Repo) -> Vec<(&'static str, Vec<&'static str>)> {
++    r.git(&["add", "-A"]);
++    vec![
++        ("no base", vec!["check"]),
++        ("base", vec!["check", "--base", "HEAD"]),
++        ("staged", vec!["check", "--staged"]),
++    ]
++}
++
++#[test]
++fn a_pin_only_change_in_a_tree_binary_is_not_a_configuration_change() {
++    // The release shape: the pin and the version of `Cargo.toml` move together.
++    let r = base("spec-dna", OLD);
++    move_pin(&r, "");
++    r.write("Cargo.toml", &cargo("spec-dna", VERSION));
++    for (name, args) in modes(&r) {
++        let (code, out, err) = r.run(&args);
++        assert_eq!(sd503(&out), 0, "{name}: {out}{err}");
++        assert_eq!(code, 0, "{name}: {out}{err}");
++    }
++}
++
++#[test]
++fn a_pin_change_with_a_document_in_a_tree_binary_has_no_sd503() {
++    // The pin line is not a change of `spec-dna.toml`. The document is the
++    // only counted file, and SD503 needs the configuration and another file.
++    let r = base("spec-dna", VERSION);
++    move_pin(&r, "");
++    r.write("docs/a.md", "# A\n\nA text.\n\nMore text.\n");
++    for (name, args) in modes(&r) {
++        let (code, out, err) = r.run(&args);
++        assert_eq!(sd503(&out), 0, "{name}: {out}{err}");
++        assert_eq!(code, 0, "{name}: {out}{err}");
++    }
++}
++
++#[test]
++fn a_pin_change_with_another_line_in_a_tree_binary_has_sd503() {
++    // The other line counts, so the change has the configuration and a document.
++    let r = base("spec-dna", VERSION);
++    move_pin(&r, "[context]\nbudget = 9000\n");
++    r.write("docs/a.md", "# A\n\nA text.\n\nMore text.\n");
++    for (name, args) in modes(&r) {
++        let (code, out, err) = r.run(&args);
++        assert_eq!(sd503(&out), 1, "{name}: {out}{err}");
++        assert!(
++            out.contains("the change edits spec-dna.toml and 1 other file (first: `docs/a.md`)"),
++            "{name}: {out}"
++        );
++        assert_eq!(code, 1, "{name}: {out}{err}");
++    }
++}
++
++#[test]
++fn another_line_with_a_pin_change_counts_in_the_release_shape() {
++    // The pin moves with the version, and the change adds one more line to
++    // `spec-dna.toml`. `Cargo.toml` is the other counted file.
++    let r = base("spec-dna", OLD);
++    move_pin(&r, "[context]\nbudget = 9000\n");
++    r.write("Cargo.toml", &cargo("spec-dna", VERSION));
++    for (name, args) in modes(&r) {
++        let (code, out, err) = r.run(&args);
++        assert_eq!(sd503(&out), 1, "{name}: {out}{err}");
++        assert!(out.contains("(first: `Cargo.toml`)"), "{name}: {out}");
++        assert_eq!(code, 1, "{name}: {out}{err}");
++    }
++}
++
++#[test]
++fn a_change_of_the_configuration_alone_has_no_sd503_in_a_tree_binary() {
++    // The pin and another line, and no other file: a change of its own.
++    let r = base("spec-dna", VERSION);
++    move_pin(&r, "[context]\nbudget = 9000\n");
++    for (name, args) in modes(&r) {
++        let (code, out, err) = r.run(&args);
++        assert_eq!(sd503(&out), 0, "{name}: {out}{err}");
++        assert_eq!(code, 0, "{name}: {out}{err}");
++    }
++}
++
++#[test]
++fn a_release_binary_in_a_repository_with_another_package_keeps_sd503() {
++    let r = base("spec-dna", OLD);
++    r.write("Cargo.toml", &cargo("tool", VERSION));
++    move_pin(&r, "");
++    for (mode, args) in modes(&r) {
++        let (code, out, err) = r.run(&args);
++        assert_eq!(sd503(&out), 1, "{mode}: {out}{err}");
++        assert_eq!(code, 1, "{mode}: {out}{err}");
++    }
++}
++
++#[test]
++fn a_release_binary_in_a_repository_with_no_cargo_toml_keeps_sd503() {
++    let r = base("spec-dna", VERSION);
++    r.git(&["rm", "-q", "-f", "Cargo.toml"]);
++    r.write("docs/a.md", "# A\n\nA text.\n\nMore text.\n");
++    move_pin(&r, "");
++    for (mode, args) in modes(&r) {
++        let (code, out, err) = r.run(&args);
++        assert!(
++            out.contains("the change edits spec-dna.toml and 2 other files"),
++            "{mode}: {out}{err}"
++        );
++        assert_eq!(code, 1, "{mode}: {out}{err}");
++    }
++}
++
++#[test]
++fn a_package_with_another_version_keeps_sd503() {
++    // The name is right, the version is not the version of the binary.
++    let r = base("spec-dna", OLD);
++    r.write("Cargo.toml", &cargo("spec-dna", "9.9.9"));
++    move_pin(&r, "");
++    for (mode, args) in modes(&r) {
++        let (code, out, err) = r.run(&args);
++        assert_eq!(sd503(&out), 1, "{mode}: {out}{err}");
++        assert_eq!(code, 1, "{mode}: {out}{err}");
++    }
++}
++
++#[test]
++fn a_cargo_toml_in_a_folder_does_not_make_a_tree_binary() {
++    // Only the file at the top level of the repository counts.
++    let r = base("spec-dna", OLD);
++    r.git(&["rm", "-q", "-f", "Cargo.toml"]);
++    r.write("docs/Cargo.toml", &cargo("spec-dna", VERSION));
++    move_pin(&r, "");
++    for (mode, args) in modes(&r) {
++        let (code, out, err) = r.run(&args);
++        assert_eq!(sd503(&out), 1, "{mode}: {out}{err}");
++        assert_eq!(code, 1, "{mode}: {out}{err}");
++    }
++}
++
++#[test]
++fn a_pin_that_differs_still_stops_check_finish_and_eval_run() {
++    // The tree binary has the version of `Cargo.toml`, and the pin differs.
++    let r = base("spec-dna", VERSION);
++    for args in [
++        &["check"][..],
++        &["check", "--base", "HEAD"],
++        &["check", "--staged"],
++        &["finish", "x"],
++        &["eval", "run"],
++    ] {
++        let (code, out, err) = r.run(args);
++        assert_eq!(code, 3, "{args:?}: {out}{err}");
++        assert!(
++            err.contains(&format!(
++                "spec-dna.toml pins version {OLD}, but this binary is {VERSION}."
++            )),
++            "{args:?}: {err}"
++        );
++    }
++}
++
++#[test]
++fn an_unknown_table_still_gives_exit_code_3_in_a_tree_binary() {
++    // A key does not start the mode: the 0.6.1 behaviour stays.
++    let r = base("spec-dna", VERSION);
++    r.write("spec-dna.toml", &config(VERSION, "[dev]\ntree = true\n"));
++    let (code, out, err) = r.run(&["check"]);
++    assert_eq!(code, 3, "{out}{err}");
++    assert!(err.contains("unknown key"), "{err}");
++}
++
++#[test]
++fn check_staged_reads_the_manifest_and_the_configuration_of_the_index() {
++    // The index has the release shape. The working tree changes after the
++    // staging, and `--staged` ignores that change.
++    let r = base("spec-dna", OLD);
++    move_pin(&r, "");
++    r.write("Cargo.toml", &cargo("spec-dna", VERSION));
++    r.git(&["add", "-A"]);
++    r.write("Cargo.toml", &cargo("spec-dna", "9.9.9"));
++    r.write(
++        "spec-dna.toml",
++        &config(VERSION, "[context]\nbudget = 9000\n"),
++    );
++    let (code, out, err) = r.run(&["check", "--staged"]);
++    assert_eq!(sd503(&out), 0, "{out}{err}");
++    assert_eq!(code, 0, "{out}{err}");
++}
++
++#[test]
++fn pin_only_change_with_crlf_in_the_working_tree_gives_no_sd503() {
++    // The base has LF line ends. The working tree has CRLF line ends, as a
++    // checkout with `core.autocrlf` gives, and the change moves the pin. The
++    // TOML meaning of the 2 texts differs in the pin line only.
++    let r = base("spec-dna", VERSION);
++    r.write(
++        "spec-dna.toml",
++        &config(VERSION, "").replace('\n', "\r\n"),
++    );
++    r.write("docs/a.md", "# A\n\nA text.\n\nMore text.\n");
++    for (name, args) in modes(&r) {
++        let (code, out, err) = r.run(&args);
++        assert_eq!(sd503(&out), 0, "{name}: {out}{err}");
++        assert_eq!(code, 0, "{name}: {out}{err}");
++    }
++}
++
++#[test]
++fn a_change_of_the_line_ends_alone_is_no_pin_only_change() {
++    // The pin does not change. A change of the line ends alone is a change of
++    // the file, so SD503 counts it with the document. This guards D-B1.
++    let r = base("spec-dna", VERSION);
++    move_pin(&r, "");
++    r.commit("move the pin");
++    r.write(
++        "spec-dna.toml",
++        &config(VERSION, "").replace('\n', "\r\n"),
++    );
++    r.write("docs/a.md", "# A\n\nA text.\n\nMore text.\n");
++    for (name, args) in modes(&r) {
++        let (code, out, err) = r.run(&args);
++        assert_eq!(sd503(&out), 1, "{name}: {out}{err}");
++        assert_eq!(code, 1, "{name}: {out}{err}");
++    }
++}
++
++/// A repository whose `Cargo.toml` is a symbolic link to a real file of the
++/// tree. The link text is not a manifest.
++#[cfg(unix)]
++fn linked_base() -> Repo {
++    let r = Repo::new();
++    r.write("spec-dna.toml", &config(OLD, ""));
++    r.write("manifest/Cargo.toml", &cargo("spec-dna", VERSION));
++    std::os::unix::fs::symlink("manifest/Cargo.toml", r.dir.join("Cargo.toml")).unwrap();
++    r.write("docs/a.md", "# A\n\nA text.\n");
++    r.commit("base");
++    r
++}
++
++#[cfg(unix)]
++#[test]
++fn a_symlinked_manifest_is_no_tree_binary_in_both_modes() {
++    // The working tree follows the link, and the index holds the link text.
++    // A link is no manifest, so the 2 modes give one answer: SD503 counts the
++    // pin line.
++    let r = linked_base();
++    move_pin(&r, "");
++    r.write("docs/a.md", "# A\n\nA text.\n\nMore text.\n");
++    for (name, args) in modes(&r) {
++        let (code, out, err) = r.run(&args);
++        assert_eq!(sd503(&out), 1, "{name}: {out}{err}");
++        assert_eq!(code, 1, "{name}: {out}{err}");
++    }
++}

@@ -1,0 +1,26 @@
+{
+  "part1": {
+    "tests/layers_checks.rs": [
+      "a_link_into_a_change_folder_gives_sd612_once",
+      "sd612_is_a_warning_in_each_profile_and_a_rule_changes_it",
+      "sd612_has_no_report_for_a_link_inside_the_folder_or_a_plain_name"
+    ],
+    "tests/lifecycle_finished.rs": [
+      "check_all_names_a_dead_link_in_locked_text_after_finish",
+      "a_dead_locked_link_of_no_intent_folder_gets_the_general_pointer",
+      "an_amendment_that_names_the_dead_target_clears_the_info_line",
+      "an_amendment_clears_a_line_with_the_target_the_id_or_the_path",
+      "text_outside_an_amendment_or_another_name_does_not_clear_the_line",
+      "a_closed_change_gives_closed_in_the_pointer",
+      "a_deletion_with_no_commit_keeps_the_pointer_of_the_last_release"
+    ]
+  },
+  "part2": {
+    "tests/layers_checks.rs": [
+      "sd612_pairs_with_the_exact_line_that_sd611_reports"
+    ],
+    "tests/lifecycle_finished.rs": [
+      "check_reads_only_the_changes_that_a_dead_locked_link_names"
+    ]
+  }
+}

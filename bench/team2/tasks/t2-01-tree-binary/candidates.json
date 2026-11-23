@@ -1,0 +1,25 @@
+{
+  "part1": {
+    "tests/tree_binary.rs": [
+      "a_pin_only_change_in_a_tree_binary_is_not_a_configuration_change",
+      "a_pin_change_with_a_document_in_a_tree_binary_has_no_sd503",
+      "a_pin_change_with_another_line_in_a_tree_binary_has_sd503",
+      "another_line_with_a_pin_change_counts_in_the_release_shape",
+      "a_change_of_the_configuration_alone_has_no_sd503_in_a_tree_binary",
+      "a_release_binary_in_a_repository_with_another_package_keeps_sd503",
+      "a_release_binary_in_a_repository_with_no_cargo_toml_keeps_sd503",
+      "a_package_with_another_version_keeps_sd503",
+      "a_cargo_toml_in_a_folder_does_not_make_a_tree_binary",
+      "a_pin_that_differs_still_stops_check_finish_and_eval_run",
+      "an_unknown_table_still_gives_exit_code_3_in_a_tree_binary",
+      "check_staged_reads_the_manifest_and_the_configuration_of_the_index"
+    ]
+  },
+  "part2": {
+    "tests/tree_binary.rs": [
+      "pin_only_change_with_crlf_in_the_working_tree_gives_no_sd503",
+      "a_change_of_the_line_ends_alone_is_no_pin_only_change",
+      "a_symlinked_manifest_is_no_tree_binary_in_both_modes"
+    ]
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "slug": "hours-and-links",
+  "scope": "Do tasks t2, t3, t6, t7 and t8 of the plan, and no other task.",
+  "start": "d5a243c21b18987ccf224b3e56e12d09207847ec",
+  "test_files": [
+    "tests/layers_checks.rs",
+    "tests/lifecycle_finished.rs"
+  ]
+}
