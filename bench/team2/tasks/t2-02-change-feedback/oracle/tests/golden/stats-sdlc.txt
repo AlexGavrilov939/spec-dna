@@ -1,0 +1,23 @@
+4 changes in the history: 2 finished, 1 closed, 1 open
+Plan leading: Time from first conversation to a committed intent.md: 2.0 days (3 changes)
+  note: the conversation is not in git; the value is the median time from the first commit of the folder to the commit that sets `accepted`
+Plan lagging: Survival rate: the share of intent.md files that are accepted rather than closed: 66.7 percent (3 changes)
+Design leading: Elapsed time between the intent.md commit and the spec.md commit: 4.0 days (1 change)
+  note: the value is the median time from the first commit of the intent to the first commit of the spec
+Design lagging: Requirements rework after build starts: spec.md commits after the first plan.md commit: 1.0 commits per change (1 change)
+  note: the value is the mean for each change that has a spec and a plan
+Build leading: Time from plan approval to the merged pull request: 5.0 days (2 changes)
+  note: the value is the median time from the commit that sets the plan `approved` to the first-parent commit that deletes the folder; a rebase merge shows only its last commit
+Build leading: Share of changes that merge from the first implementation pass: n/a (it needs pull request metadata)
+Build lagging: How often the merged diff still matches the committed plan.md: 50.0 percent (2 changes)
+  note: the value is the share of finished changes whose merged diff has no path outside the folder, `Files`, the `Files:` paths of the tasks and the documents of the delta (SD913); the diff is the first-parent commit that deleted the folder, so a rebase merge shows only its last commit
+Build lagging: Hours of work per finished change: n/a (no finished change has an `Hours:` line in the commit that deletes its folder)
+Build lagging: Rework cycles per change: n/a (it needs pull request metadata)
+Test leading: The eval pass rate over time: n/a (the configuration has no [evals] table)
+Test leading: How long a production incident takes to become a permanent eval: n/a (the configuration has no [evals] table)
+Test lagging: Regressions caught in CI against regressions found in production: n/a (it needs the incident tracker)
+Test lagging: Share of requirements with partial evidence only: 0.0 percent (2 requirements)
+  note: 0 of 2 requirements have a partial covers: tag only; 2 have no evidence
+Maintain leading: Time from band breach to an intent.md in the triage queue: n/a (spec-dna has no bands)
+Maintain lagging: Repeat incidents of the same class: n/a (an incident has no class field)
+Deploy both: The other indicators of the playbook: n/a (they need CI logs, telemetry or an incident tracker)

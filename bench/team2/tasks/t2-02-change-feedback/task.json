@@ -1,0 +1,19 @@
+{
+  "slug": "change-feedback",
+  "scope": "Do tasks t1 to t13 of the plan.",
+  "start": "19b2e9ffccfd4f4f5b5dee9e37ed3a07cd250a21",
+  "test_files": [
+    "tests/branch_approval.rs",
+    "tests/cli.rs",
+    "tests/finish.rs",
+    "tests/golden/show-requirement.json",
+    "tests/golden/stats-sdlc-evals.txt",
+    "tests/golden/stats-sdlc.txt",
+    "tests/lifecycle_base.rs",
+    "tests/lifecycle_checks.rs",
+    "tests/lifecycle_commands.rs",
+    "tests/lifecycle_finished.rs",
+    "tests/lifecycle_log.rs",
+    "tests/stats_evals.rs"
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "slug": "tree-binary",
+  "scope": "Do tasks t1 and t2 of the plan.",
+  "start": "3d37214440ca6f0308f87c6da4ad8455efef9c9a",
+  "test_files": [
+    "tests/tree_binary.rs"
+  ]
+}

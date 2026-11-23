@@ -1,0 +1,1818 @@
+diff --git a/src/check.rs b/src/check.rs
+index fe19cf5..f8d5876 100644
+--- a/src/check.rs
++++ b/src/check.rs
+@@ -121,12 +121,65 @@ pub fn diagnose_against(config: &Config, c: &Corpus, base: Option<&Corpus>) -> V
+         }
+     }
+     let mut out = apply_severity(config, out);
++    // SD612 skips a reference that SD611 or SD901 reports in this run, so it
++    // reads the diagnostics after their severity.
++    let into_change = links_into_changes(config, c, &out);
++    out.extend(apply_severity(config, into_change));
+     out.extend(layer_limits(config, c, &layers));
+     out.extend(crate::lifecycle::tree_checks(config, c, base, &layers));
+     out.sort();
+     out
+ }
+ 
++/// SD612: a reference from a document outside the folder of a change into the
++/// folder, that step 0 of `finish` stops on. The references and the exceptions
++/// are those of step 0 (`finish::refs_into`). `reported` has the diagnostics of
++/// the run after their severity. A reference that SD611 or SD901 reports (the
++/// same document, line and target) gives no SD612, so one reference gives
++/// one warning. When SD901 is off, SD612 reports the reference.
++fn links_into_changes(config: &Config, c: &Corpus, reported: &[Diag]) -> Vec<Diag> {
++    let changes = crate::change::collect(c);
++    let folders: Vec<&str> = changes
++        .iter()
++        .filter(|ch| crate::finish::valid_slug(&ch.slug))
++        .map(|ch| ch.dir.as_str())
++        .collect();
++    if folders.is_empty() {
++        return Vec::new();
++    }
++    let mut out: Vec<Diag> = Vec::new();
++    for r in crate::finish::refs_into(config, c, &folders) {
++        let d = &c.docs[r.doc as usize];
++        if let Some(to) = r.to {
++            let id = &c.docs[to as usize].id;
++            if reported.iter().any(|x| {
++                matches!(x.code, Code::DecisionLinksChange | Code::LinkDirection)
++                    && x.path == d.path
++                    && x.line == r.line
++                    && x.target == *id
++            }) {
++                continue;
++            }
++        }
++        let folder = folders[r.folder];
++        let slug = folder.rsplit('/').next().unwrap_or(folder);
++        let new = diag(
++            d,
++            r.line,
++            Code::LinkIntoChange,
++            r.target.clone(),
++            format!(
++                "`{}` names the folder `{folder}` of the change `{slug}`, and `finish {slug}` stops on it; name the change as plain text",
++                r.target
++            ),
++        );
++        if !out.contains(&new) {
++            out.push(new);
++        }
++    }
++    out
++}
++
+ /// The layer of each document, as `layer list` shows it. A document with no
+ /// valid type is in no layer (D12).
+ pub(crate) fn doc_layers(config: &Config, c: &Corpus) -> Vec<Option<usize>> {
+@@ -631,7 +684,8 @@ pub(crate) fn in_locked_text(d: &Doc, editable: &[usize], line: u32) -> bool {
+ /// no longer exists. `check` gives no SD101 and no SD102 for it, because the
+ /// author cannot edit the text. `check --all` names it in an info line, and
+ /// `check --json` has it in `locked_links`. It is not a diagnostic: it has no
+-/// code, no severity and no effect on the exit code.
++/// code, no severity and no effect on the exit code. An amendment section of
++/// the same decision that names the target clears the line (`names_target`).
+ #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+ pub struct LockedLink {
+     pub path: String,
+@@ -640,70 +694,178 @@ pub struct LockedLink {
+     pub target: String,
+     /// Where the amendment must point.
+     pub pointer: String,
++    /// The commit that deleted the folder of the change that the pointer names,
++    /// or `None` if the history has no such commit.
++    pub commit: Option<String>,
+ }
+ 
+ impl LockedLink {
+     /// The info line of `check --all`.
+     pub fn line_text(&self) -> String {
+         format!(
+-            "{}:{}: info: the locked text links `{}`, which no longer exists; add an amendment that points to {}",
+-            self.path, self.line, self.target, self.pointer
++            "{}:{}: info: the locked text links `{}`, which no longer exists; add an amendment that names `{}` and points to {}",
++            self.path, self.line, self.target, self.target, self.pointer
+         )
+     }
+ }
+ 
++/// The names of a place that is gone, as an amendment can write them: the
++/// target as written (with no fragment), the id or the path of the place from
++/// the root of the documents, and the path from the root of the repository,
++/// each with and without `.md`.
++fn place_names(target: &str, gone: &str, full: &str) -> Vec<String> {
++    let mut names = vec![target.split('#').next().unwrap_or("").to_string()];
++    for base in [gone, full] {
++        let bare = base.strip_suffix(".md").unwrap_or(base);
++        for name in [bare.to_string(), format!("{bare}.md")] {
++            if !name.is_empty() && !names.contains(&name) {
++                names.push(name);
++            }
++        }
++    }
++    names
++}
++
++/// True if a line of the decision is in an amendment section. The sections of
++/// history and the live sections are not amendments.
++fn in_amendment(d: &Doc, line: u32) -> bool {
++    d.parsed
++        .chunks
++        .iter()
++        .rposition(|ch| ch.line <= line)
++        .is_some_and(|i| d.amendments.contains(&i))
++}
++
++/// True if an amendment section of the decision names the target that is
++/// gone. A code span, or a word of prose with a `/`, on a line of the section
++/// must equal one of the `names` (a `#` fragment of the token does not
++/// count). For a change folder, the slug in a code span also names it.
++fn names_target(d: &Doc, names: &[String], slug: Option<&str>) -> bool {
++    let bare = |t: &str| t.split('#').next().unwrap_or("").to_string();
++    let p = &d.parsed;
++    p.code_spans
++        .iter()
++        .chain(&p.path_words)
++        .filter(|t| in_amendment(d, t.line))
++        .any(|t| names.contains(&bare(&t.text)))
++        || slug.is_some_and(|s| {
++            p.code_spans
++                .iter()
++                .any(|t| in_amendment(d, t.line) && t.text == s)
++        })
++}
++
+ /// The locked links of a tree: each document or link target of the locked
+ /// text of an accepted decision that is absent. A reference that names a
+-/// document that exists, with a section that is absent, is not in the list.
+-pub fn locked_links(config: &Config, c: &Corpus) -> Vec<LockedLink> {
+-    let mut out: Vec<LockedLink> = Vec::new();
++/// document that exists, with a section that is absent, is not in the list. A
++/// target that an amendment of the decision names is not in the list either.
++/// `ended` gets the folders of the changes (from the repository root) that the
++/// remaining links name, and it gives the change that ended in each folder. The
++/// function calls it once, and only if such a link exists.
++pub fn locked_links(
++    config: &Config,
++    c: &Corpus,
++    ended: &dyn Fn(&[String]) -> HashMap<String, crate::sdlc::EndedChange>,
++) -> Vec<LockedLink> {
++    // A link with the folder of its change, if the target was in one.
++    let mut found: Vec<(LockedLink, Option<(String, String)>)> = Vec::new();
+     for d in &c.docs {
+         let Some(editable) = editable_chunks(config, d) else {
+             continue;
+         };
++        let root = config.roots.get(d.root).map_or("", |r| r.path.as_str());
++        let from_root = |rel: &str| {
++            if root.is_empty() {
++                rel.to_string()
++            } else {
++                format!("{root}/{rel}")
++            }
++        };
+         for r in &d.parsed.refs {
+             if !in_locked_text(d, &editable, r.line) {
+                 continue;
+             }
+             // The place of the target that is gone, to find its change.
+-            let gone = match r.kind {
++            let (gone, full) = match r.kind {
+                 RefKind::Wiki => match c.resolve(&r.target) {
+-                    Res::Missing => r.target.split('#').next().unwrap_or("").to_string(),
++                    Res::Missing => {
++                        let id = r.target.split('#').next().unwrap_or("").to_string();
++                        let full = from_root(&id);
++                        (id, full)
++                    }
+                     _ => continue,
+                 },
+                 RefKind::Link | RefKind::Image => match c.resolve_link(&d.path, &r.target) {
+-                    LinkRes::Missing(path) => match config.roots.get(d.root) {
+-                        Some(root) if !root.path.is_empty() => path
+-                            .strip_prefix(&format!("{}/", root.path))
+-                            .unwrap_or(&path)
+-                            .to_string(),
+-                        _ => path,
+-                    },
++                    LinkRes::Missing(path) => {
++                        let rel = match config.roots.get(d.root) {
++                            Some(root) if !root.path.is_empty() => path
++                                .strip_prefix(&format!("{}/", root.path))
++                                .unwrap_or(&path)
++                                .to_string(),
++                            _ => path.clone(),
++                        };
++                        (rel, path)
++                    }
+                     _ => continue,
+                 },
+             };
++            let change = intent_slug(config, &gone);
++            let slug = change.as_ref().map(|(_, s)| s.as_str());
++            if names_target(d, &place_names(&r.target, &gone, &full), slug) {
++                continue;
++            }
+             let link = LockedLink {
+                 path: d.path.clone(),
+                 line: r.line,
+                 target: r.target.clone(),
+-                pointer: match intent_slug(config, &gone) {
+-                    Some(slug) => format!("the change `{slug}` (`spec-dna log` names its commit)"),
++                pointer: match &change {
++                    Some((_, slug)) => {
++                        format!("the change `{slug}` (`spec-dna log` names its commit)")
++                    }
+                     None => "the new place of the text, or the reason for its removal".to_string(),
+                 },
++                commit: None,
+             };
+-            if !out.contains(&link) {
+-                out.push(link);
+-            }
++            let folder = change.map(|(dir, slug)| (from_root(&format!("{dir}/{slug}")), slug));
++            found.push((link, folder));
++        }
++    }
++    let mut folders: Vec<String> = found
++        .iter()
++        .filter_map(|(_, f)| f.as_ref().map(|(folder, _)| folder.clone()))
++        .collect();
++    folders.sort();
++    folders.dedup();
++    let ended = if folders.is_empty() {
++        HashMap::new()
++    } else {
++        ended(&folders)
++    };
++    let mut out: Vec<LockedLink> = Vec::new();
++    for (mut link, folder) in found {
++        if let Some((folder, slug)) = folder
++            && let Some(e) = ended.get(&folder)
++        {
++            link.pointer = format!(
++                "the change `{slug}` ({} in commit {} on {})",
++                if e.finished { "finished" } else { "closed" },
++                e.commit.get(..12).unwrap_or(&e.commit),
++                e.date
++            );
++            link.commit = Some(e.commit.clone());
++        }
++        if !out.contains(&link) {
++            out.push(link);
+         }
+     }
+     out.sort();
+     out
+ }
+ 
+-/// The name of the change whose folder holds a path, if the path is in the
+-/// folder of a layer that has the type `intent`. `rel` is relative to the
++/// The folder of the layer `intent` and the name of the change whose folder
++/// holds a path, if the path is in such a folder. `rel` is relative to the
+ /// root, and it has no extension for an id.
+-fn intent_slug(config: &Config, rel: &str) -> Option<String> {
++fn intent_slug(config: &Config, rel: &str) -> Option<(String, String)> {
+     config
+         .layers
+         .layers()
+@@ -713,7 +875,7 @@ fn intent_slug(config: &Config, rel: &str) -> Option<String> {
+         .find_map(|dir| {
+             let rest = rel.strip_prefix(dir)?.strip_prefix('/')?;
+             let slug = rest.split('/').next().filter(|s| !s.is_empty())?;
+-            Some(slug.to_string())
++            Some((dir.to_string(), slug.to_string()))
+         })
+ }
+ 
+diff --git a/src/diag.rs b/src/diag.rs
+index a184925..77464cd 100644
+--- a/src/diag.rs
++++ b/src/diag.rs
+@@ -85,6 +85,7 @@ codes! {
+     IncidentUnlinked = "SD609", "incident-unlinked", Warning, "Link the requirements, rules, decisions and procedures that the incident involves, with `[[<id>]]` or a Markdown link.";
+     IndexStale = "SD610", "index-stale", Warning, "Run `spec-dna index <path>` to generate the index again. Do not edit a generated index by hand.";
+     DecisionLinksChange = "SD611", "decision-links-intent", Warning, "Link the decision from the intent instead. A finished intent can be deleted (SD202 allows it), but the locked text of an accepted decision cannot drop a link (SD405). Remove the link before you accept the decision. In an accepted decision, name the intent as plain text, not as a link, in an amendment or a live section. SD901 and `finish` would stop on a link.";
++    LinkIntoChange = "SD612", "link-into-change", Warning, "Name the change as plain text. A reference into the folder of a change (a link, `[[id]]`, `depends-on`, `supersedes` or `from`) breaks when `spec-dna finish` deletes the folder, and `finish` stops on it. As an alternative, link the document that the change moves its text into.";
+     BudgetSoft = "SD701", "budget-soft", Warning, "As a warning, it needs no change in this task. Do not split the document for a warning.";
+     BudgetHard = "SD702", "budget-hard", Error, "The document is new and too large, or it went over the hard budget, or it grew by more than `[budgets] growth` characters. Put the new text into a new document and link it, or move sections out with `spec-dna mv`.";
+     BudgetGrew = "SD703", "budget-grew", Warning, "The document is over a budget and it grew a little. Add only the text that the task needs. Do not split the document for a warning.";
+diff --git a/src/finish.rs b/src/finish.rs
+index cfa2d03..e8ea2fa 100644
+--- a/src/finish.rs
++++ b/src/finish.rs
+@@ -76,6 +76,90 @@ pub struct Plan {
+     pub folder: String,
+     /// The delta lines that the plan applies: `ADD`, `CHANGE`, `REMOVE`.
+     pub applied: (usize, usize, usize),
++    /// The items of the section `Hours` of the plan of the change.
++    pub hours: Hours,
++}
++
++/// The items of the section `Hours` of a plan (design 0.7.0, section 15). An
++/// item starts with a number of hours: up to 4 digits, and up to 2 decimals
++/// after a `.`. An optional `h` follows. Then the item ends, or it has `:` or a
++/// space and free text.
++#[derive(Debug, Default, PartialEq)]
++pub struct Hours {
++    /// The total in hundredths of an hour. It is `None` if the plan has no
++    /// item of `Hours`, or if an item has no number. The sum of integers has
++    /// no rounding error.
++    pub total: Option<u64>,
++    /// The text of each item that has no number.
++    pub bad: Vec<String>,
++}
++
++impl Hours {
++    /// The total as the line `Hours: <total>` and the field `hours` write it:
++    /// no zero after the last digit.
++    pub fn text(&self) -> Option<String> {
++        self.total.map(format_hours)
++    }
++}
++
++/// A number of hundredths as a number of hours, with no zero after the last
++/// digit: `350` is `3.5`, and `400` is `4`.
++pub fn format_hours(hundredths: u64) -> String {
++    let (whole, frac) = (hundredths / 100, hundredths % 100);
++    match frac {
++        0 => whole.to_string(),
++        f if f % 10 == 0 => format!("{whole}.{}", f / 10),
++        f => format!("{whole}.{f:02}"),
++    }
++}
++
++/// The hundredths of an hour that an item of `Hours` starts with, or `None` if
++/// the item has another form.
++fn item_hours(text: &str) -> Option<u64> {
++    let b = text.as_bytes();
++    let digits = b.iter().take_while(|c| c.is_ascii_digit()).count();
++    if !(1..=4).contains(&digits) {
++        return None;
++    }
++    let mut hundredths = text[..digits].parse::<u64>().ok()? * 100;
++    let mut at = digits;
++    if b.get(at) == Some(&b'.') {
++        let frac = b[at + 1..]
++            .iter()
++            .take_while(|c| c.is_ascii_digit())
++            .count();
++        if !(1..=2).contains(&frac) {
++            return None;
++        }
++        let value: u64 = text[at + 1..at + 1 + frac].parse().ok()?;
++        hundredths += if frac == 1 { value * 10 } else { value };
++        at += 1 + frac;
++    }
++    if b.get(at) == Some(&b'h') {
++        at += 1;
++    }
++    match b.get(at) {
++        None | Some(b':') | Some(b' ') | Some(b'\t') | Some(b'\n') => Some(hundredths),
++        _ => None,
++    }
++}
++
++/// Adds the items of `Hours` of a plan document.
++fn plan_hours(plan: &Doc) -> Hours {
++    let mut out = Hours::default();
++    let mut total = 0u64;
++    let mut any = false;
++    for item in change::section_items(plan, ItemSection::Hours) {
++        any = true;
++        match item_hours(&item.text) {
++            Some(h) => total += h,
++            None => out.bad.push(lifecycle::short(&item.text)),
++        }
++    }
++    if any && out.bad.is_empty() {
++        out.total = Some(total);
++    }
++    out
+ }
+ 
+ /// A stop: the step of the design and the reason.
+@@ -159,6 +243,11 @@ pub fn plan(cx: &Ctx) -> Result<Plan, Failure> {
+     let mut out = Plan {
+         removes: sorted(cx.folder_files),
+         folder: cx.folder.to_string(),
++        hours: ch
++            .plan
++            .as_ref()
++            .map(|a| plan_hours(&head.docs[a.doc as usize]))
++            .unwrap_or_default(),
+         ..Plan::default()
+     };
+     if ch.intent_status() == "closed" {
+@@ -615,43 +704,67 @@ fn new_document_problem(cx: &Ctx, ch: &Change, d: &Delta) -> Option<String> {
+     None
+ }
+ 
+-/// Step 0. Each reference from a document outside the folder to a document or a
+-/// file in the folder: a Markdown link or image, `[[id]]`, `depends-on`,
+-/// `supersedes` and `from`. A stub and a generated index are not sources. The
+-/// locked text of an accepted decision is not a source: its text cannot change
+-/// (SD405), so SD101 and SD102 do not report it either. The front matter is
+-/// not locked.
+-fn inbound(cx: &Ctx) -> Vec<Diag> {
+-    let head = cx.head;
+-    let folder = cx.folder;
++/// A reference from a document outside the folder of a change to a document or a
++/// file in that folder (`refs_into`).
++pub(crate) struct RefInto {
++    /// The document that has the reference.
++    pub doc: u32,
++    pub line: u32,
++    /// `UnresolvedReference` for an id and a field, `UnresolvedLink` for a
++    /// Markdown link or image.
++    pub code: Code,
++    /// The target as the text writes it.
++    pub target: String,
++    /// The place of the folder in the list that `refs_into` got.
++    pub folder: usize,
++    /// The document that the reference names, if it names one.
++    pub to: Option<u32>,
++}
++
++/// Each reference from a document outside a folder to a document or a file in
++/// it: a Markdown link or image, `[[id]]`, `depends-on`, `supersedes` and
++/// `from`. A stub and a generated index are not sources. The locked text of an
++/// accepted decision is not a source: its text cannot change (SD405), so SD101
++/// and SD102 do not report it either. The front matter is not locked. Step 0
++/// of `finish` gives one folder, and SD612 (`check`) gives all the folders of
++/// the changes. One pass over the references resolves each target once.
++pub(crate) fn refs_into(config: &Config, head: &Corpus, folders: &[&str]) -> Vec<RefInto> {
+     let mut out = Vec::new();
+-    let hit = |d: &Doc, line: u32, code: Code, target: &str, out: &mut Vec<Diag>| {
+-        out.push(as_error(check::diag(
+-            d,
+-            line,
+-            code,
+-            target,
+-            format!(
+-                "`{target}` names the folder `{folder}` of the change, and `finish` deletes the folder"
+-            ),
+-        )));
++    // The first folder that holds the path and does not hold the source.
++    let folder_of = |source: &str, path: &str| {
++        folders
++            .iter()
++            .position(|f| in_folder(f, path) && !in_folder(f, source))
+     };
+-    for d in &head.docs {
+-        if in_folder(folder, &d.path) || d.moved_to.is_some() || d.generated.is_some() {
++    for (di, d) in head.docs.iter().enumerate() {
++        if d.moved_to.is_some() || d.generated.is_some() {
+             continue;
+         }
+-        let editable = check::editable_chunks(cx.config, d);
++        let editable = check::editable_chunks(config, d);
+         let locked = |line: u32| {
+             editable
+                 .as_ref()
+                 .is_some_and(|e| check::in_locked_text(d, e, line))
+         };
+-        let names_folder = |r: Res| match r {
+-            Res::Found(t, _, _) => in_folder(folder, &head.docs[t as usize].path),
+-            Res::Ambiguous(v) => v
+-                .iter()
+-                .any(|&t| in_folder(folder, &head.docs[t as usize].path)),
+-            _ => false,
++        let mut hit = |line: u32, code: Code, target: &str, folder: usize, to: Option<u32>| {
++            out.push(RefInto {
++                doc: di as u32,
++                line,
++                code,
++                target: target.to_string(),
++                folder,
++                to,
++            });
++        };
++        // The folder and the document of an id.
++        let by_id = |r: Res| match r {
++            Res::Found(t, _, _) => {
++                folder_of(&d.path, &head.docs[t as usize].path).map(|f| (f, Some(t)))
++            }
++            Res::Ambiguous(v) => v.iter().find_map(|&t| {
++                folder_of(&d.path, &head.docs[t as usize].path).map(|f| (f, Some(t)))
++            }),
++            _ => None,
+         };
+         for r in &d.parsed.refs {
+             if locked(r.line) {
+@@ -659,13 +772,13 @@ fn inbound(cx: &Ctx) -> Vec<Diag> {
+             }
+             match r.kind {
+                 RefKind::Wiki => {
+-                    if names_folder(head.resolve(&r.target)) {
+-                        hit(d, r.line, Code::UnresolvedReference, &r.target, &mut out);
++                    if let Some((f, to)) = by_id(head.resolve(&r.target)) {
++                        hit(r.line, Code::UnresolvedReference, &r.target, f, to);
+                     }
+                 }
+                 RefKind::Link | RefKind::Image => {
+-                    if link_into(head, &d.path, &r.target, folder) {
+-                        hit(d, r.line, Code::UnresolvedLink, &r.target, &mut out);
++                    if let Some((f, to)) = link_into(head, &d.path, &r.target, &folder_of) {
++                        hit(r.line, Code::UnresolvedLink, &r.target, f, to);
+                     }
+                 }
+             }
+@@ -676,33 +789,58 @@ fn inbound(cx: &Ctx) -> Vec<Diag> {
+             .chain(&d.depends_on)
+             .chain(d.from.iter());
+         for (t, line) in fields {
+-            if names_folder(head.resolve(t)) {
+-                hit(d, *line, Code::UnresolvedReference, t, &mut out);
++            if let Some((f, to)) = by_id(head.resolve(t)) {
++                hit(*line, Code::UnresolvedReference, t, f, to);
+             }
+         }
+     }
+     out
+ }
+ 
+-/// True if a Markdown link resolves to a path in the folder. A link to the
+-/// folder itself counts.
+-fn link_into(c: &Corpus, from: &str, target: &str, folder: &str) -> bool {
+-    if matches!(
+-        c.resolve_link(from, target),
+-        LinkRes::External | LinkRes::SelfAnchor(_) | LinkRes::Missing(_)
+-    ) {
+-        return false;
+-    }
++/// Step 0. Each reference into the folder, as an error of `finish`.
++fn inbound(cx: &Ctx) -> Vec<Diag> {
++    let folder = cx.folder;
++    refs_into(cx.config, cx.head, &[folder])
++        .into_iter()
++        .map(|r| {
++            as_error(check::diag(
++                &cx.head.docs[r.doc as usize],
++                r.line,
++                r.code,
++                &r.target,
++                format!(
++                    "`{}` names the folder `{folder}` of the change, and `finish` deletes the folder",
++                    r.target
++                ),
++            ))
++        })
++        .collect()
++}
++
++/// The folder that a Markdown link names, and the document that it resolves
++/// to. A link to the folder itself counts. `folder_of` gives the folder of a
++/// path, for the document `from`.
++fn link_into(
++    c: &Corpus,
++    from: &str,
++    target: &str,
++    folder_of: &dyn Fn(&str, &str) -> Option<usize>,
++) -> Option<(usize, Option<u32>)> {
++    let to = match c.resolve_link(from, target) {
++        LinkRes::External | LinkRes::SelfAnchor(_) | LinkRes::Missing(_) => return None,
++        LinkRes::File(_, to, _) | LinkRes::Dir(to) => to,
++    };
+     let path = target.split(['#', '?']).next().unwrap_or("").trim();
+     if path.is_empty() {
+-        return false;
++        return None;
+     }
+     let base = if path.starts_with('/') {
+         ""
+     } else {
+         parent(from)
+     };
+-    join(base, path).is_some_and(|p| in_folder(folder, &p))
++    let joined = join(base, path)?;
++    folder_of(from, &joined).map(|f| (f, to))
+ }
+ 
+ /// One edit of a text: the byte range to replace, and the new text. An insert
+@@ -1924,4 +2062,39 @@ mod tests {
+             st.reason
+         );
+     }
++
++    #[test]
++    fn an_item_of_hours_starts_with_a_number() {
++        for (text, want) in [
++            ("2", Some(200)),
++            ("1.5: code", Some(150)),
++            ("0.25h", Some(25)),
++            ("12.5h: review", Some(1250)),
++            ("2 hours", Some(200)),
++            ("9999", Some(999_900)),
++            ("1.5:", Some(150)),
++            ("12345", None),
++            ("1.234", None),
++            ("1.", None),
++            (".5", None),
++            ("2hours", None),
++            ("about 2", None),
++            ("", None),
++        ] {
++            assert_eq!(item_hours(text), want, "{text:?}");
++        }
++    }
++
++    #[test]
++    fn the_total_has_no_zero_after_the_last_digit() {
++        for (hundredths, want) in [
++            (350, "3.5"),
++            (400, "4"),
++            (30, "0.3"),
++            (205, "2.05"),
++            (0, "0"),
++        ] {
++            assert_eq!(format_hours(hundredths), want);
++        }
++    }
+ }
+diff --git a/src/git.rs b/src/git.rs
+index 8ce713c..6b8b36d 100644
+--- a/src/git.rs
++++ b/src/git.rs
+@@ -1132,6 +1132,23 @@ impl Git {
+         Ok(out.stdout)
+     }
+ 
++    /// Reads the messages of commits with one `git cat-file --batch` process.
++    /// The result has one item for each id, in order. A commit that git cannot
++    /// read gives `None`. The message is the text after the first empty line of
++    /// the commit object, so a signature or a merge tag in the header does not
++    /// matter.
++    pub fn commit_messages(&self, ids: &[String]) -> Result<Vec<Option<String>>, String> {
++        let objects = self.read_blobs(ids)?;
++        Ok(ids
++            .iter()
++            .map(|id| {
++                let raw = objects.get(id)?;
++                let at = raw.windows(2).position(|w| w == b"\n\n")?;
++                Some(String::from_utf8_lossy(&raw[at + 2..]).into_owned())
++            })
++            .collect())
++    }
++
+     /// Reads blobs with one `git cat-file --batch` process.
+     pub fn read_blobs(&self, ids: &[String]) -> Result<HashMap<String, Vec<u8>>, String> {
+         let mut out = HashMap::new();
+@@ -1944,4 +1961,50 @@ mod tests {
+         assert!(!g.is_ancestor(&b, &a));
+         assert!(!g.is_ancestor("nope", &a));
+     }
++
++    #[test]
++    fn commit_messages_come_from_one_process_in_the_order_of_the_ids() {
++        let t = Tmp::new();
++        t.write("a.txt", "a\n");
++        let one = t.commit("a@example.test", "one\n\nHours: 2\n\nlast paragraph");
++        t.write("a.txt", "b\n");
++        let two = t.commit("a@example.test", "two");
++        let none = "0".repeat(40);
++        let got = Git::new(&t.dir)
++            .commit_messages(&[two.clone(), none, one.clone(), two])
++            .unwrap();
++        assert_eq!(got[0].as_deref(), Some("two\n"));
++        assert_eq!(got[1], None);
++        assert_eq!(
++            got[2].as_deref(),
++            Some("one\n\nHours: 2\n\nlast paragraph\n")
++        );
++        assert_eq!(got[3], got[0]);
++        assert!(Git::new(&t.dir).commit_messages(&[]).unwrap().is_empty());
++    }
++
++    #[test]
++    fn a_commit_message_follows_a_multi_line_header() {
++        let t = Tmp::new();
++        t.write("a.txt", "a\n");
++        t.commit("a@example.test", "base");
++        // A merge commit has 2 parents and a header of 4 lines.
++        t.git(&["checkout", "-q", "-b", "side"]);
++        t.write("b.txt", "b\n");
++        t.commit("a@example.test", "side");
++        t.git(&["checkout", "-q", "main"]);
++        t.write("c.txt", "c\n");
++        t.commit("a@example.test", "main");
++        t.git(&[
++            "merge",
++            "-q",
++            "--no-ff",
++            "-m",
++            "merge side\n\nHours: 1",
++            "side",
++        ]);
++        let merge = t.git(&["rev-parse", "HEAD"]);
++        let got = Git::new(&t.dir).commit_messages(&[merge]).unwrap();
++        assert_eq!(got[0].as_deref(), Some("merge side\n\nHours: 1\n"));
++    }
+ }
+diff --git a/src/main.rs b/src/main.rs
+index 1ef6727..e75beb7 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -222,8 +222,11 @@ with the status closed runs the first two steps and deletes the folder. The
+ folder must be tracked and clean. --dry-run prints the diff of each file and
+ `remove <path>` for each deleted file, and writes nothing. Without it, the
+ command writes the files, deletes the folder, and stages the paths with
+-`git add`. It makes no commit. It is the only command that deletes documents. Exit codes: 1 a stop,
+-3 pin, base or configuration, 4 write error, 5 no folder.",
++`git add`. It makes no commit. If the plan has a section Hours, it adds the
++numbers and prints the line `Hours: <total>`: put the line in the commit
++message, and keep it in the squash message. It is the only command that
++deletes documents. Exit codes: 1 a stop, 3 pin, base or configuration, 4
++write error, 5 no folder.",
+     ),
+     (
+         "next",
+@@ -265,7 +268,9 @@ history of git. It reads each commit that deleted an intent.md. The status of
+ the intent in the parent of that commit gives the result: accepted is
+ finished, and any other status is closed. For each change it prints the date,
+ the result, the slug, the class, the counts of the delta lines (add, change,
+-remove) of its spec, the commit and the title. A change that one pull request
++remove) of its spec, the hours, the commit and the title. The hours are the
++number of the last line `Hours: <number>` of the commit message that deleted
++the intent (a dash if there is none). A change that one pull request
+ held with its approval and its code, and that a squash merge brought to the
+ default branch, has no entry. A move of intent.md out of the intent folder
+ that keeps its id as an alias (spec-dna mv) does not end a change. A plain
+@@ -1316,7 +1321,39 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
+     let (new_errors, new_warnings) = (count(Severity::Error, true), count(Severity::Warning, true));
+     let failed = if a.all { errors > 0 } else { new_errors > 0 };
+     // Not diagnostics: no code, no severity, no effect on the exit code.
+-    let locked = check::locked_links(&cfg, head);
++    // The pointer of a link into a finished change needs the history. The
++    // list is only for the info lines of `--all` and for `--json`.
++    let locked = if a.all || a.json {
++        // One `git log` for each folder of the `intent` layer that holds a
++        // folder that a dead link names, and only for those folders.
++        let ended = |folders: &[String]| {
++            let mut out = std::collections::HashMap::new();
++            if repo.head_commit().is_none() {
++                return out;
++            }
++            let mut dirs: Vec<&str> = folders
++                .iter()
++                .filter_map(|f| f.rsplit_once('/').map(|(d, _)| d))
++                .collect();
++            dirs.sort();
++            dirs.dedup();
++            for dir in dirs {
++                let here: Vec<String> = folders
++                    .iter()
++                    .filter(|f| f.rsplit_once('/').is_some_and(|(d, _)| d == dir))
++                    .cloned()
++                    .collect();
++                for e in sdlc::ended_changes(&repo.git, dir, &here).unwrap_or_default() {
++                    // The list is the newest first: keep the first of a folder.
++                    out.entry(e.folder.clone()).or_insert(e);
++                }
++            }
++            out
++        };
++        check::locked_links(&cfg, head, &ended)
++    } else {
++        Vec::new()
++    };
+     let mut order: Vec<usize> = (0..outcome.head.len()).collect();
+     order.sort_by(|&x, &y| outcome.head[x].cmp(&outcome.head[y]));
+     if a.json {
+@@ -1353,6 +1390,7 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
+                 .num("line", l.line)
+                 .str("target", &l.target)
+                 .str("pointer", &l.pointer)
++                .opt_str("commit", l.commit.as_deref())
+                 .end()
+         });
+         let approvals_json = report.approvals.iter().map(|x| {
+@@ -2915,6 +2953,7 @@ fn report_finish(slug: &str, folder: &str, a: &Args, plan: &finish::Plan) {
+                 .num("step", 6)
+                 .raw("diagnostics", "[]")
+                 .raw("files", &json::array(writes.chain(removes)))
++                .raw("hours", &plan.hours.text().unwrap_or("null".to_string()))
+                 .end()
+         );
+         return;
+@@ -2944,6 +2983,17 @@ fn report_finish(slug: &str, folder: &str, a: &Args, plan: &finish::Plan) {
+             plan.removes.len()
+         );
+     }
++    // `finish` makes no commit, so the person or the agent that commits writes
++    // the line in the message.
++    for item in &plan.hours.bad {
++        println!("note: the item \"{item}\" of Hours has no number of hours; no total");
++    }
++    if let Some(total) = plan.hours.text() {
++        println!("Hours: {total}");
++        println!(
++            "add this line to the commit message of the change; keep it in the squash message"
++        );
++    }
+ }
+ 
+ fn report_move(m: &mv::Moved, json: bool) {
+diff --git a/src/sdlc.rs b/src/sdlc.rs
+index b8d63de..0748e01 100644
+--- a/src/sdlc.rs
++++ b/src/sdlc.rs
+@@ -221,6 +221,108 @@ fn off(json: bool, empty: &str) -> u8 {
+     0
+ }
+ 
++/// The commits that deleted an `intent.md` under `dir`, the newest first, as
++/// `log` lists them. `dir` is a folder of the `intent` layer, from the
++/// repository root. A move out that keeps the id as an alias is not an end.
++/// With `only`, the list keeps the deletions of these folders (from the
++/// repository root) and nothing else: the check for a move out and the reads
++/// that follow run for them only. `log` and the pointer of a locked link
++/// (`check`) both read this list.
++pub fn ended(
++    git: &Git,
++    dir: &str,
++    since: Option<&str>,
++    only: Option<&[String]>,
++) -> Result<Vec<DeletedIntent>, String> {
++    let mut found = git.deleted_intents(dir, since)?;
++    if let Some(only) = only {
++        found.retain(|e| {
++            e.path
++                .strip_suffix("/intent.md")
++                .is_some_and(|f| only.iter().any(|o| o == f))
++        });
++    }
++    let moved = git.moved_out(dir, &found)?;
++    Ok(found
++        .into_iter()
++        .zip(moved)
++        .filter(|(_, m)| !m)
++        .map(|(e, _)| e)
++        .collect())
++}
++
++/// A change that left the default branch, for the pointer of a locked link.
++#[derive(Clone, Debug)]
++pub struct EndedChange {
++    /// The folder of the change, from the repository root.
++    pub folder: String,
++    /// The commit that deleted its `intent.md`: the commit that `log` lists.
++    pub commit: String,
++    /// The date of the commit, as `YYYY-MM-DD` in UTC.
++    pub date: String,
++    /// True for `finished`, false for `closed`.
++    pub finished: bool,
++}
++
++/// The ended changes of the folders `folders` under the folder `dir` of the
++/// `intent` layer, the newest first, with the result of each (see
++/// `Outcome::of`). It reads no other change.
++pub fn ended_changes(git: &Git, dir: &str, folders: &[String]) -> Result<Vec<EndedChange>, String> {
++    let list = ended(git, dir, None, Some(folders))?;
++    let mut specs = Vec::new();
++    let mut kept = Vec::new();
++    for e in &list {
++        let (Some(parent), Some(folder)) = (&e.parent, e.path.strip_suffix("/intent.md")) else {
++            continue;
++        };
++        specs.push((parent.clone(), e.path.clone()));
++        kept.push((e, folder));
++    }
++    let texts = git.read_at(&specs)?;
++    Ok(kept
++        .into_iter()
++        .zip(texts)
++        .map(|((e, folder), text)| EndedChange {
++            folder: folder.to_string(),
++            commit: e.commit.clone(),
++            date: utc_date(e.time),
++            finished: text
++                .map(|b| Outcome::of(&status_of(&String::from_utf8_lossy(&b))) == Outcome::Finished)
++                .unwrap_or(false),
++        })
++        .collect())
++}
++
++/// The number of the last line `Hours: <number>` of a commit message. The line
++/// can be in any paragraph, because a host can write the messages of a squash
++/// as a list. A line with other text after the number is not such a line. The
++/// number has up to 7 digits, and up to 2 decimals after a `.`. A longer number
++/// would lose digits or read as `inf` in JSON, so the line gives no value.
++fn hours_line(message: &str) -> Option<f64> {
++    message.lines().rev().find_map(|line| {
++        let number = line.strip_prefix("Hours:")?.trim_matches([' ', '\t']);
++        let (whole, frac) = match number.split_once('.') {
++            Some((w, f)) => (w, Some(f)),
++            None => (number, None),
++        };
++        let digits = |t: &str| !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit());
++        (digits(whole) && whole.len() <= 7 && frac.is_none_or(|f| digits(f) && f.len() <= 2))
++            .then(|| number.parse().ok())
++            .flatten()
++    })
++}
++
++/// The hours of the commits, by commit: the value of the last `Hours:` line of
++/// the message. A commit with no such line is not in the map.
++fn hours_of(git: &Git, commits: &[String]) -> Result<HashMap<String, f64>, Fatal> {
++    let messages = git.commit_messages(commits).map_err(Fatal::Io)?;
++    Ok(commits
++        .iter()
++        .zip(messages)
++        .filter_map(|(c, m)| Some((c.clone(), hours_line(&m?)?)))
++        .collect())
++}
++
+ // log
+ 
+ struct Entry {
+@@ -228,6 +330,8 @@ struct Entry {
+     outcome: Outcome,
+     commit: String,
+     time: i64,
++    /// The hours of the line `Hours:` of the commit message.
++    hours: Option<f64>,
+ }
+ 
+ /// `spec-dna log [--since <rev>]`: the finished and the closed changes.
+@@ -253,16 +357,7 @@ pub fn log(repo: &Repo, cfg: &Config, since: Option<&str>, json: bool) -> Result
+     let mut raw = Vec::new();
+     if repo.head_commit().is_some() {
+         for dir in lifecycle::intent_dirs(cfg) {
+-            let found = git.deleted_intents(&dir, since).map_err(Fatal::Io)?;
+-            // A move out that keeps the id as an alias is not an end.
+-            let moved = git.moved_out(&dir, &found).map_err(Fatal::Io)?;
+-            raw.extend(
+-                found
+-                    .into_iter()
+-                    .zip(moved)
+-                    .filter(|(_, m)| !m)
+-                    .map(|(e, _)| e),
+-            );
++            raw.extend(ended(git, &dir, since, None).map_err(Fatal::Io)?);
+         }
+     }
+     raw.sort_by_key(|e| std::cmp::Reverse(e.time));
+@@ -276,6 +371,8 @@ pub fn log(repo: &Repo, cfg: &Config, since: Option<&str>, json: bool) -> Result
+         kept.push(e);
+     }
+     let trees = read_trees(git, &at)?;
++    let commits: Vec<String> = kept.iter().map(|e| e.commit.clone()).collect();
++    let hours = hours_of(git, &commits)?;
+     let entries: Vec<Entry> = kept
+         .iter()
+         .zip(&at)
+@@ -287,6 +384,7 @@ pub fn log(repo: &Repo, cfg: &Config, since: Option<&str>, json: bool) -> Result
+                 facts,
+                 commit: e.commit.clone(),
+                 time: e.time,
++                hours: hours.get(&e.commit).copied(),
+             }
+         })
+         .collect();
+@@ -303,6 +401,10 @@ pub fn log(repo: &Repo, cfg: &Config, since: Option<&str>, json: bool) -> Result
+                 .str("title", &e.facts.title)
+                 .str("result", e.outcome.name())
+                 .raw("delta", &delta)
++                .raw(
++                    "hours",
++                    &e.hours.map_or("null".to_string(), |h| h.to_string()),
++                )
+                 .str("commit", &e.commit)
+                 .str("date", &utc_date(e.time))
+                 .end()
+@@ -321,7 +423,7 @@ pub fn log(repo: &Repo, cfg: &Config, since: Option<&str>, json: bool) -> Result
+     }
+     for e in &entries {
+         println!(
+-            "{} {} {} {} add {} change {} remove {} {} {}",
++            "{} {} {} {} add {} change {} remove {} hours {} {} {}",
+             utc_date(e.time),
+             e.outcome.name(),
+             e.facts.slug,
+@@ -329,6 +431,7 @@ pub fn log(repo: &Repo, cfg: &Config, since: Option<&str>, json: bool) -> Result
+             e.facts.delta[0],
+             e.facts.delta[1],
+             e.facts.delta[2],
++            e.hours.map_or("-".to_string(), |h| h.to_string()),
+             short(&e.commit),
+             e.facts.title
+         );
+@@ -527,6 +630,9 @@ struct Measured {
+     /// the deletion), its first parent and its time. If there is no such commit, it is the
+     /// deleting commit.
+     merged: Option<(String, Option<String>, i64)>,
++    /// The hours of the line `Hours:` in the message of the commit that
++    /// deleted the `intent.md` (`life.end`), the commit that `log` lists.
++    hours: Option<f64>,
+ }
+ 
+ /// One row of the indicator table.
+@@ -540,6 +646,19 @@ struct Indicator {
+     /// The word of the count in the text line, for 1 and for any other number.
+     noun: (&'static str, &'static str),
+     reason: Option<String>,
++    /// Writes the value. Most rows have 1 decimal.
++    show: fn(f64) -> String,
++}
++
++/// The value with 1 decimal.
++fn one_decimal(v: f64) -> String {
++    format!("{v:.1}")
++}
++
++/// A number of hours with up to 2 decimals and no zero after the last digit,
++/// as `finish` and the note of the row write it.
++fn hours_text(v: f64) -> String {
++    crate::finish::format_hours((v * 100.0).round() as u64)
+ }
+ 
+ const CHANGES: (&str, &str) = ("change", "changes");
+@@ -550,6 +669,12 @@ impl Indicator {
+         self.noun = noun;
+         self
+     }
++
++    /// Sets the function that writes the value.
++    fn shown(mut self, show: fn(f64) -> String) -> Self {
++        self.show = show;
++        self
++    }
+ }
+ 
+ fn na(play: &'static str, kind: &'static str, name: &'static str, reason: &str) -> Indicator {
+@@ -561,6 +686,7 @@ fn na(play: &'static str, kind: &'static str, name: &'static str, reason: &str)
+         unit: None,
+         count: None,
+         noun: CHANGES,
++        show: one_decimal,
+         reason: Some(reason.to_string()),
+     }
+ }
+@@ -596,6 +722,7 @@ fn computed(
+         unit: Some(unit),
+         count: Some(count),
+         noun: CHANGES,
++        show: one_decimal,
+         reason,
+     }
+ }
+@@ -672,6 +799,11 @@ pub fn stats(
+         with_tree.push(life);
+     }
+     let trees = read_trees(git, &at)?;
++    let ends: Vec<String> = with_tree
++        .iter()
++        .filter_map(|l| l.end.as_ref().map(|e| e.commit.clone()))
++        .collect();
++    let hours = hours_of(git, &ends)?;
+     // Pair the ended lives of a folder, the newest first, with its commits of
+     // the first-parent walk.
+     let mut next_ended: HashMap<String, usize> = HashMap::new();
+@@ -705,11 +837,17 @@ pub fn stats(
+         {
+             continue;
+         }
++        let hours = life
++            .end
++            .as_ref()
++            .and_then(|e| hours.get(&e.commit))
++            .copied();
+         measured.push(Measured {
+             life,
+             facts,
+             outcome,
+             merged,
++            hours,
+         });
+     }
+     measured.reverse();
+@@ -728,10 +866,7 @@ pub fn stats(
+                 .str("play", r.play)
+                 .str("kind", r.kind)
+                 .str("name", r.name)
+-                .raw(
+-                    "value",
+-                    &r.value.map_or("null".to_string(), |v| format!("{v:.1}")),
+-                )
++                .raw("value", &r.value.map_or("null".to_string(), r.show))
+                 .opt_str("unit", r.unit)
+                 .raw(
+                     "count",
+@@ -760,7 +895,8 @@ pub fn stats(
+             Some(v) => {
+                 let n = r.count.unwrap_or(0);
+                 line.push_str(&format!(
+-                    "{v:.1} {} ({n} {})",
++                    "{} {} ({n} {})",
++                    (r.show)(v),
+                     r.unit.unwrap_or(""),
+                     if n == 1 { r.noun.0 } else { r.noun.1 }
+                 ));
+@@ -913,6 +1049,22 @@ fn indicators(
+         "no finished change has a plan and a readable diff in the history yet",
+         shallow,
+     ));
++    // Build, lagging: the line `Hours:` of the commit message.
++    let v: Vec<f64> = ms.iter().filter(finished).filter_map(|m| m.hours).collect();
++    let total = v.iter().sum::<f64>();
++    rows.push(computed(
++        ("Build", "lagging", "Hours of work per finished change"),
++        median(v.clone()),
++        "hours",
++        v.len(),
++        &format!(
++            "the value is the median of the finished changes that have a line `Hours:` in the commit that deletes the folder; the total is {} hours",
++            hours_text(total)
++        ),
++        "no finished change has an `Hours:` line in the commit that deletes its folder",
++        shallow,
++    )
++    .shown(hours_text));
+     rows.push(na(
+         "Build",
+         "lagging",
+@@ -1329,3 +1481,30 @@ fn plan_match(git: &Git, ms: &[Measured]) -> Result<(usize, usize), Fatal> {
+     }
+     Ok((clean, total))
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn the_hours_line_is_the_last_whole_line_with_a_number() {
++        for (message, want) in [
++            ("feat: x\n\nHours: 3.5\n\nCo-authored-by: A", Some(3.5)),
++            ("Hours: 1\nHours: 2\n", Some(2.0)),
++            ("Hours: 1\nHours: soon\n", Some(1.0)),
++            ("Hours:4\t\r\nlast", Some(4.0)),
++            ("Hours: 12345.25", Some(12345.25)),
++            ("Hours: 1234567", Some(1_234_567.0)),
++            ("Hours: 12345678", None),
++            ("Hours: 1.234", None),
++            ("Hours: 3 total", None),
++            ("hours: 3", None),
++            ("  Hours: 3", None),
++            ("Hours: .5", None),
++            ("Hours: ", None),
++            ("", None),
++        ] {
++            assert_eq!(hours_line(message), want, "{message:?}");
++        }
++    }
++}
+diff --git a/tests/finish.rs b/tests/finish.rs
+index 4b0504e..ebae9c0 100644
+--- a/tests/finish.rs
++++ b/tests/finish.rs
+@@ -1227,3 +1227,91 @@ fn a_write_error_exits_with_4_and_changes_nothing() {
+     assert_eq!(tree(&r), before);
+     assert!(staged(&r).is_empty());
+ }
++
++// The hours of the change
++
++/// The plan of `Fx`, with a section `Hours` after `Order`.
++fn plan_with_hours(hours: &str) -> String {
++    format!(
++        "---\nstatus: approved\n---\n# Plan\n\n## Files\n\n- `src/dose.py`\n- `tests/test_valves.py`\n\n## Order\n\n- Edit the code.\n\n## Hours\n\n{hours}\n\n## Risks\n\n- None.\n\n## Proof\n\n- A test.\n"
++    )
++}
++
++/// A fixture whose plan has the given `Hours` items, committed on `feature`.
++fn with_hours(hours: &str) -> Repo {
++    let r = Fx::default().start();
++    r.write(PLAN, &plan_with_hours(hours));
++    r.commit("hours");
++    r
++}
++
++#[test]
++fn finish_prints_the_total_of_the_hours() {
++    let r = with_hours("- 1.5: code\n- 2: review");
++    // A dry run prints the line, and it writes nothing.
++    let (code, out, err) = fin(&r, &["--dry-run"]);
++    assert_eq!(code, 0, "{out}{err}");
++    assert!(out.lines().any(|l| l == "Hours: 3.5"), "{out}");
++    assert!(
++        out.contains(
++            "add this line to the commit message of the change; keep it in the squash message"
++        ),
++        "{out}"
++    );
++    let (code, out, err) = fin(&r, &["--dry-run", "--json"]);
++    assert_eq!(code, 0, "{out}{err}");
++    assert!(out.contains("\"hours\":3.5"), "{out}");
++    assert_eq!(out.trim_end().lines().count(), 1, "{out}");
++    // A run prints it too. `finish` makes no commit.
++    let (code, out, err) = fin(&r, &[]);
++    assert_eq!(code, 0, "{out}{err}");
++    assert!(out.lines().any(|l| l == "Hours: 3.5"), "{out}");
++    assert_eq!(r.git_out(&["rev-list", "--count", "HEAD"]), "2");
++}
++
++#[test]
++fn the_total_of_the_hours_has_no_zero_after_the_last_digit() {
++    // 1.25 and 0.75 give a whole number. The `h` and a task box are allowed.
++    let r = with_hours("- 1.25h\n- [x] 0.75 for the review\n- 1");
++    let (code, out, err) = fin(&r, &["--dry-run"]);
++    assert_eq!(code, 0, "{out}{err}");
++    assert!(out.lines().any(|l| l == "Hours: 3"), "{out}");
++    let (_, json, _) = fin(&r, &["--dry-run", "--json"]);
++    assert!(
++        json.contains("\"hours\":3}") || json.contains("\"hours\":3,"),
++        "{json}"
++    );
++    // The sum of 0.1 and 0.2 is exact.
++    let r = with_hours("- 0.1\n- 0.2");
++    let (_, out, _) = fin(&r, &["--dry-run"]);
++    assert!(out.lines().any(|l| l == "Hours: 0.3"), "{out}");
++}
++
++#[test]
++fn an_item_of_hours_with_no_number_gives_a_note_and_no_total() {
++    let r = with_hours("- 2: review\n- some time\n- 12345: too many digits");
++    let (code, out, err) = fin(&r, &["--dry-run"]);
++    assert_eq!(code, 0, "{out}{err}");
++    assert!(
++        out.contains("note: the item \"some time\" of Hours has no number of hours; no total"),
++        "{out}"
++    );
++    assert!(
++        out.contains("note: the item \"12345: too many digits\" of Hours has no number of hours"),
++        "{out}"
++    );
++    assert!(!out.lines().any(|l| l.starts_with("Hours:")), "{out}");
++    let (code, json, _) = fin(&r, &["--dry-run", "--json"]);
++    assert_eq!(code, 0, "{json}");
++    assert!(json.contains("\"hours\":null"), "{json}");
++}
++
++#[test]
++fn a_plan_with_no_hours_prints_no_hours_line() {
++    let r = Fx::default().start();
++    let (code, out, err) = fin(&r, &["--dry-run"]);
++    assert_eq!(code, 0, "{out}{err}");
++    assert!(!out.contains("Hours"), "{out}");
++    let (_, json, _) = fin(&r, &["--dry-run", "--json"]);
++    assert!(json.contains("\"hours\":null"), "{json}");
++}
+diff --git a/tests/golden/stats-sdlc-evals.txt b/tests/golden/stats-sdlc-evals.txt
+index a45ab54..8542670 100644
+--- a/tests/golden/stats-sdlc-evals.txt
++++ b/tests/golden/stats-sdlc-evals.txt
+@@ -6,6 +6,7 @@ Design lagging: Requirements rework after build starts: spec.md commits after th
+ Build leading: Time from plan approval to the merged pull request: n/a (no finished change has an approved plan in the history yet)
+ Build leading: Share of changes that merge from the first implementation pass: n/a (it needs pull request metadata)
+ Build lagging: How often the merged diff still matches the committed plan.md: n/a (no finished change has a plan and a readable diff in the history yet)
++Build lagging: Hours of work per finished change: n/a (no finished change has an `Hours:` line in the commit that deletes its folder)
+ Build lagging: Rework cycles per change: n/a (it needs pull request metadata)
+ Test leading: The eval pass rate over time: 80.0 percent (2 result files)
+   note: the value is the pass rate of the newest result file (2026-02-20T10:00:00Z); the committed files hold the history; 1 file skipped: not a complete result
+diff --git a/tests/golden/stats-sdlc.txt b/tests/golden/stats-sdlc.txt
+index 422cc64..23f2e82 100644
+--- a/tests/golden/stats-sdlc.txt
++++ b/tests/golden/stats-sdlc.txt
+@@ -11,6 +11,7 @@ Build leading: Time from plan approval to the merged pull request: 5.0 days (2 c
+ Build leading: Share of changes that merge from the first implementation pass: n/a (it needs pull request metadata)
+ Build lagging: How often the merged diff still matches the committed plan.md: 50.0 percent (2 changes)
+   note: the value is the share of finished changes whose merged diff has no path outside the folder, `Files`, the `Files:` paths of the tasks and the documents of the delta (SD913); the diff is the first-parent commit that deleted the folder, so a rebase merge shows only its last commit
++Build lagging: Hours of work per finished change: n/a (no finished change has an `Hours:` line in the commit that deletes its folder)
+ Build lagging: Rework cycles per change: n/a (it needs pull request metadata)
+ Test leading: The eval pass rate over time: n/a (the configuration has no [evals] table)
+ Test leading: How long a production incident takes to become a permanent eval: n/a (the configuration has no [evals] table)
+diff --git a/tests/layers_checks.rs b/tests/layers_checks.rs
+index 88c9673..0dbe34b 100644
+--- a/tests/layers_checks.rs
++++ b/tests/layers_checks.rs
+@@ -793,3 +793,144 @@ fn the_names_of_sd611_and_sd405_changed_and_the_codes_did_not() {
+     let text = r3.run(&["check"]);
+     assert!(text.contains("error SD405 decision-locked: "), "{text}");
+ }
++
++// SD612
++
++/// The lines of the output of `check` that carry a code.
++fn code_lines<'a>(out: &'a str, code: &str) -> Vec<&'a str> {
++    out.lines()
++        .filter(|l| l.contains(&format!(" {code} ")))
++        .collect()
++}
++
++/// The default graph (no `[change]` table) with the change `alpha`. The change
++/// `beta` and a roadmap link it, and so does a rule.
++fn links_into_alpha(profile: &str) -> Repo {
++    let r = Repo::new(profile, "", "", "");
++    r.write(
++        "docs/intent/alpha/intent.md",
++        &doc("intent", "draft", "", INTENT),
++    );
++    r.write(
++        "docs/intent/beta/intent.md",
++        &doc(
++            "intent",
++            "draft",
++            "",
++            "## Intent\n\nAfter [[intent/alpha/intent]].",
++        ),
++    );
++    r.write(
++        "docs/roadmap.md",
++        &doc("roadmap", "active", "", "- [Alpha](intent/alpha/intent.md)"),
++    );
++    r.write(
++        "docs/rules/pump.md",
++        &doc(
++            "rule",
++            "active",
++            "",
++            "## Rules\n\n- See [Alpha](../intent/alpha/intent.md).",
++        ),
++    );
++    r
++}
++
++#[test]
++fn a_link_into_a_change_folder_gives_sd612_once() {
++    let out = links_into_alpha("standard").check();
++    let found = code_lines(&out, "SD612");
++    assert_eq!(found.len(), 2, "{out}");
++    assert!(
++        found
++            .iter()
++            .any(|l| l.starts_with("docs/intent/beta/intent.md:")),
++        "{out}"
++    );
++    assert!(
++        found.iter().any(|l| l.starts_with("docs/roadmap.md:")),
++        "{out}"
++    );
++    assert!(
++        found.iter().all(|l| l.contains(": warning SD612 link-into-change: ")
++            && l.contains("names the folder `docs/intent/alpha` of the change `alpha`, and `finish alpha` stops on it; name the change as plain text")),
++        "{out}"
++    );
++    // The rule gives SD901, and no SD612.
++    assert_eq!(code_lines(&out, "SD901").len(), 1, "{out}");
++    assert!(
++        !found.iter().any(|l| l.starts_with("docs/rules/pump.md:")),
++        "{out}"
++    );
++    // SD901 is off in `lite`, so SD612 reports the rule too.
++    let out = links_into_alpha("lite").check();
++    assert_eq!(code_lines(&out, "SD612").len(), 3, "{out}");
++    assert!(code_lines(&out, "SD901").is_empty(), "{out}");
++}
++
++#[test]
++fn sd612_is_a_warning_in_each_profile_and_a_rule_changes_it() {
++    for profile in ["lite", "standard", "strict"] {
++        let out = links_into_alpha(profile).check();
++        assert_eq!(severity(&out, "SD612"), Some("warning"), "{profile}: {out}");
++    }
++    let off = Repo::new("standard", "", "[rules]\nSD612 = \"off\"\n", "");
++    let r = links_into_alpha("standard");
++    let config = std::fs::read_to_string(off.dir.join("spec-dna.toml")).unwrap();
++    std::fs::write(r.dir.join("spec-dna.toml"), config).unwrap();
++    assert_eq!(severity(&r.check(), "SD612"), None);
++    let strict = Repo::new("standard", "", "[rules]\nSD612 = \"error\"\n", "");
++    let config = std::fs::read_to_string(strict.dir.join("spec-dna.toml")).unwrap();
++    std::fs::write(r.dir.join("spec-dna.toml"), config).unwrap();
++    assert_eq!(severity(&r.check(), "SD612"), Some("error"));
++}
++
++#[test]
++fn sd612_has_no_report_for_a_link_inside_the_folder_or_a_plain_name() {
++    let r = Repo::new("standard", "", "", "");
++    r.write(
++        "docs/intent/alpha/intent.md",
++        &doc(
++            "intent",
++            "draft",
++            "",
++            "## Intent\n\nSee [the spec](spec.md).",
++        ),
++    );
++    r.write(
++        "docs/intent/alpha/spec.md",
++        &doc("spec", "draft", "", "## Delta\n\n- None."),
++    );
++    r.write(
++        "docs/roadmap.md",
++        &doc("roadmap", "active", "", "- The change `alpha` is open."),
++    );
++    let out = r.check();
++    assert!(code_lines(&out, "SD612").is_empty(), "{out}");
++}
++
++#[test]
++fn sd612_pairs_with_the_exact_line_that_sd611_reports() {
++    // SD611 reports the id in the locked text. The link in the amendment is a
++    // second reference to the same target, and `finish` stops on it.
++    let r = Repo::new("standard", "", "", "");
++    r.write(
++        "docs/decisions/pump.md",
++        &decision(
++            "Use [[intent/alpha/intent]].",
++            "See [Alpha](../intent/alpha/intent.md).",
++        ),
++    );
++    r.write(
++        "docs/intent/alpha/intent.md",
++        &doc("intent", "draft", "", INTENT),
++    );
++    let out = r.check();
++    let sd611 = code_lines(&out, "SD611");
++    let sd612 = code_lines(&out, "SD612");
++    assert_eq!(sd611.len(), 1, "{out}");
++    assert_eq!(sd612.len(), 1, "{out}");
++    assert!(sd612[0].starts_with("docs/decisions/pump.md:"), "{out}");
++    let line = |l: &str| l.split(':').nth(1).unwrap().to_string();
++    assert_ne!(line(sd611[0]), line(sd612[0]), "{out}");
++}
+diff --git a/tests/lifecycle_finished.rs b/tests/lifecycle_finished.rs
+index 623951a..54a1e07 100644
+--- a/tests/lifecycle_finished.rs
++++ b/tests/lifecycle_finished.rs
+@@ -808,6 +808,18 @@ fn info_lines(out: &str) -> Vec<&str> {
+     out.lines().filter(|l| l.contains(": info: ")).collect()
+ }
+ 
++/// The date of the last commit in UTC, as `log` prints it.
++fn commit_date(r: &Repo) -> String {
++    let out = Command::new("git")
++        .arg("-C")
++        .arg(&r.dir)
++        .args(["log", "-1", "--format=%cd", "--date=format-local:%Y-%m-%d"])
++        .env("TZ", "UTC")
++        .output()
++        .expect("git runs");
++    String::from_utf8_lossy(&out.stdout).trim().to_string()
++}
++
+ /// A decision that links the intent `dose` in its locked text, in a commit.
+ fn linked() -> Repo {
+     let r = Fx::default().start();
+@@ -833,11 +845,17 @@ fn check_all_names_a_dead_link_in_locked_text_after_finish() {
+     // SD102), and `check --all` says how to record it.
+     r.write("src/dose.py", "x = 2\n");
+     finish(&r);
++    let sha = r.git_out(&["rev-parse", "HEAD"]);
++    let date = commit_date(&r);
++    let pointer = format!(
++        "the change `dose` (finished in commit {} on {date})",
++        &sha[..12]
++    );
+     let (code, out, _) = r.run(&["check", "--all"]);
+     assert_eq!(code, 0, "{out}");
+     assert!(!has(&out, "SD102") && !has(&out, "SD611"), "{out}");
+     let want = format!(
+-        "{TIMER}:8: info: the locked text links `../intent/dose/intent.md`, which no longer exists; add an amendment that points to {POINTER}"
++        "{TIMER}:8: info: the locked text links `../intent/dose/intent.md`, which no longer exists; add an amendment that names `../intent/dose/intent.md` and points to {pointer}"
+     );
+     assert_eq!(info_lines(&out), vec![want.as_str()], "{out}");
+     // The line is before the summary line, and the counts do not change.
+@@ -848,8 +866,7 @@ fn check_all_names_a_dead_link_in_locked_text_after_finish() {
+     let (code, json, _) = r.run(&["check", "--all", "--json"]);
+     assert_eq!(code, 0, "{json}");
+     let field = format!(
+-        "\"locked_links\":[{{\"path\":\"{TIMER}\",\"line\":8,\"target\":\"../intent/dose/intent.md\",\"pointer\":\"{}\"}}]",
+-        POINTER
++        "\"locked_links\":[{{\"path\":\"{TIMER}\",\"line\":8,\"target\":\"../intent/dose/intent.md\",\"pointer\":\"{pointer}\",\"commit\":\"{sha}\"}}]"
+     );
+     assert!(json.contains(&field), "{json}");
+     // Without `--all`, the human output has no such line.
+@@ -872,7 +889,7 @@ fn a_dead_locked_link_of_no_intent_folder_gets_the_general_pointer() {
+     let (code, out, _) = r.run(&["check", "--all"]);
+     assert_eq!(code, 0, "{out}");
+     let want = format!(
+-        "{TIMER}:8: info: the locked text links `../old/notes.md`, which no longer exists; add an amendment that points to the new place of the text, or the reason for its removal"
++        "{TIMER}:8: info: the locked text links `../old/notes.md`, which no longer exists; add an amendment that names `../old/notes.md` and points to the new place of the text, or the reason for its removal"
+     );
+     assert_eq!(info_lines(&out), vec![want.as_str()], "{out}");
+     assert!(!has(&out, "SD102"), "{out}");
+@@ -899,3 +916,160 @@ fn a_dead_link_outside_locked_text_keeps_its_diagnostic_and_gets_no_info_line()
+     assert_eq!(lines(&out, "SD102").len(), 2, "{out}");
+     assert!(info_lines(&out).is_empty(), "{out}");
+ }
++
++// The amendment that names the dead target, and the commit of the change
++
++/// `linked()` after `finish dose`: the helper `finish` commits the deletion.
++fn linked_and_finished() -> Repo {
++    let r = linked();
++    r.write("src/dose.py", "x = 2\n");
++    finish(&r);
++    r
++}
++
++const AMENDMENT: &str = "\n## Amendments\n\n### 2026-11-16\n\nThe change `dose` is finished.\n";
++
++#[test]
++fn an_amendment_that_names_the_dead_target_clears_the_info_line() {
++    let r = linked_and_finished();
++    let sha = r.git_out(&["rev-parse", "HEAD"]);
++    let date = commit_date(&r);
++    let (code, out, _) = r.run(&["check", "--all"]);
++    assert_eq!(code, 0, "{out}");
++    let want = format!(
++        "{TIMER}:8: info: the locked text links `../intent/dose/intent.md`, which no longer exists; add an amendment that names `../intent/dose/intent.md` and points to the change `dose` (finished in commit {} on {date})",
++        &sha[..12]
++    );
++    assert_eq!(info_lines(&out), vec![want.as_str()], "{out}");
++    let (_, json, _) = r.run(&["check", "--all", "--json"]);
++    assert!(json.contains(&format!("\"commit\":\"{sha}\"")), "{json}");
++    // The amendment names the change in a code span: the line is gone.
++    let text = r.read(TIMER);
++    r.write(TIMER, &format!("{text}{AMENDMENT}"));
++    r.commit("amendment");
++    let (code, out, _) = r.run(&["check", "--all"]);
++    assert_eq!(code, 0, "{out}");
++    assert!(info_lines(&out).is_empty(), "{out}");
++    let (_, json, _) = r.run(&["check", "--all", "--json"]);
++    assert!(json.contains("\"locked_links\":[]"), "{json}");
++}
++
++#[test]
++fn an_amendment_clears_a_line_with_the_target_the_id_or_the_path() {
++    for named in [
++        "`../intent/dose/intent.md#intent`",
++        "`intent/dose/intent`",
++        "`docs/intent/dose/intent.md`",
++        "../intent/dose/intent.md.",
++    ] {
++        let r = linked_and_finished();
++        let text = r.read(TIMER);
++        r.write(
++            TIMER,
++            &format!("{text}\n## Amendments\n\nThe place {named} is gone.\n"),
++        );
++        r.commit("amendment");
++        let (_, out, _) = r.run(&["check", "--all"]);
++        assert!(info_lines(&out).is_empty(), "{named}: {out}");
++    }
++}
++
++#[test]
++fn text_outside_an_amendment_or_another_name_does_not_clear_the_line() {
++    // The slug is in a code span of the locked text, not of an amendment.
++    let r = linked_and_finished();
++    let text = r.read(TIMER).replace("Use a timer", "Use a timer (`dose`)");
++    r.write(
++        TIMER,
++        &format!("{text}\n## Amendments\n\nThe change is finished.\n"),
++    );
++    r.commit("text");
++    let (_, out, _) = r.run(&["check", "--all"]);
++    assert_eq!(info_lines(&out).len(), 1, "{out}");
++    // A word of the amendment that is not a code span does not name a slug.
++    let r = linked_and_finished();
++    let text = r.read(TIMER);
++    r.write(
++        TIMER,
++        &format!("{text}\n## Amendments\n\nThe dose change is finished.\n"),
++    );
++    r.commit("text");
++    let (_, out, _) = r.run(&["check", "--all"]);
++    assert_eq!(info_lines(&out).len(), 1, "{out}");
++    // A link in the amendment to the dead target stays SD102.
++    let r = linked_and_finished();
++    let text = r.read(TIMER);
++    r.write(
++        TIMER,
++        &format!("{text}\n## Amendments\n\nSee [it](../intent/dose/intent.md).\n"),
++    );
++    r.commit("link");
++    let (_, out, _) = r.run(&["check", "--all"]);
++    assert_eq!(lines(&out, "SD102").len(), 1, "{out}");
++}
++
++#[test]
++fn a_closed_change_gives_closed_in_the_pointer() {
++    let r = linked();
++    r.write(INTENT, &intent("closed", "routine"));
++    r.commit("close");
++    r.git(&["rm", "-q", "-r", FOLDER]);
++    r.commit("delete");
++    let sha = r.git_out(&["rev-parse", "HEAD"]);
++    let (_, out, _) = r.run(&["check", "--all"]);
++    let found = info_lines(&out);
++    assert_eq!(found.len(), 1, "{out}");
++    assert!(
++        found[0].contains(&format!(
++            "points to the change `dose` (closed in commit {} on ",
++            &sha[..12]
++        )),
++        "{out}"
++    );
++}
++
++#[test]
++fn a_deletion_with_no_commit_keeps_the_pointer_of_the_last_release() {
++    let r = linked();
++    std::fs::remove_dir_all(r.dir.join(FOLDER)).unwrap();
++    let (_, out, _) = r.run(&["check", "--all"]);
++    let want = format!(
++        "{TIMER}:8: info: the locked text links `../intent/dose/intent.md`, which no longer exists; add an amendment that names `../intent/dose/intent.md` and points to {POINTER}"
++    );
++    assert_eq!(info_lines(&out), vec![want.as_str()], "{out}");
++    let (_, json, _) = r.run(&["check", "--all", "--json"]);
++    assert!(json.contains("\"commit\":null"), "{json}");
++}
++
++#[test]
++fn check_reads_only_the_changes_that_a_dead_locked_link_names() {
++    // 3 other changes ended in the history. Their commits need no read: the
++    // dead link names only `dose`. `git diff-tree` runs once for each ended
++    // change that the code reads (`moved_out`).
++    let r = linked();
++    for slug in ["alpha", "beta", "gamma"] {
++        let path = format!("docs/intent/{slug}/intent.md");
++        r.write(&path, &intent("accepted", "routine"));
++        r.commit(&format!("add {slug}"));
++        std::fs::remove_dir_all(r.dir.join(format!("docs/intent/{slug}"))).unwrap();
++        r.commit(&format!("finish {slug}"));
++    }
++    r.write("src/dose.py", "x = 2\n");
++    finish(&r);
++    let trace = r.dir.join("..").join(format!(
++        "trace-{}.txt",
++        r.dir.file_name().unwrap().to_string_lossy()
++    ));
++    // The extra changes were added and finished in the branch: SD910 reports
++    // them, and it does not matter here.
++    let (_, out, _) = r.run_env(
++        &["check", "--all"],
++        &[("GIT_TRACE", trace.to_str().unwrap())],
++        &[],
++    );
++    assert_eq!(info_lines(&out).len(), 1, "{out}");
++    let log = std::fs::read_to_string(&trace).unwrap_or_default();
++    let _ = std::fs::remove_file(&trace);
++    let reads = log.lines().filter(|l| l.contains("diff-tree")).count();
++    assert_eq!(reads, 1, "{log}");
++}
+diff --git a/tests/lifecycle_log.rs b/tests/lifecycle_log.rs
+index 43cd7f5..6841dcd 100644
+--- a/tests/lifecycle_log.rs
++++ b/tests/lifecycle_log.rs
+@@ -310,7 +310,7 @@ fn the_json_has_the_fields_of_the_contract_in_order() {
+     assert_eq!(
+         out.trim_end(),
+         format!(
+-            "{{\"changes\":[{{\"slug\":\"dose\",\"class\":\"higher-risk\",\"title\":\"Dose\",\"result\":\"finished\",\"delta\":{{\"add\":1,\"change\":1,\"remove\":1}},\"commit\":\"{sha}\",\"date\":\"2024-04-05\"}}],\"shallow\":false}}"
++            "{{\"changes\":[{{\"slug\":\"dose\",\"class\":\"higher-risk\",\"title\":\"Dose\",\"result\":\"finished\",\"delta\":{{\"add\":1,\"change\":1,\"remove\":1}},\"hours\":null,\"commit\":\"{sha}\",\"date\":\"2024-04-05\"}}],\"shallow\":false}}"
+         )
+     );
+ }
+@@ -326,7 +326,7 @@ fn the_text_has_one_line_for_each_change() {
+     assert_eq!(
+         text,
+         format!(
+-            "2024-04-05 finished dose higher-risk add 1 change 1 remove 1 {} Dose\n",
++            "2024-04-05 finished dose higher-risk add 1 change 1 remove 1 hours - {} Dose\n",
+             &sha[..12]
+         )
+     );
+@@ -645,7 +645,7 @@ fn an_indicator_that_git_cannot_give_has_a_null_value_and_a_reason() {
+     empty.commit("start");
+     let out = stats_json(&empty, &[]);
+     let rows: Vec<&str> = out.split("{\"play\"").skip(1).collect();
+-    assert_eq!(rows.len(), 14, "{out}");
++    assert_eq!(rows.len(), 15, "{out}");
+     for row in rows {
+         if row.contains("\"value\":null") {
+             assert!(row.contains("\"reason\":\""), "{row}");
+@@ -912,3 +912,127 @@ fn stats_text_matches_the_golden_file() {
+     );
+     golden("stats-sdlc.txt", &out);
+ }
++
++// The line `Hours:` of the commit that deletes the folder
++
++/// `dose` is finished by a squash commit. The message of the commit is `msg`.
++fn squashed_with(msg: &str) -> Repo {
++    let r = with_dose("accepted");
++    remove_folder(&r);
++    merge_squash(&r.dir);
++    r.git(&["commit", "--amend", "-q", "-m", msg]);
++    r
++}
++
++const HOURS_ROW: &str = "Hours of work per finished change";
++
++#[test]
++fn log_reads_the_hours_line_of_a_squash_commit() {
++    // The line is in a middle paragraph, not in the last one.
++    let r = squashed_with(
++        "feat: dose (#1)\n\n* feat: finish dose\n\nHours: 3.5\n\nCo-authored-by: A <a@example.com>",
++    );
++    let out = log_json(&r, &[]);
++    assert!(out.contains("\"hours\":3.5"), "{out}");
++    let (code, text, _) = r.run(&["log"]);
++    assert_eq!(code, 0);
++    assert!(text.contains(" remove 1 hours 3.5 "), "{text}");
++    let (code, out, err) = r.run(&["stats", "--sdlc", "--json"]);
++    assert_eq!(code, 0, "{out}{err}");
++    let row = indicator(&out, HOURS_ROW);
++    has(
++        row,
++        &[
++            "\"play\":\"Build\"",
++            "\"kind\":\"lagging\"",
++            "\"value\":3.5",
++            "\"unit\":\"hours\"",
++            "\"count\":1",
++            "the total is 3.5 hours",
++        ],
++    );
++}
++
++#[test]
++fn log_reads_the_last_hours_line_and_only_a_whole_line() {
++    let r = squashed_with(
++        "feat: dose\n\nHours: 1\n\nHours:2.25 \t\n\nhours: 9\nHours: 4 total\nTotal Hours: 8",
++    );
++    let out = log_json(&r, &[]);
++    assert!(out.contains("\"hours\":2.25"), "{out}");
++    // A total with more than 4 digits is a number too.
++    let r = squashed_with("feat: dose\n\nHours: 12345.5");
++    let out = log_json(&r, &[]);
++    assert!(out.contains("\"hours\":12345.5"), "{out}");
++}
++
++#[test]
++fn a_commit_with_no_hours_line_gives_no_value() {
++    let r = squashed_with("feat: dose\n\nHours were not counted.");
++    let out = log_json(&r, &[]);
++    assert!(out.contains("\"hours\":null"), "{out}");
++    let (_, text, _) = r.run(&["log"]);
++    assert!(text.contains(" remove 1 hours - "), "{text}");
++    let (_, out, _) = r.run(&["stats", "--sdlc", "--json"]);
++    let row = indicator(&out, HOURS_ROW);
++    has(
++        row,
++        &[
++            "\"value\":null",
++            "\"count\":0",
++            "no finished change has an `Hours:` line in the commit that deletes its folder",
++        ],
++    );
++}
++
++#[test]
++fn the_hours_row_is_the_median_of_the_changes_that_have_a_line() {
++    let r = history();
++    // `alpha` and `beta` are finished. Only the message of `alpha` has a line.
++    let date = at("01-12");
++    git_env(
++        &r.dir,
++        &[
++            "commit",
++            "--amend",
++            "-q",
++            "-m",
++            "alpha finished\n\nHours: 6",
++        ],
++        &[("GIT_AUTHOR_DATE", &date), ("GIT_COMMITTER_DATE", &date)],
++    );
++    let (_, out, _) = r.run(&["stats", "--sdlc", "--json"]);
++    let row = indicator(&out, HOURS_ROW);
++    has(row, &["\"value\":6,", "\"count\":1"]);
++}
++
++#[test]
++fn a_hours_line_with_too_many_digits_is_not_read() {
++    // 7 whole digits are the most. A longer number gives `inf` or loses
++    // digits as a JSON number, so the line gives no value.
++    for number in ["12345678".to_string(), "9".repeat(400), "9".repeat(23)] {
++        let r = squashed_with(&format!("feat: dose\n\nHours: {number}"));
++        let out = log_json(&r, &[]);
++        assert!(out.contains("\"hours\":null"), "{out}");
++        assert!(!out.contains("inf"), "{out}");
++        let (_, out, _) = r.run(&["stats", "--sdlc", "--json"]);
++        let row = indicator(&out, HOURS_ROW);
++        has(row, &["\"value\":null", "\"count\":0"]);
++    }
++    let r = squashed_with("feat: dose\n\nHours: 1234567.5");
++    let out = log_json(&r, &[]);
++    assert!(out.contains("\"hours\":1234567.5"), "{out}");
++}
++
++#[test]
++fn the_hours_value_keeps_2_decimals() {
++    let r = squashed_with("feat: dose\n\nHours: 2.25");
++    let (_, out, _) = r.run(&["stats", "--sdlc", "--json"]);
++    let row = indicator(&out, HOURS_ROW);
++    has(row, &["\"value\":2.25", "the total is 2.25 hours"]);
++    let (_, text, _) = r.run(&["stats", "--sdlc"]);
++    assert!(
++        text.contains("Hours of work per finished change: 2.25 hours (1 change)"),
++        "{text}"
++    );
++}

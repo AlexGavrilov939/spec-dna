@@ -1,0 +1,1310 @@
+diff --git a/schema/spec-dna.schema.json b/schema/spec-dna.schema.json
+index b883f77..bce25ef 100644
+--- a/schema/spec-dna.schema.json
++++ b/schema/spec-dna.schema.json
+@@ -693,6 +693,7 @@
+       "pattern": "^[^{}]*\\{n\\}[^{}]*$"
+     },
+     "budget": {
++      "description": "The soft and hard budget of a document type, in Unicode characters of body text. `soft = 0` turns off SD701 and SD703. `hard = 0` turns off SD702 and SD704, and it needs `soft = 0`, because `hard` below `soft` is a configuration error. So `soft = 0` and `hard = 0` give the type no budget. The types `research` and `plan` have no default budget.",
+       "type": "object",
+       "additionalProperties": false,
+       "properties": {
+diff --git a/src/check.rs b/src/check.rs
+index e4086a5..9a09f16 100644
+--- a/src/check.rs
++++ b/src/check.rs
+@@ -504,15 +504,22 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc, facts: &Facts) -> Vec<Diag> {
+             }
+         }
+         if needs_evidence(d) && ev.of(di, d, ri).is_empty() {
++            let message = match ev.partial_of(di, ri).first() {
++                Some(at) => format!(
++                    "`{}#{}` is active, and only a partial `covers:` tag names it ({at}); add a test that covers all of it, or a `verified-by`",
++                    d.id, r.key
++                ),
++                None => format!(
++                    "`{}#{}` is active but no test covers it (`covers:` tag or `verified-by`)",
++                    d.id, r.key
++                ),
++            };
+             out.push(diag(
+                 d,
+                 r.line,
+                 Code::RequirementUnverified,
+                 r.key.clone(),
+-                format!(
+-                    "`{}#{}` is active but no test covers it (`covers:` tag or `verified-by`)",
+-                    d.id, r.key
+-                ),
++                message,
+             ));
+         }
+     }
+diff --git a/src/config.rs b/src/config.rs
+index 4654713..49c8a49 100644
+--- a/src/config.rs
++++ b/src/config.rs
+@@ -1094,7 +1094,7 @@ pub const DEFAULT_BUDGETS: [(u32, u32); DocType::COUNT] = [
+     (0, 0),           // research: cold material, no budget
+     (6_000, 12_000),  // intent
+     (10_000, 20_000), // spec
+-    (6_000, 12_000),  // plan
++    (0, 0),           // plan: it grows with the size of the change, so it has no default budget
+ ];
+ 
+ /// The default required sections of each type: a list of groups. A document
+diff --git a/src/context.rs b/src/context.rs
+index a2424b4..52ac2de 100644
+--- a/src/context.rs
++++ b/src/context.rs
+@@ -1365,9 +1365,16 @@ pub fn show(c: &Corpus, root: &Path, d: u32, frag: Option<&str>, as_json: bool)
+         "document" => doc.reqs.clone(),
+         _ => Vec::new(),
+     };
+-    let evidence: Vec<(String, Vec<String>)> = shown_reqs
++    // The full evidence, and the partial `covers:` tags apart from it.
++    let evidence: Vec<(String, Vec<String>, Vec<String>)> = shown_reqs
+         .iter()
+-        .map(|&r| (doc.parsed.reqs[r].key.clone(), ev.of(d, doc, r)))
++        .map(|&r| {
++            (
++                doc.parsed.reqs[r].key.clone(),
++                ev.of(d, doc, r),
++                ev.partial_of(d, r).to_vec(),
++            )
++        })
+         .collect();
+     if as_json {
+         let units = items.iter().map(|(id, h, line, t)| {
+@@ -1390,11 +1397,13 @@ pub fn show(c: &Corpus, root: &Path, d: u32, frag: Option<&str>, as_json: bool)
+                 .strs("requirements", &keys)
+                 .raw(
+                     "evidence",
+-                    &json::array(
+-                        evidence
+-                            .iter()
+-                            .map(|(k, v)| Obj::new().str("key", k).strs("sources", v).end()),
+-                    ),
++                    &json::array(evidence.iter().map(|(k, v, p)| {
++                        Obj::new()
++                            .str("key", k)
++                            .strs("sources", v)
++                            .strs("partial", p)
++                            .end()
++                    }),),
+                 )
+                 .raw("units", &json::array(units))
+                 .end()
+@@ -1422,12 +1431,15 @@ pub fn show(c: &Corpus, root: &Path, d: u32, frag: Option<&str>, as_json: bool)
+     }
+     if !evidence.is_empty() {
+         out.push_str("<!-- evidence -->\n");
+-        for (k, v) in &evidence {
+-            let v = if v.is_empty() {
++        for (k, v, p) in &evidence {
++            let mut v = if v.is_empty() {
+                 "none".to_string()
+             } else {
+                 v.join(", ")
+             };
++            if !p.is_empty() {
++                v.push_str(&format!("; partial: {}", p.join(", ")));
++            }
+             out.push_str(&format!("- {}#{k}: {v}\n", doc.id));
+         }
+     }
+diff --git a/src/diag.rs b/src/diag.rs
+index 920898b..7868d01 100644
+--- a/src/diag.rs
++++ b/src/diag.rs
+@@ -82,7 +82,7 @@ codes! {
+     AmendmentOutcome = "SD605", "amendment-outcome", Warning, "If the amendment changes the decision outcome, write a new decision that supersedes this one.";
+     CitedPathRemoved = "SD606", "cited-path-removed", Warning, "Update the document: cite the new path, or change the text about the removed file.";
+     CitedSymbolRemoved = "SD607", "cited-symbol-removed", Warning, "Update the document: cite the new identifier, or change the text about the removed code.";
+-    RequirementUnverified = "SD608", "requirement-unverified", Warning, "Link a test: add `covers: <doc-id>#<key>` in the test file, or `<!-- verified-by: <path> -->` at the end of the requirement. `verified-by` in the front matter links every requirement of the document.";
++    RequirementUnverified = "SD608", "requirement-unverified", Warning, "Link a test: add `covers: <doc-id>#<key>` in the test file, or `<!-- verified-by: <path> -->` at the end of the requirement. `verified-by` in the front matter links every requirement of the document. A `covers: partial` tag alone is not evidence.";
+     IncidentUnlinked = "SD609", "incident-unlinked", Warning, "Link the requirements, rules, decisions and procedures that the incident involves, with `[[<id>]]` or a Markdown link.";
+     IndexStale = "SD610", "index-stale", Warning, "Run `spec-dna index <path>` to generate the index again. Do not edit a generated index by hand.";
+     DecisionLinksChange = "SD611", "decision-links-intent", Warning, "Link the decision from the intent instead. A finished intent can be deleted (SD202 allows it), but the locked text of an accepted decision cannot drop a link (SD405). Remove the link before you accept the decision. In an accepted decision, name the intent as plain text, not as a link, in an amendment or a live section. SD901 and `finish` would stop on a link.";
+@@ -109,7 +109,7 @@ codes! {
+     OutsidePlan = "SD913", "outside-plan", Warning, "Add the path to `Files` of the plan, or move the edit to a change of its own. Each edited file must match an item of `Files`. An item is a path or a glob in a code span, or a plain path with no white space.";
+     DeltaInvalid = "SD914", "delta-invalid", Warning, "Fix the delta line. Use `ADD <id>#<key>: <sentence>`, `CHANGE <id>#<key>@<hash>: <sentence>` or `REMOVE <id>#<key>@<hash>`. Name an existing target in a layer that `moves-to` allows. Copy the hash from `spec-dna show`.";
+     FinishIncomplete = "SD915", "finish-incomplete", Warning, "Apply the delta, or set the intent to `closed` before you delete the folder. Run `spec-dna finish <slug>` to apply the delta and delete the folder in one step.";
+-    DeltaEvidenceMissing = "SD916", "delta-evidence-missing", Warning, "Link a test for each requirement that the change adds or changes. Add `covers: <doc-id>#<key>` in a test file, or `<!-- verified-by: <path> -->` at the end of the requirement.";
++    DeltaEvidenceMissing = "SD916", "delta-evidence-missing", Warning, "Link a test for each requirement that the change adds or changes. Add `covers: <doc-id>#<key>` in a test file, or `<!-- verified-by: <path> -->` at the end of the requirement. A `covers: partial` tag alone is not evidence.";
+     ClassTooLow = "SD917", "class-too-low", Warning, "Raise the `class` of the intent. The diff or the delta needs a higher class (`higher-risk`), because it touches a layer of `high-risk-layers` or a path of `high-risk-paths`.";
+     ConcernOpen = "SD919", "concern-open", Warning, "Resolve each open concern of the spec, or remove it, before the spec is `approved`.";
+     DecisionNeededUnaccepted = "SD920", "decision-needed-unaccepted", Warning, "Write the decision that the spec needs, and accept it. A change cannot finish while a needed decision is absent or is not `accepted`.";
+diff --git a/src/evidence.rs b/src/evidence.rs
+index 773905d..0cd1ad9 100644
+--- a/src/evidence.rs
++++ b/src/evidence.rs
+@@ -7,6 +7,10 @@
+ //! - a `covers: <doc-id>#<key>` tag in a test file. The tag is plain text, so
+ //!   it works in a comment of any language.
+ //!
++//! A tag `covers: partial <doc-id>#<key>` records that a test proves a part of
++//! a requirement. It is not evidence: [`Evidence::of`] gives full evidence
++//! only, and [`Evidence::partial_of`] gives the partial tags.
++//!
+ //! spec-dna checks that the links resolve. It does not run the tests.
+ 
+ use crate::config::Config;
+@@ -24,14 +28,23 @@ pub struct Cover {
+     pub path: String,
+     pub line: u32,
+     pub target: String,
++    /// True for a tag `covers: partial <id>`. It is not evidence.
++    pub partial: bool,
++}
++
++/// The characters that a tag word can have around its text.
++fn trim_word(word: &str) -> &str {
++    word.trim_matches(|c: char| matches!(c, '`' | '"' | '\'' | '[' | ']' | '(' | ')' | ';' | '.'))
+ }
+ 
+-/// Returns the requirement ids of the `covers:` tags of one line. A tag
+-/// starts at `covers:` after a character that is not part of a word. The ids
+-/// follow it, separated by spaces or commas, each as `<doc-id>#<key>`. The
+-/// first word that is not such an id ends the tag, for example `*/` or
+-/// `-->`.
+-pub fn tags(line: &str) -> Vec<String> {
++/// Returns the requirement ids of the `covers:` tags of one line, each with
++/// the flag of a partial tag. A tag starts at `covers:` after a character that
++/// is not part of a word. The ids follow it, separated by spaces or commas,
++/// each as `<doc-id>#<key>`. The first word that is not such an id ends the
++/// tag, for example `*/` or `-->`. The word `partial`, in any ASCII case, is
++/// the exception when it is the first word: it makes each id of the tag
++/// partial. After an id, the word `partial` ends the tag as any other word.
++pub fn tags(line: &str) -> Vec<(String, bool)> {
+     let mut out = Vec::new();
+     let mut rest = line;
+     while let Some(pos) = rest.find(TAG) {
+@@ -41,16 +54,22 @@ pub fn tags(line: &str) -> Vec<String> {
+         if before.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+             continue;
+         }
++        let mut partial = false;
++        let mut first = true;
+         for word in after.split(|c: char| c.is_whitespace() || c == ',') {
+             if word.is_empty() {
+                 continue;
+             }
+-            let id = word.trim_matches(|c: char| {
+-                matches!(c, '`' | '"' | '\'' | '[' | ']' | '(' | ')' | ';' | '.')
+-            });
++            let id = trim_word(word);
++            if first && id.eq_ignore_ascii_case("partial") {
++                partial = true;
++                first = false;
++                continue;
++            }
++            first = false;
+             match id.split_once('#') {
+                 Some((d, k)) if !d.is_empty() && !k.is_empty() && !k.contains('#') => {
+-                    out.push(id.to_string())
++                    out.push((id.to_string(), partial))
+                 }
+                 _ => break,
+             }
+@@ -84,11 +103,12 @@ pub fn load(
+         {
+             continue;
+         }
+-        for target in tags(&text) {
++        for (target, partial) in tags(&text) {
+             out.push(Cover {
+                 path: path.clone(),
+                 line,
+                 target,
++                partial,
+             });
+         }
+     }
+@@ -101,6 +121,9 @@ pub struct Evidence {
+     /// For each (document, index into `parsed.reqs`), the `covers:` tags as
+     /// `<path>:<line>`.
+     pub covers: HashMap<(u32, usize), Vec<String>>,
++    /// The partial tags, as `<path>:<line>`, in the same form. They are not
++    /// evidence.
++    pub partial: HashMap<(u32, usize), Vec<String>>,
+ }
+ 
+ impl Evidence {
+@@ -117,8 +140,12 @@ impl Evidence {
+             let problem = match c.resolve(&cv.target) {
+                 Res::Found(d, Some(key), true) => match c.docs[d as usize].req(&key) {
+                     Some(r) => {
+-                        ev.covers
+-                            .entry((d, r))
++                        let map = if cv.partial {
++                            &mut ev.partial
++                        } else {
++                            &mut ev.covers
++                        };
++                        map.entry((d, r))
+                             .or_default()
+                             .push(format!("{}:{}", cv.path, cv.line));
+                         continue;
+@@ -162,8 +189,8 @@ impl Evidence {
+ 
+     /// Returns the evidence of one requirement (an index into `parsed.reqs` of
+     /// document `di`). The evidence is the paths of `verified-by` (front
+-    /// matter and the inline marker), and the `covers:` tags as
+-    /// `<path>:<line>`.
++    /// matter and the inline marker), and the full `covers:` tags as
++    /// `<path>:<line>`. A partial tag is not evidence.
+     pub fn of(&self, di: u32, d: &Doc, r: usize) -> Vec<String> {
+         let mut out: Vec<String> = d.verified_by.iter().map(|v| v.0.clone()).collect();
+         out.extend(d.parsed.reqs[r].verified_by.iter().cloned());
+@@ -172,6 +199,12 @@ impl Evidence {
+         }
+         out
+     }
++
++    /// The partial `covers:` tags of one requirement, as `<path>:<line>`, in
++    /// the order of the tags.
++    pub fn partial_of(&self, di: u32, r: usize) -> &[String] {
++        self.partial.get(&(di, r)).map_or(&[], Vec::as_slice)
++    }
+ }
+ 
+ /// A requirement id in a form that two spellings of one document share: the
+@@ -191,3 +224,35 @@ fn same_target(c: &Corpus, target: &str) -> String {
+ pub fn needs_evidence(d: &Doc) -> bool {
+     d.ty.has_requirements() && d.status_str() == "active"
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    /// The ids of the tags of a line, each with `~` if the tag is partial.
++    fn ids(line: &str) -> Vec<String> {
++        tags(line)
++            .into_iter()
++            .map(|(t, p)| if p { format!("~{t}") } else { t })
++            .collect()
++    }
++
++    #[test]
++    fn tags_reads_the_word_partial_first_only() {
++        assert_eq!(ids("# covers: a#b"), ["a#b"]);
++        assert_eq!(ids("# covers: partial a#b"), ["~a#b"]);
++        assert_eq!(ids("# covers: PARTIAL a#b"), ["~a#b"]);
++        // The word applies to each id of the tag.
++        assert_eq!(ids("# covers: partial a#b, c#d"), ["~a#b", "~c#d"]);
++        // The trim of punctuation is the one of an id.
++        assert_eq!(ids("# covers: (partial) a#b"), ["~a#b"]);
++        // After an id, the word ends the tag.
++        assert_eq!(ids("# covers: a#b partial c#d"), ["a#b"]);
++        assert_eq!(ids("# covers: a#b partial"), ["a#b"]);
++        // Each tag of a line has its own flag.
++        assert_eq!(ids("# covers: a#b # covers: partial c#d"), ["a#b", "~c#d"]);
++        // The word alone names no id.
++        assert!(ids("# covers: partial").is_empty());
++        assert!(ids("# covers: partial text a#b").is_empty());
++    }
++}
+diff --git a/src/finish.rs b/src/finish.rs
+index 5227ff6..4294f0c 100644
+--- a/src/finish.rs
++++ b/src/finish.rs
+@@ -1601,6 +1601,7 @@ mod tests {
+                 path: "tests/test_valves.py".to_string(),
+                 line: i as u32 + 1,
+                 target: t.to_string(),
++                partial: false,
+             })
+             .collect();
+         let base = corpus(cfg, base_files);
+diff --git a/src/lifecycle.rs b/src/lifecycle.rs
+index a092529..433619e 100644
+--- a/src/lifecycle.rs
++++ b/src/lifecycle.rs
+@@ -1438,6 +1438,8 @@ fn diff_changes(ctx: &Ctx) -> Result<Vec<DiffChange>, String> {
+ 
+ /// What the newest text of a change on the branch adds to the scope of SD913.
+ struct BranchScope {
++    /// True if the newest text of the branch has a `plan.md`.
++    has_plan: bool,
+     /// The patterns of the plan of the branch.
+     files: Vec<String>,
+     /// The items of `Files` of the plan of the branch that are not paths.
+@@ -1463,6 +1465,7 @@ impl DiffChange {
+                 let mut scope = Vec::new();
+                 scope_paths(ctx, &newest, &corpus, &mut scope, None);
+                 Some(BranchScope {
++                    has_plan: newest.plan.is_some(),
+                     files: newest.files(&corpus),
+                     not_paths: newest.files_not_paths(&corpus),
+                     paragraph: newest.files_paragraph_only(&corpus),
+@@ -1472,6 +1475,15 @@ impl DiffChange {
+             .as_ref()
+     }
+ 
++    /// True if the change has a `plan.md` in the tree that the checks read for
++    /// it. A change that `Files` matched has one: its `Files` come from its
++    /// plan. The branch is read only if the base tree has no plan.
++    fn has_plan(&self, ctx: &Ctx) -> bool {
++        self.origin == Origin::FilesMatch
++            || self.change.plan.is_some()
++            || self.branch(ctx).is_some_and(|b| b.has_plan)
++    }
++
+     /// True if `path` is in the scope of SD913. The first test reads the tree
+     /// of `side` only. The branch is read only if it fails.
+     fn covers(&self, ctx: &Ctx, path: &str) -> bool {
+@@ -1886,8 +1898,10 @@ fn approval_missing(
+ }
+ 
+ /// SD913: a path of the diff is outside the scope of each change of the diff.
++/// It runs only if a change of the diff has a plan: before a plan exists, a
++/// change has no `Files`, so it has no scope to check against.
+ fn outside_plan(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
+-    if changes.is_empty() {
++    if !changes.iter().any(|c| c.has_plan(ctx)) {
+         return Vec::new();
+     }
+     let mut out = Vec::new();
+@@ -2316,15 +2330,22 @@ pub fn evidence_missing(
+         let doc = &head.docs[di as usize];
+         let req = &doc.parsed.reqs[ri];
+         if ev.of(di, doc, ri).is_empty() {
++            let message = match ev.partial_of(di, ri).first() {
++                Some(at) => format!(
++                    "the change `{}` adds or changes the requirement `{}#{}`, and only a partial `covers:` tag names it ({at}); add a test that covers all of it",
++                    ch.slug, doc.id, req.key
++                ),
++                None => format!(
++                    "the change `{}` adds or changes the requirement `{}#{}`, and it has no `covers:` tag and no `verified-by`",
++                    ch.slug, doc.id, req.key
++                ),
++            };
+             out.push(crate::check::diag(
+                 doc,
+                 req.line,
+                 Code::DeltaEvidenceMissing,
+                 format!("{}#{}", doc.id, req.key),
+-                format!(
+-                    "the change `{}` adds or changes the requirement `{}#{}`, and it has no `covers:` tag and no `verified-by`",
+-                    ch.slug, doc.id, req.key
+-                ),
++                message,
+             ));
+         }
+     }
+diff --git a/src/main.rs b/src/main.rs
+index f425c5d..ada53e2 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -302,7 +302,9 @@ not a commit, 4 git.",
+ playbook names. It reads git and the committed files only: the plan and
+ design times, the survival rate of the intents, the spec commits after the
+ first plan commit, the time from plan approval to the merged pull request,
+-and how often the merged diff stays inside the plan (SD913). A move of
++how often the merged diff stays inside the plan (SD913), and the share of
++requirements that have a partial covers: tag and no full evidence (it reads
++the tree of HEAD, and no group filter changes it). A move of
+ intent.md out of the intent folder does not end a life if git finds the
+ rename, the new file is the same text or has the old id in its aliases, and
+ the same commit removes no other file of the folder (see log): stats drops
+diff --git a/src/sdlc.rs b/src/sdlc.rs
+index 4c656f9..ba38ca9 100644
+--- a/src/sdlc.rs
++++ b/src/sdlc.rs
+@@ -19,6 +19,7 @@
+ use crate::change::{self, Verb};
+ use crate::config::{ChangePolicy, Config, Evals};
+ use crate::evals;
++use crate::evidence;
+ use crate::frontmatter::{self, Value};
+ use crate::git::{ArtifactTouch, DeletedIntent, Git, PathChange};
+ use crate::json::{self, Obj};
+@@ -1142,6 +1143,7 @@ fn indicators(
+         "Regressions caught in CI against regressions found in production",
+         "it needs the incident tracker",
+     ));
++    rows.push(partial_row(repo, cfg)?);
+     rows.push(na(
+         "Maintain",
+         "leading",
+@@ -1206,6 +1208,68 @@ fn test_rows(repo: &Repo, cfg: &Config, shallow: bool) -> Result<Vec<Indicator>,
+     ])
+ }
+ 
++const PARTIAL: (&str, &str, &str) = (
++    "Test",
++    "lagging",
++    "Share of requirements with partial evidence only",
++);
++
++/// The share of the requirements that need evidence and have a partial
++/// `covers:` tag and no full evidence. It reads the committed tree of `HEAD`
++/// and its tags, as the 2 leading rows of the Test play do. A `--group` filter
++/// does not change it, and a shallow clone adds no note.
++fn partial_row(repo: &Repo, cfg: &Config) -> Result<Indicator, Fatal> {
++    let row = |value: Option<f64>, count: usize, note: &str, empty: &str| {
++        computed(PARTIAL, value, "percent", count, note, empty, false)
++            .counting(("requirement", "requirements"))
++    };
++    let none = "the tree of HEAD has no active requirement";
++    let Some(head) = repo.head_commit() else {
++        return Ok(row(None, 0, "", none));
++    };
++    let snap = Snapshot::at(repo, &head)?;
++    let mut corpus = repo::load(repo, cfg, &[&snap], true, false)?
++        .corpora
++        .remove(0);
++    corpus.covers = evidence::load(repo, cfg, Some(&head), false)?;
++    let (ev, _) = evidence::Evidence::build(&corpus);
++    let (mut n, mut partial, mut bare) = (0, 0, 0);
++    for (di, d) in corpus.docs.iter().enumerate() {
++        if !evidence::needs_evidence(d) {
++            continue;
++        }
++        for &ri in &d.reqs {
++            n += 1;
++            if ev.of(di as u32, d, ri).is_empty() {
++                if ev.partial_of(di as u32, ri).is_empty() {
++                    bare += 1;
++                } else {
++                    partial += 1;
++                }
++            }
++        }
++    }
++    if n == 0 {
++        return Ok(row(None, 0, "", none));
++    }
++    if cfg.evidence_tests.is_empty() {
++        return Ok(row(
++            None,
++            n,
++            "",
++            "`[evidence] tests` is empty, so no `covers:` tag counts",
++        ));
++    }
++    Ok(row(
++        Some(100.0 * partial as f64 / n as f64),
++        n,
++        &format!(
++            "{partial} of {n} requirements have a partial covers: tag only; {bare} have no evidence"
++        ),
++        "",
++    ))
++}
++
+ /// The started time and the pass rate of a complete result file: a JSON object
+ /// with a string `started`, a number `pass_rate` from 0 to 1 and
+ /// `"stopped": null`. A run that the cap stopped has no pass rate.
+diff --git a/src/stage.rs b/src/stage.rs
+index e44f5e8..eaf7010 100644
+--- a/src/stage.rs
++++ b/src/stage.rs
+@@ -244,8 +244,11 @@ pub fn load(repo: &Repo, cfg: &Config, base: Option<&str>, use_cache: bool) -> R
+ struct Proof {
+     /// The number of such requirements.
+     total: usize,
+-    /// The targets `<id>#<key>` that have no evidence.
++    /// The targets `<id>#<key>` that have no full evidence.
+     missing: Vec<String>,
++    /// The targets of `missing` that a partial `covers:` tag names, each with
++    /// the first tag as `<path>:<line>`.
++    partial: Vec<(String, String)>,
+ }
+ 
+ pub struct Ctx<'a> {
+@@ -309,34 +312,60 @@ impl<'a> Ctx<'a> {
+                 }
+             }
+         }
+-        let missing = targets
+-            .iter()
+-            .filter(|(id, key)| !self.has_evidence(id, key))
+-            .map(|(id, key)| format!("{id}#{key}"))
+-            .collect();
++        let mut missing = Vec::new();
++        let mut partial = Vec::new();
++        for (id, key) in &targets {
++            let (full, part) = self.evidence_of(id, key);
++            if full {
++                continue;
++            }
++            let target = format!("{id}#{key}");
++            if let Some(at) = part {
++                partial.push((target.clone(), at));
++            }
++            missing.push(target);
++        }
+         Proof {
+             total: targets.len(),
+             missing,
++            partial,
+         }
+     }
+ 
+-    /// True if a requirement has evidence: a `covers:` tag, a `verified-by`
+-    /// marker, or the `verified-by` of its document. A requirement that the
+-    /// tree does not have yet (an `ADD` line) has evidence if a `covers:` tag
+-    /// names it.
+-    fn has_evidence(&self, id: &str, key: &str) -> bool {
++    /// The number of requirements that the change adds or changes, that have a
++    /// partial `covers:` tag, and that have no full evidence. It counts at each
++    /// stage.
++    pub fn partial(&self, ch: &Change) -> usize {
++        self.proof(ch).partial.len()
++    }
++
++    /// The evidence of a requirement: true if it has full evidence (a full
++    /// `covers:` tag, a `verified-by` marker, or the `verified-by` of its
++    /// document), and the first partial `covers:` tag as `<path>:<line>`. A
++    /// requirement that the tree does not have yet (an `ADD` line) has full
++    /// evidence if a full `covers:` tag names it.
++    fn evidence_of(&self, id: &str, key: &str) -> (bool, Option<String>) {
+         let head = &self.view.head;
+         let ev = self.evidence.get_or_init(|| Evidence::build(head).0);
+         if let Res::Found(d, None, _) = head.resolve(id) {
+             let doc = &head.docs[d as usize];
+             if let Some(r) = doc.req(key) {
+-                return !ev.of(d, doc, r).is_empty();
++                return (
++                    !ev.of(d, doc, r).is_empty(),
++                    ev.partial_of(d, r).first().cloned(),
++                );
+             }
+         }
+         let want = same_target(head, &format!("{id}#{key}"));
+-        head.covers
++        let mut tags = head
++            .covers
+             .iter()
+-            .any(|c| same_target(head, &c.target) == want)
++            .filter(|c| same_target(head, &c.target) == want);
++        let full = tags.clone().any(|c| !c.partial);
++        let part = tags
++            .find(|c| c.partial)
++            .map(|c| format!("{}:{}", c.path, c.line));
++        (full, part)
+     }
+ 
+     /// The items for the open concerns (SD919) and the open questions (SD922)
+@@ -605,20 +634,31 @@ impl<'a> Ctx<'a> {
+         ));
+         let proof = self.proof(ch);
+         if !proof.missing.is_empty() {
++            let (m, n, p) = (proof.missing.len(), proof.total, proof.partial.len());
+             items.push(item(
+                 false,
+                 Step::Test,
+-                format!(
+-                    "{} of {} requirement(s) that the change adds or changes have no evidence",
+-                    proof.missing.len(),
+-                    proof.total
+-                ),
++                if p == 0 {
++                    format!(
++                        "{m} of {n} requirement(s) that the change adds or changes have no evidence"
++                    )
++                } else {
++                    format!(
++                        "{m} of {n} requirement(s) that the change adds or changes have no full evidence; {p} of them have a partial `covers:` tag only"
++                    )
++                },
+             ));
+             for target in proof.missing.iter().take(5) {
++                let at = proof.partial.iter().find(|(t, _)| t == target);
+                 items.push(item(
+                     false,
+                     Step::Test,
+-                    format!("add `covers: {target}` in a test file"),
++                    match at {
++                        Some((_, at)) => format!(
++                            "`{target}` has a partial `covers:` tag only ({at}); add a test that covers all of it"
++                        ),
++                        None => format!("add `covers: {target}` in a test file"),
++                    },
+                 ));
+             }
+             return report(Stage::Test, items, None);
+@@ -959,6 +999,7 @@ pub fn status(
+         ch: &'a Change,
+         report: Report,
+         tasks: Tasks,
++        partial: usize,
+         areas: Vec<String>,
+         stale: bool,
+         sources: [Option<String>; 3],
+@@ -977,6 +1018,7 @@ pub fn status(
+                 ch,
+                 report: cx.derive(ch),
+                 tasks: tasks(ch, &view.head),
++                partial: cx.partial(ch),
+                 areas,
+                 stale: stale.contains(&ch.slug),
+                 sources: sources_of(&view, ch, walk.as_ref()),
+@@ -1017,6 +1059,7 @@ pub fn status(
+                 .bool("stale", r.stale)
+                 .strs("areas", &r.areas)
+                 .raw("tasks", &tasks)
++                .num("partial", r.partial)
+                 .end()
+         });
+         let follow_ups = follow.iter().map(|f| {
+@@ -1095,6 +1138,9 @@ pub fn status(
+                 line.push_str(&format!(" next-task {}", t.id));
+             }
+         }
++        if r.partial > 0 {
++            line.push_str(&format!(" partial {}", r.partial));
++        }
+         if !r.areas.is_empty() {
+             line.push_str(&format!(" areas {}", r.areas.join(",")));
+         }
+diff --git a/src/upgrade.rs b/src/upgrade.rs
+index 48fc250..818f6ed 100644
+--- a/src/upgrade.rs
++++ b/src/upgrade.rs
+@@ -690,11 +690,12 @@ fn after(tree: &Tree, plan: &Plan) -> Result<After, Fatal> {
+     for p in &files {
+         let Some(t) = tests.get(p) else { continue };
+         for (i, line) in t.lines().enumerate() {
+-            for target in evidence::tags(line) {
++            for (target, partial) in evidence::tags(line) {
+                 covers.push(Cover {
+                     path: p.clone(),
+                     line: i as u32 + 1,
+                     target,
++                    partial,
+                 });
+             }
+         }
+diff --git a/tests/branch_approval.rs b/tests/branch_approval.rs
+index fcedfe9..c107620 100644
+--- a/tests/branch_approval.rs
++++ b/tests/branch_approval.rs
+@@ -1349,3 +1349,77 @@ fn a_skip_label_in_an_approved_plan_gives_no_sd910() {
+     assert_eq!(found, want(&[]), "{out}");
+     assert_eq!(code, 0, "{out}");
+ }
++
++// A delta that depends on a spike (design 0.7.0, section 15, D11)
++
++const SPIKE: &str = "src/spike.py";
++const ADD_AFTER_SPIKE: &str = "- ADD requirements/valves#sensor-timeout: When a sensor gives no value for 30 seconds, the controller SHALL close the valve of its bed.";
++
++/// The commits up to the approval of a plan that lists the spike file.
++fn up_to_the_plan_with_a_spike(r: &Repo) {
++    let files = [CODE, TEST, SPIKE];
++    first_four(r);
++    step(r, AGENT, "plan draft", &[(PLAN, &plan("draft", &files))]);
++    step(
++        r,
++        APPROVER,
++        "approve plan",
++        &[(PLAN, &plan("approved", &files))],
++    );
++}
++
++#[test]
++fn a_delta_edit_after_the_approval_commit_needs_no_new_approval() {
++    let r = start_branch();
++    up_to_the_plan_with_a_spike(&r);
++    step(&r, AGENT, "spike", &[(SPIKE, "print(30)\n")]);
++    // The edit keeps the status `approved`. No commit approves it again.
++    let edited = spec("approved").replace(ADD, ADD_AFTER_SPIKE);
++    step(&r, AGENT, "delta after the spike", &[(SPEC, &edited)]);
++    step_code(&r);
++    let (code, out, found) = check(&r);
++    assert_eq!(found, want(&[]), "{out}");
++    assert_eq!(code, 0, "{out}");
++}
++
++// The next test follows the rule of SD910 for a plan that the branch sets back
++// to `draft` after its code landed. If the decision about that rule changes,
++// this test follows it.
++#[test]
++fn a_plan_set_back_to_draft_and_approved_again_takes_its_new_files() {
++    let r = start_branch();
++    up_to_the_plan_with_a_spike(&r);
++    step(&r, AGENT, "spike", &[(SPIKE, "print(30)\n")]);
++    // The spec goes back to `draft` with the edit, and a status-only commit of
++    // the approver sets `approved` again.
++    let edited = spec("draft").replace(ADD, ADD_AFTER_SPIKE);
++    step(
++        &r,
++        AGENT,
++        "spec back to draft, delta edit",
++        &[(SPEC, &edited)],
++    );
++    let (code, out, found) = check(&r);
++    assert_eq!(found, want(&[]), "{out}");
++    assert_eq!(code, 0, "{out}");
++    let edited = spec("approved").replace(ADD, ADD_AFTER_SPIKE);
++    step(&r, APPROVER, "approve spec again", &[(SPEC, &edited)]);
++    // The plan lists one more path. The same 2 commits approve it.
++    let files = [CODE, TEST, SPIKE, "src/extra.py"];
++    step(
++        &r,
++        AGENT,
++        "plan back to draft",
++        &[(PLAN, &plan("draft", &files))],
++    );
++    step(
++        &r,
++        APPROVER,
++        "approve plan again",
++        &[(PLAN, &plan("approved", &files))],
++    );
++    step(&r, AGENT, "extra file", &[("src/extra.py", "x = 1\n")]);
++    let (code, out, found) = check(&r);
++    assert_eq!(found, want(&[]), "{out}");
++    assert_eq!(code, 0, "{out}");
++}
+diff --git a/tests/cli.rs b/tests/cli.rs
+index 23d6ba5..4cf3732 100644
+--- a/tests/cli.rs
++++ b/tests/cli.rs
+@@ -2443,6 +2443,101 @@ fn evidence_resolves_covers_tags_and_verified_by() {
+     assert!(!out.contains("SD105"), "{out}");
+ }
+ 
++/// `profile_repo` with a partial tag on `loans#fines`, which has no other
++/// evidence.
++fn partial_repo(tag: &str) -> Repo {
++    let r = profile_repo("");
++    r.write(
++        "tests/test_fines.py",
++        &format!("{tag}\ndef test_fines():\n    pass\n"),
++    );
++    r.commit("partial");
++    r
++}
++
++#[test]
++fn a_partial_tag_alone_gives_sd608_that_names_it() {
++    let r = partial_repo("# covers: partial loans#fines");
++    let (code, out, _) = r.run(&["check", "--all"]);
++    assert_eq!(code, 0, "a warning: {out}");
++    assert!(
++        out.contains("docs/loans.md:7: warning SD608 requirement-unverified: `loans#fines` is active, and only a partial `covers:` tag names it (tests/test_fines.py:1); add a test that covers all of it, or a `verified-by`"),
++        "{out}"
++    );
++    assert!(
++        out.contains("A `covers: partial` tag alone is not evidence."),
++        "{out}"
++    );
++    // The tag of another requirement stays full evidence.
++    assert!(!out.contains("`loans#loan-period` is active"), "{out}");
++}
++
++#[test]
++fn a_partial_tag_that_names_no_requirement_gives_sd105() {
++    let r = partial_repo("# covers: partial loans#fine, loans#fines");
++    let (code, out, _) = r.run(&["check", "--all"]);
++    assert_eq!(code, 1, "{out}");
++    assert!(
++        out.contains("tests/test_fines.py:1: error SD105 covers-unresolved: `covers:` tag: `loans` has no requirement `fine`"),
++        "{out}"
++    );
++    // The word `partial` applies to each id of the tag.
++    assert_eq!(out.matches("error SD105").count(), 1, "{out}");
++}
++
++#[test]
++fn a_full_tag_beside_a_partial_tag_is_evidence() {
++    let r = partial_repo("# covers: partial loans#fines");
++    r.write("tests/test_all.py", "# covers: loans#fines\n");
++    r.commit("full");
++    let (code, out, _) = r.run(&["check", "--all"]);
++    assert_eq!(code, 0, "{out}");
++    assert!(!out.contains("SD608"), "{out}");
++    let (_, out, _) = r.run(&["show", "loans#fines"]);
++    assert!(
++        out.contains("- loans#fines: tests/test_all.py:1\n")
++            || out.contains("- loans#fines: tests/test_all.py:1;"),
++        "{out}"
++    );
++}
++
++#[test]
++fn a_word_partial_after_the_ids_keeps_the_tag_full() {
++    let r = partial_repo("# covers: loans#fines partial");
++    let (code, out, _) = r.run(&["check", "--all"]);
++    assert_eq!(code, 0, "{out}");
++    assert!(!out.contains("SD608"), "{out}");
++}
++
++#[test]
++fn show_gives_the_field_partial_apart_from_the_sources() {
++    let r = partial_repo("# covers: partial loans#fines");
++    r.write("tests/test_p.py", "# covers: partial loans#loan-period\n");
++    r.commit("more");
++    let (code, out, _) = r.run(&["show", "loans#fines"]);
++    assert_eq!(code, 0, "{out}");
++    assert!(
++        out.contains("<!-- evidence -->\n- loans#fines: none; partial: tests/test_fines.py:1"),
++        "{out}"
++    );
++    let (_, out, _) = r.run(&["show", "loans#loan-period"]);
++    assert!(
++        out.contains("- loans#loan-period: tests/test_loans.py:1; partial: tests/test_p.py:1"),
++        "{out}"
++    );
++    let (_, out, _) = r.run(&["show", "loans#fines", "--json"]);
++    assert!(
++        out.contains("\"evidence\":[{\"key\":\"fines\",\"sources\":[],\"partial\":[\"tests/test_fines.py:1\"]}]"),
++        "{out}"
++    );
++    // The field is always there, also with no partial tag.
++    let (_, out, _) = r.run(&["show", "loans#renew-limit", "--json"]);
++    assert!(
++        out.contains("\"sources\":[\"tests/renew.py\"],\"partial\":[]"),
++        "{out}"
++    );
++}
++
+ #[test]
+ fn knowledge_types_have_templates_sections_and_context_rules() {
+     let r = Repo::empty();
+diff --git a/tests/finish.rs b/tests/finish.rs
+index 1027565..2d1ddbe 100644
+--- a/tests/finish.rs
++++ b/tests/finish.rs
+@@ -558,6 +558,39 @@ fn a_delta_hash_that_changed_after_the_approval_gives_sd914_and_writes_nothing()
+     assert!(staged(&r).is_empty());
+ }
+ 
++#[test]
++fn a_delta_edit_with_a_new_approval_commit_in_the_pull_request_of_finish_stops_at_step_3() {
++    let r = Fx {
++        delta: &[CHANGE_CLOSE],
++        ..Fx::default()
++    }
++    .start();
++    // `approval = "branch"`: the pull request sets the spec back to `draft`,
++    // and an approver commits the status line alone. A squash merge keeps no
++    // commit of the branch, so `finish` still compares with the base tree.
++    let config = r.read("spec-dna.toml").replace(
++        "gate = \"block\"\n",
++        "gate = \"block\"\napproval = \"branch\"\napprovers = [\"approver@example.com\"]\n",
++    );
++    r.write("spec-dna.toml", &config);
++    r.commit("turn the approval in the branch on");
++    let edited = r.read(SPEC).replace("in 4 seconds", "in 3 seconds");
++    r.write(SPEC, &edited.replace("status: approved", "status: draft"));
++    r.commit_as("delta after the spike", "agent@example.com");
++    r.write(SPEC, &edited);
++    r.commit_as("approve spec again", "approver@example.com");
++    r.write("tests/test_valves.py", COVERS_CLOSE_FLUSH);
++    let before = tree(&r);
++    let (code, out, err) = fin(&r, &[]);
++    assert_eq!(code, 1, "{out}{err}");
++    assert!(
++        out.contains(": error SD914 ") && out.contains("approved delta"),
++        "{out}"
++    );
++    assert!(err.contains("step 3"), "{err}");
++    assert_eq!(tree(&r), before);
++}
++
+ #[test]
+ fn a_delta_that_changed_after_it_was_approved_in_the_base_stops_finish() {
+     let r = Fx {
+diff --git a/tests/golden/show-requirement.json b/tests/golden/show-requirement.json
+index 4ec5fce..499a68d 100644
+--- a/tests/golden/show-requirement.json
++++ b/tests/golden/show-requirement.json
+@@ -1 +1 @@
+-{"doc":"irrigation/valves","path":"docs/irrigation/valves.md","type":"requirements","status":"active","owner":"team-water","kind":"requirement","requirements":["shutoff","flush","R-7"],"evidence":[{"key":"shutoff","sources":["src/controller.rs","tests/valves.rs"]}],"units":[{"id":"irrigation/valves#shutoff","hash":"6430f13b834d03fd","line":12,"text":"- **shutoff**: When a tray overflows, the controller SHALL close the valve of that tray."}]}
++{"doc":"irrigation/valves","path":"docs/irrigation/valves.md","type":"requirements","status":"active","owner":"team-water","kind":"requirement","requirements":["shutoff","flush","R-7"],"evidence":[{"key":"shutoff","sources":["src/controller.rs","tests/valves.rs"],"partial":[]}],"units":[{"id":"irrigation/valves#shutoff","hash":"6430f13b834d03fd","line":12,"text":"- **shutoff**: When a tray overflows, the controller SHALL close the valve of that tray."}]}
+diff --git a/tests/golden/stats-sdlc-evals.txt b/tests/golden/stats-sdlc-evals.txt
+index 8542670..d45d3b0 100644
+--- a/tests/golden/stats-sdlc-evals.txt
++++ b/tests/golden/stats-sdlc-evals.txt
+@@ -12,6 +12,7 @@ Test leading: The eval pass rate over time: 80.0 percent (2 result files)
+   note: the value is the pass rate of the newest result file (2026-02-20T10:00:00Z); the committed files hold the history; 1 file skipped: not a complete result
+ Test leading: How long a production incident takes to become a permanent eval: 4.5 days (2 incidents)
+ Test lagging: Regressions caught in CI against regressions found in production: n/a (it needs the incident tracker)
++Test lagging: Share of requirements with partial evidence only: n/a (the tree of HEAD has no active requirement)
+ Maintain leading: Time from band breach to an intent.md in the triage queue: n/a (spec-dna has no bands)
+ Maintain lagging: Repeat incidents of the same class: n/a (an incident has no class field)
+ Deploy both: The other indicators of the playbook: n/a (they need CI logs, telemetry or an incident tracker)
+diff --git a/tests/golden/stats-sdlc.txt b/tests/golden/stats-sdlc.txt
+index 23f2e82..424797a 100644
+--- a/tests/golden/stats-sdlc.txt
++++ b/tests/golden/stats-sdlc.txt
+@@ -16,6 +16,8 @@ Build lagging: Rework cycles per change: n/a (it needs pull request metadata)
+ Test leading: The eval pass rate over time: n/a (the configuration has no [evals] table)
+ Test leading: How long a production incident takes to become a permanent eval: n/a (the configuration has no [evals] table)
+ Test lagging: Regressions caught in CI against regressions found in production: n/a (it needs the incident tracker)
++Test lagging: Share of requirements with partial evidence only: 0.0 percent (2 requirements)
++  note: 0 of 2 requirements have a partial covers: tag only; 2 have no evidence
+ Maintain leading: Time from band breach to an intent.md in the triage queue: n/a (spec-dna has no bands)
+ Maintain lagging: Repeat incidents of the same class: n/a (an incident has no class field)
+ Deploy both: The other indicators of the playbook: n/a (they need CI logs, telemetry or an incident tracker)
+diff --git a/tests/lifecycle_base.rs b/tests/lifecycle_base.rs
+index afca886..533535a 100644
+--- a/tests/lifecycle_base.rs
++++ b/tests/lifecycle_base.rs
+@@ -504,14 +504,67 @@ fn a_routine_change_needs_its_requirement_document_in_files() {
+ }
+ 
+ #[test]
+-fn a_change_with_no_plan_has_the_folder_as_its_scope() {
++fn a_change_with_no_plan_gives_no_sd913() {
+     let r = start(nothing);
+     r.write(INTENT, &intent("draft", "routine"));
+     r.write("src/dose.py", "x = 2\n");
+-    let (_, out) = check(&r);
++    let (code, out) = check(&r);
++    assert!(!has(&out, "SD913"), "{out}");
++    assert_eq!(code, 0, "{out}");
++}
++
++/// The edits of `clarify`: a draft spec, 2 notes that no delta names, and a
++/// spike.
++fn clarify_edits(r: &Repo) {
++    r.write(
++        SPEC,
++        &spec(
++            "draft",
++            &["- ADD requirements/valves#open: The controller SHALL open the valve."],
++        ),
++    );
++    r.write("notes/questions.md", "# Questions\n\n- Which valve?\n");
++    r.write("notes/roadmap.md", "# Roadmap\n\n- Next: valves.\n");
++    r.write("src/spike.py", "s = 1\n");
++}
++
++#[test]
++fn sd913_is_silent_before_a_plan_exists() {
++    let r = start(|r| r.write(INTENT, &intent("accepted", "higher-risk")));
++    clarify_edits(&r);
++    let (code, out) = check(&r);
++    assert!(!has(&out, "SD913"), "{out}");
++    assert_eq!(code, 0, "{out}");
++}
++
++#[test]
++fn sd913_reads_each_path_once_a_draft_plan_exists() {
++    let r = start(|r| r.write(INTENT, &intent("accepted", "higher-risk")));
++    clarify_edits(&r);
++    r.write(PLAN, &plan("draft", &["src/dose.py"]));
++    let (code, out) = check(&r);
++    let found = lines(&out, "SD913");
++    assert_eq!(found.len(), 3, "{out}");
++    for path in ["notes/questions.md", "notes/roadmap.md", "src/spike.py"] {
++        assert!(
++            found.iter().any(|l| l.starts_with(&format!("{path}:1:"))),
++            "{path}: {out}"
++        );
++    }
++    assert_eq!(code, 0, "{out}");
++}
++
++#[test]
++fn a_change_with_no_plan_beside_a_change_with_a_plan_keeps_sd913() {
++    let r = start(|r| approved_change(r, &["src/dose.py"]));
++    r.write("src/dose.py", "x = 2\n");
++    r.write("docs/intent/flow/intent.md", &intent("draft", "routine"));
++    r.write("README.md", "Read me.\n");
++    let (code, out) = check(&r);
+     let found = lines(&out, "SD913");
+     assert_eq!(found.len(), 1, "{out}");
+-    assert!(found[0].starts_with("src/dose.py:1:"), "{out}");
++    assert!(found[0].starts_with("README.md:1:"), "{out}");
++    assert_eq!(code, 0, "{out}");
+ }
+ 
+ #[test]
+diff --git a/tests/lifecycle_checks.rs b/tests/lifecycle_checks.rs
+index e4f5144..3b7f4ba 100644
+--- a/tests/lifecycle_checks.rs
++++ b/tests/lifecycle_checks.rs
+@@ -1219,3 +1219,78 @@ fn a_document_of_another_type_does_not_satisfy_an_add_item_after_the_folder_is_d
+         "{out}"
+     );
+ }
++
++// The budget of a plan (design 0.7.0, section 15)
++
++/// A draft plan of `n` tasks of about 310 characters each.
++fn plan_of(n: usize) -> String {
++    let tasks: String = (1..=n)
++        .map(|i| format!("- [ ] t{i}: Write the failing test of the close time of valve {i}, then close the valve within 2 seconds and log the time of the close in the report of the run. Files: `src/valve_{i}.py`, `tests/test_valve_{i}.py`. Verify: `python3 -m pytest tests/test_valve_{i}.py` passes, and the new test failed before the code.\n"))
++        .collect();
++    format!(
++        "---\nstatus: draft\n---\n# Faster close\n\n## Files\n\n- `src/`\n- `tests/`\n\n## Order\n\n{tasks}\n## Risks\n\n- A slow valve.\n\n## Proof\n\nThe tests pass.\n"
++    )
++}
++
++/// A fixture with a draft intent, the plan `plan`, and the extra tables `more`.
++fn repo_with_plan(plan: &str, more: &str) -> Repo {
++    let r = repo_with(&format!(
++        "{}\n{more}",
++        config("standard", "", "max-started = 1\n", "")
++    ));
++    r.write(
++        "docs/intent/faster-close/intent.md",
++        "---\nstatus: draft\nclass: routine\n---\n# Faster close\n\n## Intent\n\nText.\n",
++    );
++    r.write("docs/intent/faster-close/plan.md", plan);
++    r
++}
++
++/// The codes SD701 to SD704 of the text of `check`.
++fn budget_codes(out: &str) -> Vec<&'static str> {
++    ["SD701", "SD702", "SD703", "SD704"]
++        .into_iter()
++        .filter(|c| out.contains(&format!(" {c} ")))
++        .collect()
++}
++
++#[test]
++fn a_plan_of_40_tasks_gives_no_budget_diagnostic() {
++    let r = repo_with_plan(&plan_of(40), "");
++    let (code, out) = check(&r);
++    assert!(budget_codes(&out).is_empty(), "{out}");
++    assert_eq!(code, 0, "{out}");
++}
++
++#[test]
++fn budgets_plan_gives_the_plan_a_budget() {
++    let more = "[budgets.plan]\nsoft = 3000\nhard = 9000\n";
++    // About 4,000 characters: over the soft budget.
++    let r = repo_with_plan(&plan_of(12), more);
++    let (code, out) = check(&r);
++    assert_eq!(budget_codes(&out), ["SD701"], "{out}");
++    assert_eq!(code, 0, "{out}");
++    // About 12,500 characters: over the hard budget of a new document.
++    let r = repo_with_plan(&plan_of(40), more);
++    let (code, out) = check(&r);
++    assert!(budget_codes(&out).contains(&"SD702"), "{out}");
++    assert_eq!(code, 1, "{out}");
++}
++
++#[test]
++fn a_zero_budget_turns_the_budget_of_a_type_off() {
++    let intent = format!(
++        "---\nstatus: draft\nclass: routine\n---\n# Faster close\n\n## Intent\n\n{}\n",
++        "The valve closes too slowly, and the bed overflows.\n\n".repeat(300)
++    );
++    let r = repo_with_plan(&plan_of(1), "");
++    r.write("docs/intent/faster-close/intent.md", &intent);
++    let (code, out) = check(&r);
++    assert!(budget_codes(&out).contains(&"SD702"), "{out}");
++    assert_eq!(code, 1, "{out}");
++    let r = repo_with_plan(&plan_of(1), "[budgets.intent]\nsoft = 0\nhard = 0\n");
++    r.write("docs/intent/faster-close/intent.md", &intent);
++    let (code, out) = check(&r);
++    assert!(budget_codes(&out).is_empty(), "{out}");
++    assert_eq!(code, 0, "{out}");
++}
+diff --git a/tests/lifecycle_commands.rs b/tests/lifecycle_commands.rs
+index 96dbf63..973382d 100644
+--- a/tests/lifecycle_commands.rs
++++ b/tests/lifecycle_commands.rs
+@@ -354,6 +354,60 @@ fn an_add_line_without_evidence_is_in_the_stage_test_until_a_tag_names_it() {
+     assert!(text.contains("each of the 1 requirement(s)"), "{text}");
+ }
+ 
++#[test]
++fn next_and_status_name_a_partial_tag_at_the_stage_test() {
++    let r = start();
++    stage(
++        &r,
++        &[
++            (INTENT, &intent("accepted", "higher-risk", "")),
++            (SPEC, &spec("approved", ADD_FLUSH)),
++            (
++                PLAN,
++                &plan("approved", &["src/dose.py"], "- [ ] t1: Edit the code."),
++            ),
++            ("src/dose.py", "x = 2\n"),
++            (
++                "tests/test_valves.py",
++                "# covers: partial requirements/valves/closing#flush\n",
++            ),
++        ],
++    );
++    // A partial tag is not evidence: the stage stays `test`.
++    assert_stage(&r, "test");
++    let text = next_text(&r);
++    assert!(
++        text.contains("1 of 1 requirement(s) that the change adds or changes have no full evidence; 1 of them have a partial `covers:` tag only"),
++        "{text}"
++    );
++    assert_eq!(
++        items(&text).last().copied().unwrap(),
++        "[ ] `requirements/valves/closing#flush` has a partial `covers:` tag only (tests/test_valves.py:1); add a test that covers all of it [skill: tdd]"
++    );
++    // `status` shows the count in a token, also with a target of no tag.
++    let (code, out, err) = r.run(&["status"]);
++    assert_eq!(code, 0, "{out}{err}");
++    assert!(
++        out.contains(" tasks 0/1 next-task t1 partial 1 areas"),
++        "{out}"
++    );
++    let (_, out, _) = r.run(&["status", "--json"]);
++    assert!(out.contains("\"partial\":1"), "{out}");
++    // A full tag next to it is evidence.
++    stage(
++        &r,
++        &[(
++            "tests/test_all.py",
++            "# covers: requirements/valves/closing#flush\n",
++        )],
++    );
++    assert_stage(&r, "deploy");
++    let (_, out, _) = r.run(&["status"]);
++    assert!(!out.contains("partial"), "{out}");
++    let (_, out, _) = r.run(&["status", "--json"]);
++    assert!(out.contains("\"partial\":0"), "{out}");
++}
++
+ #[test]
+ fn a_routine_requirement_with_a_new_hash_and_no_evidence_is_in_the_stage_test() {
+     let r = start();
+diff --git a/tests/lifecycle_finished.rs b/tests/lifecycle_finished.rs
+index 54a1e07..c943335 100644
+--- a/tests/lifecycle_finished.rs
++++ b/tests/lifecycle_finished.rs
+@@ -479,6 +479,43 @@ fn a_requirement_that_the_delta_changes_needs_evidence() {
+     assert_eq!(code, 0, "{out}");
+ }
+ 
++#[test]
++fn a_partial_tag_alone_gives_sd916_and_stops_finish() {
++    let partial = "# covers: partial requirements/valves#close\n";
++    let fx = || Fx {
++        delta: &[CHANGE_CLOSE],
++        ..Fx::default()
++    };
++    // `check` on the result of `finish`.
++    let r = fx().start();
++    r.write("docs/requirements/valves.md", &valves_with(CLOSE_4));
++    r.write("tests/test_valves.py", partial);
++    finish(&r);
++    let (code, out) = check(&r);
++    let found = lines(&out, "SD916");
++    assert_eq!(found.len(), 1, "{out}");
++    assert!(
++        found[0].contains("adds or changes the requirement `requirements/valves#close`, and only a partial `covers:` tag names it (tests/test_valves.py:1); add a test that covers all of it"),
++        "{out}"
++    );
++    assert_eq!(code, 1, "{out}");
++    // The command stops at step 5 and writes nothing.
++    let r = fx().start();
++    r.write("tests/test_valves.py", partial);
++    let (code, out, err) = r.run(&["finish", "dose"]);
++    assert_eq!(code, 1, "{out}{err}");
++    assert!(err.contains("step 5"), "{err}");
++    assert!(
++        out.contains("only a partial `covers:` tag names it"),
++        "{out}"
++    );
++    assert!(r.dir.join(FOLDER).exists());
++    // A full tag next to the partial tag is evidence.
++    r.write("tests/test_full.py", COVERS);
++    let (code, out, err) = r.run(&["finish", "dose"]);
++    assert_eq!(code, 0, "{out}{err}");
++}
++
+ #[test]
+ fn a_requirement_that_a_routine_change_edits_needs_evidence() {
+     let r = Fx::default().start();
+diff --git a/tests/lifecycle_log.rs b/tests/lifecycle_log.rs
+index f6360e1..75f0e49 100644
+--- a/tests/lifecycle_log.rs
++++ b/tests/lifecycle_log.rs
+@@ -778,7 +778,7 @@ fn an_indicator_that_git_cannot_give_has_a_null_value_and_a_reason() {
+     empty.commit("start");
+     let out = stats_json(&empty, &[]);
+     let rows: Vec<&str> = out.split("{\"play\"").skip(1).collect();
+-    assert_eq!(rows.len(), 15, "{out}");
++    assert_eq!(rows.len(), 16, "{out}");
+     for row in rows {
+         if row.contains("\"value\":null") {
+             assert!(row.contains("\"reason\":\""), "{row}");
+diff --git a/tests/stats_evals.rs b/tests/stats_evals.rs
+index 9241bba..41f7247 100644
+--- a/tests/stats_evals.rs
++++ b/tests/stats_evals.rs
+@@ -737,3 +737,75 @@ fn the_result_of_eval_run_ab_is_no_complete_result() {
+         "{out}"
+     );
+ }
++
++// The share of requirements with a partial tag only
++
++const PARTIAL_LINE: &str = "Test lagging: Share of requirements with partial evidence only: ";
++
++#[test]
++fn stats_gives_the_share_of_requirements_with_a_partial_tag_only() {
++    let r = repo("");
++    r.write(
++        "docs/loans.md",
++        "# Loans\n\n## Requirements\n\n- **period**: The library SHALL set the due date 14 days later.\n- **renew**: The library SHALL allow 1 renewal.\n- **fines**: The library SHALL collect fines daily.\n- **holds**: The library SHALL keep a hold for 3 days.\n",
++    );
++    r.write(
++        "tests/test_loans.py",
++        "# covers: loans#period\n# covers: partial loans#renew, loans#fines\n",
++    );
++    r.write("tests/test_more.py", "# covers: partial loans#period\n");
++    r.commit_at("requirements and tests", &at("02-01"));
++    let out = stats(&r);
++    assert_eq!(
++        line(&out, PARTIAL_LINE),
++        format!("{PARTIAL_LINE}50.0 percent (4 requirements)")
++    );
++    assert_eq!(
++        note_after(&out, PARTIAL_LINE),
++        Some("  note: 2 of 4 requirements have a partial covers: tag only; 1 have no evidence")
++    );
++    let json = stats_json(&r, &[]);
++    let ind = row(&json, "Share of requirements with partial");
++    for part in [
++        "\"play\":\"Test\"",
++        "\"kind\":\"lagging\"",
++        "\"value\":50.0",
++        "\"unit\":\"percent\"",
++        "\"count\":4",
++    ] {
++        assert!(ind.contains(part), "`{part}` not in {ind}");
++    }
++    // The row stands after the 2 leading rows and before the Maintain rows.
++    let names: Vec<&str> = json.split("\"name\":\"").skip(1).collect();
++    assert_eq!(names.len(), 16, "{json}");
++    assert!(names[11].starts_with("Regressions caught"), "{json}");
++    assert!(names[12].starts_with("Share of requirements"), "{json}");
++    // A committed tree is read: an untracked tag does not count.
++    r.write("tests/test_untracked.py", "# covers: loans#renew\n");
++    let out = stats(&r);
++    assert!(
++        line(&out, PARTIAL_LINE).contains("50.0 percent (4 requirements)"),
++        "{out}"
++    );
++}
++
++#[test]
++fn the_partial_share_is_na_without_a_requirement_or_without_test_globs() {
++    let r = repo("");
++    let out = stats(&r);
++    assert_eq!(
++        line(&out, PARTIAL_LINE),
++        format!("{PARTIAL_LINE}n/a (the tree of HEAD has no active requirement)")
++    );
++    let r = repo("[evidence]\ntests = []\n");
++    r.write(
++        "docs/loans.md",
++        "# Loans\n\n## Requirements\n\n- **period**: The library SHALL set the due date 14 days later.\n",
++    );
++    r.commit_at("requirement", &at("02-01"));
++    let out = stats(&r);
++    assert_eq!(
++        line(&out, PARTIAL_LINE),
++        format!("{PARTIAL_LINE}n/a (`[evidence] tests` is empty, so no `covers:` tag counts)")
++    );
++}

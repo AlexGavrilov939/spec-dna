@@ -1,0 +1,16 @@
+{
+  "slug": "task-checks",
+  "scope": "Do tasks t1 to t8 of the plan.",
+  "start": "ac77b00dbd8fb121d97c0bef49203784571692d5",
+  "test_files": [
+    "tests/change_model.rs",
+    "tests/finish.rs",
+    "tests/init_change.rs",
+    "tests/lifecycle_base.rs",
+    "tests/lifecycle_checks.rs",
+    "tests/lifecycle_commands.rs",
+    "tests/new_place.rs",
+    "tests/task_checks.rs",
+    "tests/templates_new.rs"
+  ]
+}

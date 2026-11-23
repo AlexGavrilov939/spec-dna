@@ -1,0 +1,9 @@
+{
+  "slug": "approver-safety",
+  "scope": "Do tasks t4, t9 and t10 of the plan, and no other task.",
+  "start": "c5a0787db72eb17ac5c7ff791d64dbd6aa278a32",
+  "test_files": [
+    "tests/harness.rs",
+    "tests/hook_approvals.rs"
+  ]
+}

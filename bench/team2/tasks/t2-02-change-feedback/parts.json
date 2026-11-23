@@ -1,0 +1,40 @@
+{
+  "part1": [
+    [
+      "tests/lifecycle_base.rs",
+      "a_change_with_no_plan_gives_no_sd913"
+    ],
+    [
+      "tests/lifecycle_base.rs",
+      "sd913_is_silent_before_a_plan_exists"
+    ],
+    [
+      "tests/lifecycle_checks.rs",
+      "a_plan_of_40_tasks_gives_no_budget_diagnostic"
+    ],
+    [
+      "tests/lifecycle_finished.rs",
+      "a_partial_tag_alone_gives_sd916_and_stops_finish"
+    ]
+  ],
+  "part2": [
+    [
+      "tests/lifecycle_checks.rs",
+      "a_budgets_plan_table_with_one_field_takes_the_old_default_for_the_other"
+    ]
+  ],
+  "dropped": {
+    "tests/branch_approval.rs::a_delta_edit_after_the_approval_commit_needs_no_new_approval": "part 1: none=True wrong=True reference=True",
+    "tests/branch_approval.rs::a_plan_set_back_to_draft_and_approved_again_takes_its_new_files": "part 1: none=True wrong=True reference=True",
+    "tests/cli.rs::conventions_come_first_and_show_prints_them": "part 1: none=True wrong=True reference=True",
+    "tests/finish.rs::a_delta_edit_with_a_new_approval_commit_in_the_pull_request_of_finish_stops_at_step_3": "part 1: none=True wrong=True reference=True",
+    "tests/lifecycle_base.rs::sd913_reads_each_path_once_a_draft_plan_exists": "part 1: none=True wrong=True reference=True",
+    "tests/lifecycle_base.rs::a_change_with_no_plan_beside_a_change_with_a_plan_keeps_sd913": "part 1: none=True wrong=True reference=True",
+    "tests/lifecycle_checks.rs::budgets_plan_gives_the_plan_a_budget": "part 1: none=True wrong=True reference=True",
+    "tests/lifecycle_checks.rs::a_zero_budget_turns_the_budget_of_a_type_off": "part 1: none=True wrong=True reference=True",
+    "tests/lifecycle_commands.rs::the_stage_build_has_3_sub_cases": "part 1: none=True wrong=True reference=True",
+    "tests/lifecycle_log.rs::stats_gives_the_indicators_of_the_playbook": "part 1: none=True wrong=True reference=True",
+    "tests/stats_evals.rs::a_stopped_or_incomplete_file_is_skipped_and_counted_in_the_note": "part 1: none=True wrong=True reference=True",
+    "tests/lifecycle_base.rs::a_plan_that_the_branch_deletes_still_counts_when_the_base_has_it": "part 2: none=True wrong=False reference=True"
+  }
+}

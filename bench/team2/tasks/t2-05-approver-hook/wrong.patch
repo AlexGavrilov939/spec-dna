@@ -1,0 +1,1278 @@
+diff --git a/schema/spec-dna.schema.json b/schema/spec-dna.schema.json
+index bce25ef..764167d 100644
+--- a/schema/spec-dna.schema.json
++++ b/schema/spec-dna.schema.json
+@@ -420,6 +420,10 @@
+             "off"
+           ]
+         },
++        "protect-approvals": {
++          "description": "If true, the harness writes the hook `protect-approvals`: it denies a `Bash` call that runs `spec-dna approve`, and a `git commit` that sets the status of an artifact of a change to its approval value. `init` writes true for the profile `strict`. Default false.",
++          "type": "boolean"
++        },
+         "roles": {
+           "description": "The model and the effort of each role. A role that is not in the table takes its default. A role that the level does not include is an error.",
+           "type": "object",
+diff --git a/src/config.rs b/src/config.rs
+index 92b5cc8..9e9d330 100644
+--- a/src/config.rs
++++ b/src/config.rs
+@@ -1406,7 +1406,7 @@ impl Config {
+             h.tests = evidence_tests.clone();
+             h
+         });
+-        Ok(Config {
++        let mut cfg = Config {
+             pin,
+             force_lint: false,
+             exclude,
+@@ -1442,7 +1442,14 @@ impl Config {
+             change_base: change.base,
+             change_approval: change.approval,
+             change_approvers: change.approvers,
+-        })
++        };
++        // The hook `protect-approvals` reads the folders of the `intent`
++        // layer, so the harness keeps them.
++        let dirs = crate::lifecycle::intent_dirs(&cfg);
++        if let Some(h) = cfg.harness.as_mut() {
++            h.intent_dirs = dirs;
++        }
++        Ok(cfg)
+     }
+ 
+     /// True if the primary subtag of `language` is `en`. The word lists of the
+@@ -3664,6 +3671,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
+                 "efforts",
+                 "fanout-cap",
+                 "level",
++                "protect-approvals",
+                 "protect-tests",
+                 "review-md",
+                 "roles",
+diff --git a/src/harness.rs b/src/harness.rs
+index 76b2e11..e4ec873 100644
+--- a/src/harness.rs
++++ b/src/harness.rs
+@@ -484,6 +484,15 @@ pub struct Harness {
+     /// True: write `REVIEW.md`.
+     pub review_md: bool,
+     pub protect_tests: Protect,
++    /// `[harness] protect-approvals` (owner review of 0.7.0, item 2). `None`:
++    /// the file has no such key, and the hook is off. `init` keeps the value
++    /// that a file sets, and it writes `true` for `strict` in a file that has
++    /// no key.
++    pub protect_approvals: Option<bool>,
++    /// The folders of the `intent` layer, from the repository root, one for
++    /// each root. `Config::parse` sets them, as it sets `tests`. `parse`
++    /// leaves the list empty, and `toml_section` does not write it.
++    pub intent_dirs: Vec<String>,
+     /// The globs of `[evidence] tests`. `Config::parse` sets them, so the
+     /// harness of a base commit has the globs of that base. `parse` leaves
+     /// the list empty, and `toml_section` does not write it.
+@@ -569,6 +578,8 @@ impl Harness {
+             skills: Vec::new(),
+             review_md: false,
+             protect_tests: Protect::Off,
++            protect_approvals: None,
++            intent_dirs: Vec::new(),
+             tests: Vec::new(),
+         }
+     }
+@@ -608,6 +619,14 @@ impl Harness {
+         self.level != Level::None && self.protect_tests != Protect::Off && !self.tests.is_empty()
+     }
+ 
++    /// True if the configuration writes the hook `protect-approvals`: the key
++    /// is `true`, and the project has a folder of the `intent` layer.
++    pub fn approvals_hook_on(&self) -> bool {
++        self.level != Level::None
++            && self.protect_approvals == Some(true)
++            && !self.intent_dirs.is_empty()
++    }
++
+     /// Reads the `[harness]` table. With level `none`, it still reads the other
+     /// keys, but it does not check the roles against the level.
+     pub fn parse(v: &Toml) -> Result<Harness, String> {
+@@ -685,6 +704,11 @@ impl Harness {
+                 })?;
+             }
+         }
++        match f.take("protect-approvals") {
++            None => {}
++            Some(Toml::Boolean(b)) => h.protect_approvals = Some(*b),
++            Some(_) => return Err("`harness.protect-approvals` must be true or false".into()),
++        }
+         if let Some(v) = f.take("roles") {
+             let roles = v.as_table().ok_or("`harness.roles` must be a table")?;
+             // A role of 0.5 gives its own error, before any other key is read.
+@@ -798,6 +822,9 @@ impl Harness {
+         s += &format!("skills = [{}]\n", skills.join(", "));
+         s += &format!("review-md = {}\n", self.review_md);
+         s += &format!("protect-tests = {}\n", quote(self.protect_tests.name()));
++        if let Some(b) = self.protect_approvals {
++            s += &format!("protect-approvals = {b}\n");
++        }
+         s += "\n[harness.roles]\n";
+         for r in Role::ALL.into_iter().filter(|r| self.level.includes(*r)) {
+             let c = self.cfg(r);
+@@ -1238,7 +1265,7 @@ fn team_page(h: &Harness) -> String {
+         }
+         s += "\n";
+     }
+-    if h.context_hook_on() || h.fanout_hook_on() || h.protect_hook_on() {
++    if h.context_hook_on() || h.fanout_hook_on() || h.protect_hook_on() || h.approvals_hook_on() {
+         s += "\n## Hooks\n\n";
+         if h.context_hook_on() {
+             s += "`context-meter` tells an agent the size of its context once at each level. ";
+@@ -1254,6 +1281,9 @@ fn team_page(h: &Harness) -> String {
+                 "It asks on a branch that starts with `fix/`. "
+             };
+         }
++        if h.approvals_hook_on() {
++            s += "`protect-approvals` denies a call that runs `spec-dna approve`, and a `git commit` that sets the status of an artifact of a change to `accepted` or `approved`. Only a person approves. ";
++        }
+         s += &format!(
+             "Each teammate needs spec-dna {} or later on `PATH`. Without it, the hooks do nothing.\n",
+             hooks_version(h)
+@@ -1265,9 +1295,12 @@ fn team_page(h: &Harness) -> String {
+ }
+ 
+ /// The first version of spec-dna that has each hook that the configuration
+-/// writes: `protect-tests` is new in 0.6.0, the other hooks are in 0.5.0.
++/// writes: `protect-approvals` is new in 0.7.0, `protect-tests` is new in
++/// 0.6.0, the other hooks are in 0.5.0.
+ pub fn hooks_version(h: &Harness) -> &'static str {
+-    if h.protect_hook_on() {
++    if h.approvals_hook_on() {
++        "0.7.0"
++    } else if h.protect_hook_on() {
+         "0.6.0"
+     } else {
+         "0.5.0"
+@@ -1624,6 +1657,7 @@ pub fn remove_claude_line(text: &str) -> String {
+ const CONTEXT_HOOK: &str = "context-meter";
+ const FANOUT_HOOK: &str = "fanout-cap";
+ const PROTECT_HOOK: &str = "protect-tests";
++const APPROVALS_HOOK: &str = "protect-approvals";
+ 
+ /// One entry that the harness expects in `.claude/settings.json`.
+ #[derive(Clone, Debug, PartialEq)]
+@@ -1698,6 +1732,16 @@ fn protect_command(h: &Harness) -> String {
+     c + " 2>/dev/null || true"
+ }
+ 
++/// The command of the hook `protect-approvals`: one `--intent` for each folder
++/// of the `intent` layer.
++fn approvals_command(h: &Harness) -> String {
++    let mut c = String::from("spec-dna hook protect-approvals");
++    for d in &h.intent_dirs {
++        c += &format!(" --intent {}", shell_quote(d));
++    }
++    c + " 2>/dev/null || true"
++}
++
+ fn wants(h: &Harness) -> Vec<Want> {
+     let mut w = Vec::new();
+     if h.level != Level::None {
+@@ -1757,6 +1801,12 @@ fn wants(h: &Harness) -> Vec<Want> {
+         name: PROTECT_HOOK,
+         command: h.protect_hook_on().then(|| protect_command(h)),
+     });
++    w.push(Want::Hook {
++        event: "PreToolUse",
++        matcher: "Bash",
++        name: APPROVALS_HOOK,
++        command: h.approvals_hook_on().then(|| approvals_command(h)),
++    });
+     w
+ }
+ 
+@@ -2712,11 +2762,13 @@ opus = "xhigh"
+         );
+         let c =
+             crate::config::Config::parse(&format!("{base}[harness]\nlevel = \"full\"\n")).unwrap();
+-        // `Config::parse` also sets the test globs.
++        // `Config::parse` also sets the test globs and the folders of the
++        // `intent` layer.
+         let mut want = full();
+         want.tests = crate::config::DEFAULT_TEST_GLOBS
+             .map(str::to_string)
+             .to_vec();
++        want.intent_dirs = vec!["docs/intent".to_string()];
+         assert_eq!(c.harness, Some(want));
+         let e =
+             crate::config::Config::parse(&format!("{base}[harness]\nlevel = \"x\"\n")).unwrap_err();
+@@ -2774,6 +2826,47 @@ opus = "xhigh"
+         assert!(!team_page(&h).contains("protect-tests"));
+     }
+ 
++    #[test]
++    fn the_approvals_hook_command_and_its_conditions() {
++        let mut h = lean();
++        h.intent_dirs = vec!["docs/intent".into(), "it's/intent".into()];
++        // Off with no key, and with `false`.
++        assert!(!h.approvals_hook_on());
++        h.protect_approvals = Some(false);
++        assert!(!h.approvals_hook_on());
++        h.protect_approvals = Some(true);
++        assert!(h.approvals_hook_on());
++        assert_eq!(
++            approvals_command(&h),
++            "spec-dna hook protect-approvals --intent 'docs/intent' --intent 'it'\\''s/intent' 2>/dev/null || true"
++        );
++        assert_eq!(hooks_version(&h), "0.7.0");
++        let command = |h: &Harness| {
++            wants(h).into_iter().find_map(|w| match w {
++                Want::Hook {
++                    name: APPROVALS_HOOK,
++                    matcher,
++                    event,
++                    command,
++                } => {
++                    assert_eq!((event, matcher), ("PreToolUse", "Bash"));
++                    Some(command)
++                }
++                _ => None,
++            })
++        };
++        assert!(command(&h).unwrap().is_some());
++        // No folder of the `intent` layer, and level none, give no handler.
++        let mut none = h.clone();
++        none.intent_dirs.clear();
++        assert_eq!(command(&none), Some(None));
++        let mut none = h.clone();
++        none.level = Level::None;
++        assert_eq!(command(&none), Some(None));
++        assert!(team_page(&h).contains("`protect-approvals` denies a call"));
++        assert!(!team_page(&none).contains("protect-approvals"));
++    }
++
+     #[test]
+     fn the_harness_gets_the_test_globs_of_evidence() {
+         let base = "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\n";
+diff --git a/src/hook.rs b/src/hook.rs
+index ebba6a8..4c555b6 100644
+--- a/src/hook.rs
++++ b/src/hook.rs
+@@ -5,7 +5,8 @@
+ //! pin and never scans the repository. Unknown flags and bad values are
+ //! ignored, the exit code is always 0, and an error gives no output.
+ //! `protect-tests` reads no file. It runs `git` at most 2 times, and only for
+-//! a path that matches a test glob.
++//! a path that matches a test glob. `protect-approvals` runs `git` only for a
++//! command that holds the words `git` and `commit` (see its section).
+ 
+ use std::collections::{HashMap, HashSet};
+ use std::fs::{self, File, OpenOptions};
+@@ -70,6 +71,15 @@ pub fn run(args: &[String]) {
+                     &mut run_git,
+                 )
+             }
++            "protect-approvals" => {
++                let project = std::env::var_os("CLAUDE_PROJECT_DIR").map(PathBuf::from);
++                approvals(
++                    &input,
++                    &ApprovalsOpts::parse(flags),
++                    project.as_deref(),
++                    &mut run_git,
++                )
++            }
+             _ => None,
+         };
+         if let Some(text) = out {
+@@ -1394,6 +1404,295 @@ pub fn protect(
+     Some(Obj::new().raw("hookSpecificOutput", &inner).end())
+ }
+ 
++// ---------------------------------------------------------------------------
++// protect-approvals
++// ---------------------------------------------------------------------------
++
++/// The flags of `protect-approvals`: one `--intent <dir>` for each folder of
++/// the `intent` layer, from the repository root. With no folder, the hook
++/// still denies `spec-dna approve`, and it reads no commit.
++#[derive(Default)]
++pub struct ApprovalsOpts {
++    pub intent: Vec<String>,
++}
++
++impl ApprovalsOpts {
++    fn parse(args: &[String]) -> Self {
++        ApprovalsOpts {
++            intent: flag_values(args, "--intent")
++                .into_iter()
++                .map(|d| d.trim_matches('/').to_string())
++                .filter(|d| !d.is_empty())
++                .collect(),
++        }
++    }
++}
++
++/// Splits a command into segments and words. It removes the quote characters,
++/// and it splits at `;`, `&`, `|`, `(`, `)`, a backtick and a line feed (so
++/// `&&` and `||` split too), then at white space. It is a text scan, not a
++/// shell parser: `sh -c "a; b"` gives the words of `a` and `b`.
++fn command_segments(command: &str) -> Vec<Vec<String>> {
++    let text: String = command
++        .chars()
++        .filter(|c| !matches!(c, '"' | '\''))
++        .collect();
++    text.split([';', '&', '|', '(', ')', '`', '\n'])
++        .map(|seg| {
++            seg.split_whitespace()
++                .map(str::to_string)
++                .collect::<Vec<_>>()
++        })
++        .filter(|w| !w.is_empty())
++        .collect()
++}
++
++/// The last part of a path word, without `.exe`: `/usr/bin/git` gives `git`.
++fn program(word: &str) -> &str {
++    let last = word.rsplit(['/', '\\']).next().unwrap_or(word);
++    last.strip_suffix(".exe").unwrap_or(last)
++}
++
++/// The index of the first word `name` (as a program) in a segment that has the
++/// word `after` later.
++fn program_then(words: &[String], name: &str, after: &str) -> Option<usize> {
++    let i = words.iter().position(|w| program(w) == name)?;
++    words[i + 1..].iter().any(|w| w == after).then_some(i)
++}
++
++fn deny(reason: &str) -> String {
++    let inner = Obj::new()
++        .str("hookEventName", "PreToolUse")
++        .str("permissionDecision", "deny")
++        .str(
++            "permissionDecisionReason",
++            &format!("spec-dna protect-approvals: {reason}"),
++        )
++        .end();
++    Obj::new().raw("hookSpecificOutput", &inner).end()
++}
++
++const ASK_PERSON: &str = "Only a person approves: ask the person to run `spec-dna approve <slug> <artifact>` in a terminal of their own.";
++
++/// The approval value of an artifact file name, or `None` for another name.
++fn approval_of_file(file: &str) -> Option<(&'static str, &'static str)> {
++    match file {
++        "intent.md" => Some(("intent", "accepted")),
++        "spec.md" => Some(("spec", "approved")),
++        "plan.md" => Some(("plan", "approved")),
++        _ => None,
++    }
++}
++
++/// The value of the `status` line of the front matter of a text.
++fn status_of(text: &str) -> Option<String> {
++    let mut lines = text.lines().map(|l| l.trim_end_matches('\r'));
++    if lines.next()?.trim_end() != "---" {
++        return None;
++    }
++    for line in lines {
++        if line.trim_end() == "---" {
++            return None;
++        }
++        let Some(rest) = line.strip_prefix("status:") else {
++            continue;
++        };
++        let value = rest.split(" #").next().unwrap_or(rest).trim();
++        return Some(value.trim_matches(['"', '\'']).to_string());
++    }
++    None
++}
++
++/// Handles one `PreToolUse` event of `Bash`. It returns the JSON of a deny
++/// for a call that runs `spec-dna approve`, and for a `git commit` that moves
++/// the status of an artifact of a change to its approval value. Another call
++/// gives `None`, also when the input is bad or `git` fails. `project` is
++/// `CLAUDE_PROJECT_DIR`. `git` runs `git -C <dir> <args>`. It runs 0 times for
++/// a command with no word `commit` after a word `git`, and then 3 times, and 2
++/// more times for each artifact file that the working tree changes.
++pub fn approvals(
++    input: &str,
++    opts: &ApprovalsOpts,
++    project: Option<&Path>,
++    git: &mut dyn FnMut(&Path, &[&str]) -> Option<GitOut>,
++) -> Option<String> {
++    let v = json::parse(input).ok()?;
++    if v.get("tool_name").as_str() != Some("Bash") {
++        return None;
++    }
++    let command = v.get("tool_input").get("command").as_str()?;
++    let segments = command_segments(command);
++    // Rule A: `spec-dna approve` is for a person.
++    if segments
++        .iter()
++        .any(|w| program_then(w, "spec-dna", "approve").is_some())
++    {
++        return Some(deny(
++            "`spec-dna approve` is for a person. Ask the person to run it in a terminal of their own.",
++        ));
++    }
++    if opts.intent.is_empty() {
++        return None;
++    }
++    // Rule C: an edit and a commit in one call. The status is not in the tree
++    // yet, so the state cannot show it.
++    let mut before: Vec<&String> = Vec::new();
++    for words in &segments {
++        if let Some(i) = program_then(words, "git", "commit")
++            && before.iter().copied().chain(&words[..i]).any(|w| {
++                let w = w.to_ascii_lowercase();
++                w.contains("accepted") || w.contains("approved")
++            })
++        {
++            return Some(deny(&format!(
++                "this call writes `accepted` or `approved` and runs `git commit`; run the edit and the commit as 2 calls, so the hook can read the edit. {ASK_PERSON}"
++            )));
++        }
++        before.extend(words);
++    }
++    // Rule B: the state of the repository.
++    let start = match v.get("cwd").as_str().filter(|c| !c.is_empty()) {
++        Some(c) => c.to_string(),
++        None => project
++            .and_then(Path::to_str)
++            .filter(|p| !p.is_empty())?
++            .to_string(),
++    };
++    let mut dir = PathBuf::from(start);
++    for words in &segments {
++        if program(&words[0]) == "cd" {
++            if let Some(target) = words.get(1) {
++                dir = moved(&dir, target)?;
++            }
++            continue;
++        }
++        let Some(g) = words.iter().position(|w| program(w) == "git") else {
++            continue;
++        };
++        let Some(c) = words[g + 1..].iter().position(|w| w == "commit") else {
++            continue;
++        };
++        // `git -C <dir>` moves the folder, in order.
++        let mut here = dir.clone();
++        let mut i = g + 1;
++        while i < g + 1 + c {
++            if words[i] == "-C" {
++                here = moved(&here, words.get(i + 1)?)?;
++                i += 1;
++            }
++            i += 1;
++        }
++        let amend = words[g + 1 + c..].iter().any(|w| w == "--amend");
++        if let Some(reason) = moved_to_approval(&here, amend, &opts.intent, git) {
++            return Some(deny(&reason));
++        }
++    }
++    None
++}
++
++/// The folder that `cd <target>` or `git -C <target>` gives. A target with `$`
++/// or `~` gives `None`: the hook cannot read it.
++fn moved(from: &Path, target: &str) -> Option<PathBuf> {
++    if target.contains(['$', '~']) {
++        return None;
++    }
++    Some(from.join(target))
++}
++
++/// The reason to deny a commit in `dir`, if the commit sets the status of an
++/// artifact file to its approval value. The old tree is `HEAD`, or `HEAD~1`
++/// for an amend. A tree that is not there gives the empty tree.
++fn moved_to_approval(
++    dir: &Path,
++    amend: bool,
++    intent: &[String],
++    git: &mut dyn FnMut(&Path, &[&str]) -> Option<GitOut>,
++) -> Option<String> {
++    let top = git(dir, &["rev-parse", "--show-toplevel"])?;
++    let top = top.stdout.trim_end_matches(['\n', '\r']).to_string();
++    if !top_ok(&top) {
++        return None;
++    }
++    let root = PathBuf::from(&top);
++    let specs: Vec<String> = intent
++        .iter()
++        .map(|d| format!(":(top,literal){d}"))
++        .collect();
++    let old = if amend { "HEAD~1" } else { "HEAD" };
++    let mut args = vec!["diff", "--name-only", "-z", old, "--"];
++    args.extend(specs.iter().map(String::as_str));
++    let mut paths: Vec<String> = Vec::new();
++    let mut old_tree = Some(old);
++    match git(&root, &args) {
++        Some(out) if out.ok => paths.extend(split_z(&out.stdout)),
++        _ => {
++            // No such commit: the files of the index have no old status.
++            old_tree = None;
++            let mut args = vec!["ls-files", "-z", "--cached", "--full-name", "--"];
++            args.extend(specs.iter().map(String::as_str));
++            paths.extend(split_z(&git(&root, &args)?.stdout));
++        }
++    }
++    let mut args = vec![
++        "ls-files",
++        "-z",
++        "--others",
++        "--exclude-standard",
++        "--full-name",
++        "--",
++    ];
++    args.extend(specs.iter().map(String::as_str));
++    paths.extend(split_z(&git(&root, &args)?.stdout));
++    paths.sort();
++    paths.dedup();
++    for path in paths {
++        let Some((slug, artifact, approved)) = artifact_of(&path, intent) else {
++            continue;
++        };
++        let old_status = match old_tree {
++            Some(rev) => git(&root, &["show", &format!("{rev}:{path}")])
++                .filter(|o| o.ok)
++                .and_then(|o| status_of(&o.stdout)),
++            None => None,
++        };
++        if old_status.as_deref() == Some(approved) {
++            continue;
++        }
++        let index = git(&root, &["show", &format!(":{path}")])
++            .filter(|o| o.ok)
++            .and_then(|o| status_of(&o.stdout));
++        let tree = read_limited(&root.join(&path)).and_then(|t| status_of(&t));
++        if index.as_deref() == Some(approved) || tree.as_deref() == Some(approved) {
++            return Some(format!(
++                "{path} has the status `{approved}` in this commit. Only a person approves. Set the status back, and ask the person to run `spec-dna approve {slug} {artifact}` in a terminal of their own."
++            ));
++        }
++    }
++    None
++}
++
++/// True if the output of `rev-parse --show-toplevel` is a path.
++fn top_ok(top: &str) -> bool {
++    !top.is_empty() && is_absolute(top)
++}
++
++fn split_z(out: &str) -> impl Iterator<Item = String> + '_ {
++    out.split('\0')
++        .filter(|p| !p.is_empty())
++        .map(str::to_string)
++}
++
++/// The slug, the artifact name and the approval value of a path
++/// `<dir>/<slug>/<artifact>.md`, if `dir` is one of the folders.
++fn artifact_of(path: &str, intent: &[String]) -> Option<(String, &'static str, &'static str)> {
++    intent.iter().find_map(|d| {
++        let rest = path.strip_prefix(d.as_str())?.strip_prefix('/')?;
++        let (slug, file) = rest.split_once('/')?;
++        let (artifact, approved) = approval_of_file(file)?;
++        (!slug.is_empty()).then(|| (slug.to_string(), artifact, approved))
++    })
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+@@ -2028,6 +2327,96 @@ mod tests {
+         assert_eq!(flag_cap(&a(&["--cap"])), None);
+         assert_eq!(flag_cap(&a(&[])), None);
+     }
++    // ---- protect-approvals ----
++
++    #[test]
++    fn approvals_split_a_command_into_segments_and_words() {
++        let words = |c: &str| command_segments(c);
++        assert_eq!(
++            words("cd /p && git add -A; git commit -m \"a b\" || echo 'x'"),
++            vec![
++                vec!["cd", "/p"],
++                vec!["git", "add", "-A"],
++                vec!["git", "commit", "-m", "a", "b"],
++                vec!["echo", "x"],
++            ]
++        );
++        // The inner text of `sh -c` and a substitution give their own words.
++        assert_eq!(
++            words("sh -c \"spec-dna approve a intent\""),
++            vec![vec!["sh", "-c", "spec-dna", "approve", "a", "intent"],]
++        );
++        assert_eq!(
++            words("echo $(spec-dna approve a intent)"),
++            vec![
++                vec!["echo", "$"],
++                vec!["spec-dna", "approve", "a", "intent"]
++            ]
++        );
++        assert_eq!(program("/usr/bin/git"), "git");
++        assert_eq!(program("C:\\bin\\spec-dna.exe"), "spec-dna");
++        assert_eq!(program("spec-dna-x"), "spec-dna-x");
++    }
++
++    #[test]
++    fn approvals_read_the_status_and_the_artifact_of_a_path() {
++        assert_eq!(
++            status_of("---\r\nstatus: \"accepted\"  # ok\r\nclass: routine\r\n---\n"),
++            Some("accepted".to_string())
++        );
++        assert_eq!(status_of("---\nclass: routine\n---\nstatus: draft\n"), None);
++        assert_eq!(status_of("status: draft\n"), None);
++        let dirs = vec!["docs/intent".to_string()];
++        assert_eq!(
++            artifact_of("docs/intent/a-b/plan.md", &dirs),
++            Some(("a-b".to_string(), "plan", "approved"))
++        );
++        assert_eq!(
++            artifact_of("docs/intent/a-b/intent.md", &dirs),
++            Some(("a-b".to_string(), "intent", "accepted"))
++        );
++        for no in [
++            "docs/intent/a-b/notes.md",
++            "docs/intent/readme.md",
++            "docs/intents/a-b/plan.md",
++            "docs/other/a-b/plan.md",
++        ] {
++            assert_eq!(artifact_of(no, &dirs), None, "{no}");
++        }
++    }
++
++    #[test]
++    fn approvals_run_no_git_for_a_command_with_no_commit() {
++        let ev = |c: &str| {
++            format!(
++                "{{\"cwd\":\"/p\",\"tool_name\":\"Bash\",\"tool_input\":{{\"command\":\"{c}\"}}}}"
++            )
++        };
++        let opts = ApprovalsOpts {
++            intent: vec!["docs/intent".into()],
++        };
++        let mut calls = 0;
++        for c in ["git status", "git add -A && git diff", "ls; echo accepted"] {
++            let out = approvals(&ev(c), &opts, None, &mut |_, _| {
++                calls += 1;
++                None
++            });
++            assert_eq!(out, None, "{c}");
++        }
++        assert_eq!(calls, 0);
++        // The words `git` and `commit` run git, which fails here: no output.
++        let out = approvals(&ev("git commit -m x"), &opts, None, &mut |_, _| {
++            calls += 1;
++            None
++        });
++        assert_eq!((out, calls), (None, 1));
++        // The flag `--intent` repeats and trims a final `/`.
++        let flags: Vec<String> = ["--intent", "a/b/", "--intent=c", "--other"]
++            .map(String::from)
++            .to_vec();
++        assert_eq!(ApprovalsOpts::parse(&flags).intent, ["a/b", "c"]);
++    }
++
+     // ---- protect-tests ----
+ 
+     fn ptest(always: bool, globs: &[&str]) -> ProtectOpts {
+diff --git a/src/init.rs b/src/init.rs
+index bb0870d..67736d2 100644
+--- a/src/init.rs
++++ b/src/init.rs
+@@ -528,6 +528,18 @@ fn settle_approval(plan: &mut Plan) {
+     }
+ }
+ 
++/// `strict` gets `[harness] protect-approvals = true` in a file that has no
++/// such key, so the profile has no hidden effect (ADR 0017). A file that has
++/// the key keeps its value, and the level `none` writes no key.
++fn settle_approvals_hook(plan: &mut Plan) {
++    if plan.profile == Profile::Strict
++        && plan.harness.level != Level::None
++        && plan.harness.protect_approvals.is_none()
++    {
++        plan.harness.protect_approvals = Some(true);
++    }
++}
++
+ /// The types that a graph has, in the order of `DocType::ALL`.
+ fn graph_types(g: &Graph) -> Vec<DocType> {
+     DocType::ALL
+@@ -3387,12 +3399,14 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
+     settle_approval(&mut plan);
+     settle_parts(&mut plan);
+     settle_evals(&mut plan);
++    settle_approvals_hook(&mut plan);
+     let mut offered = before.clone();
+     settle(&mut offered);
+     settle_change(&mut offered);
+     settle_approval(&mut offered);
+     settle_parts(&mut offered);
+     settle_evals(&mut offered);
++    settle_approvals_hook(&mut offered);
+     let text = render(&plan);
+     // spec-dna never writes a configuration that it cannot read.
+     let parsed = Config::parse(&text)
+@@ -3401,6 +3415,9 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
+     // text, so `check` finds no difference.
+     let mut new_harness = plan.harness.clone();
+     new_harness.tests = parsed.evidence_tests.clone();
++    // The hook `protect-approvals` reads the folders of the `intent` layer, as
++    // `check` reads them from this text.
++    new_harness.intent_dirs = crate::lifecycle::intent_dirs(&parsed);
+     let mut changes = Vec::new();
+     let old = std::fs::read_to_string(&cfg_path).ok();
+     if old.as_deref() != Some(text.as_str()) {
+diff --git a/tests/golden/harness/settings-strict.json b/tests/golden/harness/settings-strict.json
+new file mode 100644
+index 0000000..00daf6e
+--- /dev/null
++++ b/tests/golden/harness/settings-strict.json
+@@ -0,0 +1,66 @@
++{
++  "modelSettings": {
++    "claude-sonnet-5-5": {
++      "effortLevel": "high"
++    },
++    "claude-opus-5-5": {
++      "effortLevel": "xhigh"
++    }
++  },
++  "model": "opus",
++  "fallbackModel": [
++    "opus",
++    "sonnet"
++  ],
++  "advisorModel": "fable",
++  "env": {
++    "CLAUDE_CODE_SUBAGENT_MODEL": "haiku"
++  },
++  "permissions": {
++    "deny": [
++      "NotebookEdit"
++    ]
++  },
++  "hooks": {
++    "PostToolUse": [
++      {
++        "matcher": "*",
++        "hooks": [
++          {
++            "type": "command",
++            "command": "spec-dna hook context-meter --levels 300000,600000 --subagent 250000 2>/dev/null || true"
++          }
++        ]
++      }
++    ],
++    "PreToolUse": [
++      {
++        "matcher": "Workflow",
++        "hooks": [
++          {
++            "type": "command",
++            "command": "spec-dna hook fanout-cap --cap 10 2>/dev/null || true"
++          }
++        ]
++      },
++      {
++        "matcher": "Edit|Write",
++        "hooks": [
++          {
++            "type": "command",
++            "command": "spec-dna hook protect-tests --mode fix-branches --test '**/tests/**' --test '**/test/**' --test '**/__tests__/**' --test '**/*_test.*' --test '**/*_tests.*' --test '**/test_*.*' --test '**/*.test.*' --test '**/*.spec.*' --test '**/*Test.*' --test '**/*_spec.*' 2>/dev/null || true"
++          }
++        ]
++      },
++      {
++        "matcher": "Bash",
++        "hooks": [
++          {
++            "type": "command",
++            "command": "spec-dna hook protect-approvals --intent 'docs/intent' 2>/dev/null || true"
++          }
++        ]
++      }
++    ]
++  }
++}
+diff --git a/tests/harness.rs b/tests/harness.rs
+index fca449c..05195ec 100644
+--- a/tests/harness.rs
++++ b/tests/harness.rs
+@@ -1395,3 +1395,107 @@ fn a_detected_orchestrator_model_leaves_out_its_efforts_entry() {
+     let (code, out) = r.run(&["check", "--all"]);
+     assert_eq!(code, 0, "{out}");
+ }
++
++// The key `protect-approvals` and its hook entry (owner review of 0.7.0, item 2)
++
++/// The command of the entry that the harness writes for the hook.
++const APPROVALS_COMMAND: &str =
++    "spec-dna hook protect-approvals --intent 'docs/intent' 2>/dev/null || true";
++
++#[test]
++fn strict_init_writes_protect_approvals_and_the_hook_entry() {
++    let r = Repo::empty();
++    let (code, out, err) = r.init_with("profile = \"strict\"\n", &[]);
++    assert_eq!(code, 0, "{out}{err}");
++    let cfg = r.read("spec-dna.toml");
++    assert!(cfg.contains("\nprotect-approvals = true\n"), "{cfg}");
++    let settings = r.read(".claude/settings.json");
++    assert!(
++        settings.contains(&format!("\"command\": \"{APPROVALS_COMMAND}\"")),
++        "{settings}"
++    );
++    assert!(settings.contains("\"matcher\": \"Bash\""), "{settings}");
++    let golden = format!(
++        "{}/tests/golden/harness/settings-strict.json",
++        env!("CARGO_MANIFEST_DIR")
++    );
++    assert_eq!(settings, fs::read_to_string(golden).unwrap());
++    assert!(
++        out.contains("spec-dna 0.7.0 or later on PATH for the hooks"),
++        "{out}"
++    );
++    // `check` finds the file that `init` wrote clean: no SD501 and no SD502.
++    r.commit("adopt");
++    let (code, out) = r.run(&["check", "--all"]);
++    assert!(!out.contains("SD501") && !out.contains("SD502"), "{out}");
++    assert_eq!(code, 0, "{out}");
++    // A second `init` has nothing to write.
++    let (code, out, err) = r.run3(&["init"]);
++    assert_eq!(code, 0, "{out}{err}");
++    assert!(out.contains("everything is up to date"), "{out}");
++}
++
++#[test]
++fn standard_init_writes_no_approval_hook() {
++    let r = Repo::empty();
++    let (code, out, err) = r.init_with("profile = \"standard\"\n", &[]);
++    assert_eq!(code, 0, "{out}{err}");
++    assert!(!r.read("spec-dna.toml").contains("protect-approvals"));
++    let settings = r.read(".claude/settings.json");
++    assert!(!settings.contains("protect-approvals"), "{settings}");
++    assert!(!settings.contains("\"Bash\""), "{settings}");
++    // The positive control: the key, set by hand, writes the entry.
++    let cfg = r
++        .read("spec-dna.toml")
++        .replace("\nreview-md = ", "\nprotect-approvals = true\nreview-md = ");
++    assert!(cfg.contains("protect-approvals = true"), "{cfg}");
++    r.write("spec-dna.toml", &cfg);
++    r.commit("adopt");
++    let (code, out, err) = r.run3(&["init"]);
++    assert_eq!(code, 0, "{out}{err}");
++    assert!(r.read(".claude/settings.json").contains(APPROVALS_COMMAND));
++}
++
++#[test]
++fn reconfigure_keeps_the_key_of_the_file() {
++    let r = Repo::empty();
++    let (code, out, err) = r.init_with("profile = \"strict\"\n", &[]);
++    assert_eq!(code, 0, "{out}{err}");
++    r.commit("adopt");
++    // Back to `standard`: the file has the key, so it keeps it.
++    let (code, out, err) = r.init_with("profile = \"standard\"\n", &["--reconfigure"]);
++    assert_eq!(code, 0, "{out}{err}");
++    assert!(
++        r.read("spec-dna.toml")
++            .contains("\nprotect-approvals = true\n")
++    );
++    // A file with the key `false` stays `false` when the profile is `strict`.
++    let r = Repo::empty();
++    let (code, out, err) = r.init_with("profile = \"standard\"\n", &[]);
++    assert_eq!(code, 0, "{out}{err}");
++    let cfg = r.read("spec-dna.toml").replace(
++        "\nreview-md = ",
++        "\nprotect-approvals = false\nreview-md = ",
++    );
++    r.write("spec-dna.toml", &cfg);
++    r.commit("adopt");
++    let (code, out, err) = r.init_with("profile = \"strict\"\n", &["--reconfigure"]);
++    assert_eq!(code, 0, "{out}{err}");
++    let cfg = r.read("spec-dna.toml");
++    assert!(cfg.contains("\nprotect-approvals = false\n"), "{cfg}");
++    assert!(
++        !r.read(".claude/settings.json")
++            .contains("protect-approvals")
++    );
++}
++
++#[test]
++fn protect_approvals_must_be_a_boolean() {
++    let r = Repo::with_harness("[harness]\nlevel = \"lean\"\nprotect-approvals = \"yes\"\n");
++    let (code, out, err) = r.run3(&["check"]);
++    assert_eq!(code, 3, "{out}{err}");
++    assert!(
++        err.contains("`harness.protect-approvals` must be true or false"),
++        "{err}"
++    );
++}
+diff --git a/tests/hook_approvals.rs b/tests/hook_approvals.rs
+new file mode 100644
+index 0000000..bc451c5
+--- /dev/null
++++ b/tests/hook_approvals.rs
+@@ -0,0 +1,364 @@
++//! Tests of `spec-dna hook protect-approvals` (owner review of 0.7.0, item
++//! 2). The hook runs on `PreToolUse` of `Bash`. It denies a call that runs
++//! `spec-dna approve`, and a `git commit` that moves the status of an artifact
++//! of a change to its approval value. Each test uses a temporary repository
++//! with example data. No test reads or writes a file of this repository.
++
++mod common;
++
++use common::{BIN, Repo, path_with, stub_bin};
++use std::io::Write;
++use std::path::Path;
++use std::process::{Command, Stdio};
++
++const INTENT: &str = "docs/intent/valve-timeout/intent.md";
++const SPEC: &str = "docs/intent/valve-timeout/spec.md";
++const PLAN: &str = "docs/intent/valve-timeout/plan.md";
++
++const DENY_START: &str = "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"spec-dna protect-approvals: ";
++
++fn esc(s: &str) -> String {
++    s.replace('\\', "\\\\").replace('"', "\\\"")
++}
++
++/// A `PreToolUse` event of Claude Code for a `Bash` call.
++fn event(command: &str, cwd: &str) -> String {
++    format!(
++        "{{\"session_id\":\"s\",\"cwd\":\"{}\",\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Bash\",\"tool_input\":{{\"command\":\"{}\"}},\"tool_use_id\":\"t\"}}",
++        esc(cwd),
++        esc(command)
++    )
++}
++
++/// Runs the hook in `dir` with `stdin`. `path` is a folder that goes first in
++/// `PATH`. Returns the exit code, stdout and stderr.
++fn hook_in(
++    dir: &Path,
++    project: Option<&Path>,
++    path: Option<&Path>,
++    stdin: &[u8],
++) -> (i32, String, String) {
++    let mut cmd = Command::new(BIN);
++    cmd.args(["hook", "protect-approvals", "--intent", "docs/intent"])
++        .current_dir(dir)
++        .env_remove("CLAUDE_PROJECT_DIR")
++        .env_remove("GIT_DIR")
++        .env_remove("GIT_WORK_TREE")
++        .env_remove("GIT_INDEX_FILE")
++        .stdin(Stdio::piped())
++        .stdout(Stdio::piped())
++        .stderr(Stdio::piped());
++    if let Some(p) = project {
++        cmd.env("CLAUDE_PROJECT_DIR", p);
++    }
++    if let Some(p) = path {
++        cmd.env("PATH", path_with(p));
++    }
++    let mut child = cmd.spawn().unwrap();
++    let _ = child.stdin.take().unwrap().write_all(stdin);
++    let out = child.wait_with_output().unwrap();
++    (
++        out.status.code().unwrap(),
++        String::from_utf8_lossy(&out.stdout).into_owned(),
++        String::from_utf8_lossy(&out.stderr).into_owned(),
++    )
++}
++
++/// The answer of the hook for one `Bash` command in the repository `r`.
++fn answer(r: &Repo, command: &str) -> String {
++    let ev = event(command, &r.dir.to_string_lossy());
++    let (code, out, err) = hook_in(&r.dir, None, None, ev.as_bytes());
++    assert_eq!(code, 0, "{out}{err}");
++    out
++}
++
++fn intent(status: &str) -> String {
++    format!(
++        "---\nstatus: {status}\nclass: higher-risk\n---\n# Valve timeout\n\n## Intent\n\nClose the valve.\n"
++    )
++}
++
++fn plain(status: &str, body: &str) -> String {
++    format!("---\nstatus: {status}\n---\n# Valve timeout\n\n{body}\n")
++}
++
++/// A repository with a draft intent, a draft spec and a draft plan, and a
++/// file outside the folder of the changes.
++fn project() -> Repo {
++    let r = Repo::new();
++    r.write(INTENT, &intent("draft"));
++    r.write(SPEC, &plain("draft", "## Delta\n\nNone."));
++    r.write(PLAN, &plain("draft", "## Files\n\n- `src/a.py`"));
++    r.write("docs/notes/other/intent.md", &intent("draft"));
++    r.write("src/a.py", "x = 1\n");
++    r.commit("start");
++    r
++}
++
++fn assert_denies(out: &str, needles: &[&str]) {
++    assert!(out.starts_with(DENY_START), "{out}");
++    assert!(out.ends_with("\"}}\n"), "{out}");
++    for n in needles {
++        assert!(out.contains(n), "`{n}` is not in {out}");
++    }
++}
++
++#[test]
++fn denies_spec_dna_approve_in_a_bash_call() {
++    let r = project();
++    for cmd in [
++        "spec-dna approve valve-timeout intent",
++        "cd /tmp && /usr/local/bin/spec-dna approve valve-timeout plan --json",
++        "echo go; ./target/debug/spec-dna approve valve-timeout spec",
++        "git status | spec-dna approve valve-timeout intent",
++    ] {
++        let out = answer(&r, cmd);
++        assert_denies(&out, &["`spec-dna approve`", "a terminal of their own"]);
++    }
++    // Other `spec-dna` commands and other words pass.
++    for cmd in [
++        "spec-dna check",
++        "spec-dna next valve-timeout",
++        "echo approve",
++        "approve valve-timeout intent",
++        "spec-dna-x approve valve-timeout intent",
++    ] {
++        assert_eq!(answer(&r, cmd), "", "{cmd}");
++    }
++}
++
++#[test]
++fn denies_spec_dna_approve_inside_sh_c() {
++    let r = project();
++    for cmd in [
++        "sh -c \"spec-dna approve valve-timeout intent\"",
++        "bash -lc 'cd /tmp; spec-dna approve valve-timeout intent'",
++        "zsh -c 'echo a && spec-dna  approve valve-timeout spec'",
++    ] {
++        let out = answer(&r, cmd);
++        assert_denies(&out, &["`spec-dna approve`"]);
++    }
++}
++
++#[test]
++fn denies_a_commit_of_a_staged_status_change() {
++    let r = project();
++    r.write(INTENT, &intent("accepted"));
++    r.git(&["add", INTENT]);
++    let out = answer(&r, "git commit -m 'approve'");
++    assert_denies(
++        &out,
++        &[
++            INTENT,
++            "`accepted`",
++            "spec-dna approve valve-timeout intent",
++            "a terminal of their own",
++        ],
++    );
++    // A spec and a plan move to `approved`. The hook names the first path.
++    let r = project();
++    r.write(SPEC, &plain("approved", "## Delta\n\nNone."));
++    r.write(PLAN, &plain("approved", "## Files\n\n- `src/a.py`"));
++    r.git(&["add", "-A"]);
++    let out = answer(&r, "git commit -m x");
++    assert_denies(
++        &out,
++        &[PLAN, "`approved`", "spec-dna approve valve-timeout plan"],
++    );
++}
++
++#[test]
++fn denies_git_add_and_commit_of_an_unstaged_status_change() {
++    let r = project();
++    r.write(INTENT, &intent("accepted"));
++    let out = answer(&r, "git add -A && git commit -m 'work'");
++    assert_denies(&out, &[INTENT, "`accepted`"]);
++    let out = answer(&r, "git add docs; git commit -m work");
++    assert_denies(&out, &[INTENT]);
++}
++
++#[test]
++fn denies_commit_all_of_an_unstaged_status_change() {
++    let r = project();
++    r.write(PLAN, &plain("approved", "## Files\n\n- `src/a.py`"));
++    let out = answer(&r, "git commit -am 'work'");
++    assert_denies(&out, &[PLAN, "`approved`"]);
++}
++
++#[test]
++fn denies_amend_that_keeps_a_status_change() {
++    let r = project();
++    r.write(INTENT, &intent("accepted"));
++    // A person made this commit. The amend of the agent keeps it.
++    r.commit("approve the intent");
++    assert_eq!(answer(&r, "git commit -m 'more work'"), "", "a new commit");
++    let out = answer(&r, "git commit --amend --no-edit");
++    assert_denies(&out, &[INTENT, "`accepted`"]);
++}
++
++#[test]
++fn denies_a_new_artifact_with_an_approval_status() {
++    let r = project();
++    r.write("docs/intent/new-change/intent.md", &intent("accepted"));
++    let out = answer(&r, "git add -A && git commit -m 'add a change'");
++    assert_denies(&out, &["docs/intent/new-change/intent.md", "`accepted`"]);
++}
++
++#[test]
++fn denies_an_edit_and_a_commit_in_one_call() {
++    let r = project();
++    let out = answer(
++        &r,
++        "sed -i '' 's/draft/accepted/' docs/intent/valve-timeout/intent.md && git commit -am approve",
++    );
++    assert_denies(&out, &["run the edit and the commit as 2 calls"]);
++    let out = answer(
++        &r,
++        "printf 'status: approved' > docs/intent/valve-timeout/plan.md; git add -A; git commit -m x",
++    );
++    assert_denies(&out, &["run the edit and the commit as 2 calls"]);
++}
++
++#[test]
++fn reads_the_folder_of_git_c() {
++    let r = project();
++    r.write(INTENT, &intent("accepted"));
++    // The `cwd` of the event is a folder that is no repository.
++    let other = Repo::empty();
++    let dir = r.dir.to_string_lossy().into_owned();
++    for cmd in [
++        format!("git -C {dir} commit -am x"),
++        format!("cd {dir} && git commit -am x"),
++        format!("git -C '{dir}' commit -am x"),
++    ] {
++        let ev = event(&cmd, &other.dir.to_string_lossy());
++        let (code, out, err) = hook_in(&other.dir, None, None, ev.as_bytes());
++        assert_eq!(code, 0, "{err}");
++        assert_denies(&out, &[INTENT]);
++    }
++    // A folder with a variable gives no output: the hook cannot read it.
++    let ev = event(
++        "cd $HOME/x && git commit -am x",
++        &other.dir.to_string_lossy(),
++    );
++    let (code, out, _) = hook_in(&other.dir, None, None, ev.as_bytes());
++    assert_eq!((code, out.as_str()), (0, ""));
++    // The `cwd` comes before `CLAUDE_PROJECT_DIR`.
++    let ev = event("git commit -am x", &r.dir.to_string_lossy());
++    let (_, out, _) = hook_in(&other.dir, Some(&other.dir), None, ev.as_bytes());
++    assert_denies(&out, &[INTENT]);
++}
++
++#[test]
++fn allows_a_commit_of_plan_text_with_no_status_change() {
++    let r = project();
++    r.write(
++        PLAN,
++        &plain("draft", "## Files\n\n- `src/a.py`\n- `src/b.py`"),
++    );
++    assert_eq!(answer(&r, "git commit -am 'plan text'"), "");
++    // An artifact that is approved in HEAD keeps its status in a text edit.
++    r.write(SPEC, &plain("approved", "## Delta\n\nNone."));
++    r.commit("a person approves the spec");
++    r.write(SPEC, &plain("approved", "## Delta\n\nNone, as before."));
++    assert_eq!(answer(&r, "git add -A && git commit -m 'text'"), "");
++    // A positive control: the same call with a new approval is denied.
++    r.write(PLAN, &plain("approved", "## Files\n\n- `src/a.py`"));
++    assert_denies(&answer(&r, "git commit -am x"), &[PLAN]);
++}
++
++#[test]
++fn allows_a_commit_that_sets_draft_or_closed() {
++    let r = project();
++    r.write(INTENT, &intent("accepted"));
++    r.commit("a person approves the intent");
++    r.write(INTENT, &intent("draft"));
++    assert_eq!(answer(&r, "git commit -am 'set it back'"), "");
++    r.write(INTENT, &intent("closed"));
++    assert_eq!(answer(&r, "git commit -am 'close it'"), "");
++}
++
++#[test]
++fn allows_a_commit_outside_the_intent_folders() {
++    let r = project();
++    r.write("docs/notes/other/intent.md", &intent("accepted"));
++    r.write("src/a.py", "x = 2\n");
++    assert_eq!(answer(&r, "git commit -am 'code'"), "");
++    // A file of the folder that is no artifact of a change gives no output.
++    r.write(
++        "docs/intent/valve-timeout/notes.md",
++        &plain("approved", "Text."),
++    );
++    r.write("docs/intent/readme.md", &plain("approved", "Text."));
++    assert_eq!(answer(&r, "git add -A && git commit -m x"), "");
++}
++
++#[cfg(unix)]
++#[test]
++fn allows_a_command_with_no_commit_and_runs_no_git() {
++    let r = project();
++    r.write(INTENT, &intent("accepted"));
++    let stubs = Repo::empty();
++    let marker = stubs.dir.join("git-ran");
++    let script = format!("#!/bin/sh\necho ran >> '{}'\nexit 1\n", marker.display());
++    stub_bin(&stubs.dir.join("bin"), "git", &script);
++    for cmd in [
++        "git status",
++        "git add -A && git diff",
++        "echo accepted; ls",
++        "spec-dna check",
++        "git log --oneline",
++    ] {
++        let ev = event(cmd, &r.dir.to_string_lossy());
++        let (code, out, err) = hook_in(&r.dir, None, Some(&stubs.dir.join("bin")), ev.as_bytes());
++        assert_eq!((code, out.as_str(), err.as_str()), (0, "", ""), "{cmd}");
++    }
++    assert!(!marker.exists(), "git ran for a command with no commit");
++    // A positive control: a commit runs git.
++    let ev = event("git commit -m x", &r.dir.to_string_lossy());
++    let _ = hook_in(&r.dir, None, Some(&stubs.dir.join("bin")), ev.as_bytes());
++    assert!(marker.exists(), "git runs for a commit");
++}
++
++#[test]
++fn gives_no_output_on_bad_json_or_no_repository() {
++    let r = project();
++    r.write(INTENT, &intent("accepted"));
++    for stdin in [
++        "",
++        "not json",
++        "{\"tool_name\":\"Bash\"}",
++        "{\"tool_name\":\"Edit\",\"tool_input\":{\"command\":\"spec-dna approve a intent\"}}",
++        "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":5}}",
++    ] {
++        let (code, out, err) = hook_in(&r.dir, None, None, stdin.as_bytes());
++        assert_eq!((code, out.as_str(), err.as_str()), (0, "", ""), "{stdin}");
++    }
++    // A commit in a folder that is no repository.
++    let other = Repo::empty();
++    let ev = event("git commit -am x", &other.dir.to_string_lossy());
++    let (code, out, err) = hook_in(&other.dir, None, None, ev.as_bytes());
++    assert_eq!((code, out.as_str(), err.as_str()), (0, "", ""));
++    // No `--intent` flag: nothing to protect from a commit.
++    let ev = event("git commit -am x", &r.dir.to_string_lossy());
++    let mut cmd = Command::new(BIN);
++    cmd.args(["hook", "protect-approvals"])
++        .current_dir(&r.dir)
++        .stdin(Stdio::piped())
++        .stdout(Stdio::piped());
++    let mut child = cmd.spawn().unwrap();
++    let _ = child.stdin.take().unwrap().write_all(ev.as_bytes());
++    let out = child.wait_with_output().unwrap();
++    assert_eq!(String::from_utf8_lossy(&out.stdout), "");
++    // `spec-dna approve` is denied also with no `--intent` flag.
++    let ev = event("spec-dna approve a intent", &r.dir.to_string_lossy());
++    let mut child = Command::new(BIN)
++        .args(["hook", "protect-approvals"])
++        .stdin(Stdio::piped())
++        .stdout(Stdio::piped())
++        .spawn()
++        .unwrap();
++    let _ = child.stdin.take().unwrap().write_all(ev.as_bytes());
++    let out = child.wait_with_output().unwrap();
++    assert!(String::from_utf8_lossy(&out.stdout).starts_with(DENY_START));
++}
