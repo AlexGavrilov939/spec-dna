@@ -54,7 +54,7 @@ This folder defines 15 Claude Code agents, with one file for each agent. An agen
 | [test-engineer](test-engineer.md) | The test strategy, the shared test code, golden and fixture policy, the tool benchmark | sonnet | high | yes |
 | [failure-analyst](failure-analyst.md) | The proved cause of a failure and a small repro. Never fixes | opus | xhigh | no |
 | [checker](checker.md) | An independent check of finished work. Never edits | opus | high | no |
-| [acceptor](acceptor.md) | The acceptance pass of a `higher-risk` change: it tries to break the finished change from the brief of `spec-dna accept --brief` and writes `acceptance.toml`. It edits no code. Its advisor line follows `[harness.roles] acceptor.advisor` | opus | high | `acceptance.toml` only |
+| [acceptor](acceptor.md) | The acceptance pass of a `higher-risk` change: it tries to break the finished change from the brief of `spec-dna accept --brief` and writes `acceptance.toml`. It edits no code. The file is hand-written, with the advisor line of the profile `standard` | opus | high | `acceptance.toml` only |
 
 ### Docs and release
 

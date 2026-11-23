@@ -336,7 +336,7 @@ The arm `with` is the single pass of 0.8.0. The arm `without` is the `review` of
 - The analysis reads both batches as `inconclusive`. In batch 1, both arms are at the ceiling.
 - The spend was 72.86 USD in all: the canary 3.19 USD, batch 1 51.28 USD and batch 2 18.40 USD.
 
-In the arm `with`, a pass with the advisor cost 1.74 USD on average and took 4.6 minutes, and 15 of 15 runs passed. A pass with no advisor cost 0.53 USD and took 2.2 minutes, and 13 of 15 runs passed. A real change costs more than a small fixture. The review of 0.7.1 plus a separate acceptance took 13 to 25 minutes and about 190,000 to 250,000 tokens for a run on a slice of this repository.
+In the arm `with`, a pass with the advisor cost 1.74 USD on average and took 4.6 minutes, and 15 of 15 runs passed. A pass with no advisor cost 0.53 USD and took 2.2 minutes, and 13 of 15 runs passed. A real change costs more than a small fixture. Part A measured 13 to 25 minutes and about 190,000 to 250,000 tokens for each acceptance run on a slice of this repository.
 
 What the numbers do not prove:
 
@@ -551,7 +551,7 @@ The records of the reruns are in `bench/results/evals/`. The newest batch of a s
 
 ### The reruns of 0.8.0
 
-The reruns of D66 are paid runs with `--harness lean`. The tree was built with version 0.8.0: the commit 70b4349 for `specify` and `write-plan`, and the commit 3af6947 for `finish`. The commit 3af6947 sets `class: routine` in the fixtures of `finish` (see below), and it changes no skill text. Claude Code was 2.1.330, with the model `claude-opus-5-5` and the advisor `claude-fable-5-2`. The skill texts are the frozen texts of the section above. Each skill has 5 evals, 3 runs and 2 arms: 15 pairs.
+The reruns of D66 are paid runs with `--harness lean`. The tree was built with version 0.8.0: the commit 70b4349 for `specify` and `write-plan`, and the head of the branch of pull request 107 (commit 3af6947, squashed into 5bc5c17) for `finish`. That commit sets `class: routine` in the fixtures of `finish` (see below), and it changes no skill text. Claude Code was 2.1.330, with the model `claude-opus-5-5` and the advisor `claude-fable-5-2`. The skill texts are the frozen texts of the section above. Each skill has 5 evals, 3 runs and 2 arms: 15 pairs.
 
 The batches ran on 2026-11-22. The batches of `write-plan` and `finish` stopped at the cost caps of their files before the 15th pair. On 2026-11-23, the owner allowed 15 USD more (Q55 of the design). Each of the 2 result files was resumed with `--resume`, with the same binary and the frozen texts. One batch ran at a time, and no other eval process ran.
 
