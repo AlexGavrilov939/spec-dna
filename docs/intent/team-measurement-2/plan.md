@@ -19,8 +19,8 @@ status: approved
 - [x] t2: Write ADR 0033 and make it accepted on the word of the owner. Files: `docs/adr/0033-protocol-2-of-the-model-team-measurement.md`. Verify: `cargo run --quiet -- check` gives no error.
 - [x] t3: Run the dry run of the 3 arms on the stub agent, and the 3 paid probes. Apply the gate of the ADR. Files: `bench/results/evals/20261123T145413Z-harness.jsonl`. Verify: the numbers of the probes and the gate are in the report.
 - [x] t4: Not run. The gate of the ADR stopped the work before the batch, because the projected cost is above the room. Files: none. Verify: the page gives the numbers of the gate.
-- [ ] t5: Write the results page and the map of the docs, and write the decision on the advisor into the note of 0.8.1. Files: `docs/team-measurement-2.md`, `docs/README.md`, `docs/design/0.8.1-note.md`, `.claude/agents/ownership.md`. Verify: `pre-commit run --all-files` passes.
-- [ ] t6: Write the report in Russian, and the archive of `origin/master`. Files: none. Verify: the 2 files are on the Desktop.
+- [x] t5: Write the results page and the map of the docs, and write the decision on the advisor into the note of 0.8.1. Files: `docs/team-measurement-2.md`, `docs/README.md`, `docs/design/0.8.1-note.md`, `.claude/agents/ownership.md`. Verify: `pre-commit run --all-files` passes.
+- [x] t6: Write the report in Russian, and the archive of `origin/master`. Files: none. Verify: the 2 files are on the Desktop.
 
 ## Risks
 
