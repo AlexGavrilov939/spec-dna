@@ -1,0 +1,1 @@
+After `Shop.set_price("A1", 1250)`, `Shop.label("A1")` still shows the old price. A trace of the call goes `Shop.label`, `price_label` and `format_cents` (both in `shop/display.py`), and the old value is already in the text at the end. Find the cause and fix it. Keep the tests in `tests/` as they are, and make them pass.

@@ -121,3 +121,11 @@ Each comparison of a treatment X with a control Y uses the bootstrap of ADR 0016
 - One model family, one Claude Code version, and sessions of at most 40 turns. The value of the advisor in a long session is not measured.
 - 10 small synthetic tasks in one language. No result is a proof for another project.
 - The share of runs with the advisor model shows a consult, not its use.
+
+## Amendments
+
+### 2026-11-23: the pilot ends this protocol with no result
+
+The pilot found the tasks at the ceiling. In the 3 setups, 3 of 3 runs passed on `team-01` to `team-03`, and 23 of 24 runs passed in `lean-no-advisor` on the 12 tasks. A `lean` run cost 4 to 6 times more than a run of the other setups, with no gain. The main batch did not run. No verdict exists.
+
+The owner decided on 2026-11-23 that this protocol ends with the result "no result". The row "Below the floor" of the table "Use of the result" applies: the advisor stays a default role, `init` keeps the level `lean`, and 0.8.1 gets no gate from this protocol. The records and the page of the pilot stay as they are: `bench/results/evals/20261123T111239Z-harness.jsonl` and `docs/team-measurement.md`. A new protocol on tasks from the history of this repository replaces it.

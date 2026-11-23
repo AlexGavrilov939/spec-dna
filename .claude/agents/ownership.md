@@ -272,6 +272,7 @@ tests/fixtures/upgrade/              TST: the projects of 0.4, 0.5 and 0.6.1
 bench/tool/                          TST
 bench/retrieval/                     CTX
 bench/harness/                       TST
+bench/team/                          TST: the tasks, the oracle and the tools of the model-team measurement (ADR 0029), accepted by ARC
 bench/results/tool-*.json            TST
 bench/results/harness-*.json         TST
 bench/results/retrieval-*.json       CTX

@@ -1,0 +1,1 @@
+Add the setting `timeout` to `load_config(argv, environ, file_text)` in `appconf/loader.py`. The flag is `--timeout=<seconds>`, the environment variable is `APP_TIMEOUT`, and the key in the file text is `timeout`. The result dict gets the key `"timeout"` with an integer, and the default is 30. Keep the tests in `tests/` as they are, and make them pass.

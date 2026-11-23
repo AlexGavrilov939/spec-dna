@@ -1,0 +1,1 @@
+Split `ledger/report.py` into 2 modules: `ledger/parsing.py` with `parse_line` and `parse_lines`, and `ledger/ranking.py` with `rank_names` and `top_name`. All 4 names must stay importable from `ledger.report`, and the behavior must not change. Keep the tests in `tests/` as they are, and make them pass.

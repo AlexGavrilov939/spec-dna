@@ -1,0 +1,1 @@
+`fee_cents(amount_cents, rate_bp)` in `ledger/fees.py` cuts the fee off, so the fee is often 1 cent too low. Change it to round the fee to the nearest whole cent, and round half up. It takes and returns an `int`. A refund has a negative `amount_cents` and gets a negative fee. Keep the tests in `tests/` as they are, and make them pass.
