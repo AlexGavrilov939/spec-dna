@@ -1,0 +1,285 @@
+{
+  "spec_dna": "0.8.0",
+  "claude_code": "2.1.330",
+  "models": [
+    "claude-fable-5-2",
+    "claude-opus-5-5"
+  ],
+  "started": "2026-11-23T14:54:13Z",
+  "arms": [
+    "none",
+    "lean-no-advisor",
+    "lean"
+  ],
+  "runs": 1,
+  "seed": 24,
+  "resamples": 2000,
+  "max_total_usd": 75,
+  "estimate_usd": 75,
+  "spend_usd": 40.707789,
+  "excluded": {
+    "none": 0,
+    "lean-no-advisor": 0,
+    "lean": 0
+  },
+  "stopped": null,
+  "waves": 1,
+  "evals": [
+    {
+      "id": "t2-05-approver-hook",
+      "runs": 1,
+      "max_budget_usd": 25,
+      "results": [
+        {
+          "run": 1,
+          "arms": {
+            "none": {
+              "claude_exit": 0,
+              "subtype": "success",
+              "cost_usd": 5.899701,
+              "excluded": 0,
+              "permission_denials": 2,
+              "passed": false,
+              "tokens": {
+                "in": 142,
+                "out": 88670,
+                "cache_read": 11227543,
+                "cache_write": 235028
+              },
+              "models": [
+                "claude-opus-5-5"
+              ],
+              "checks": [
+                {
+                  "name": "p1-01",
+                  "passed": true
+                },
+                {
+                  "name": "p1-02",
+                  "passed": false
+                },
+                {
+                  "name": "p1-03",
+                  "passed": false
+                },
+                {
+                  "name": "p1-04",
+                  "passed": true
+                },
+                {
+                  "name": "p1-05",
+                  "passed": true
+                },
+                {
+                  "name": "p1-06",
+                  "passed": false
+                },
+                {
+                  "name": "p1-07",
+                  "passed": false
+                },
+                {
+                  "name": "p1-08",
+                  "passed": false
+                },
+                {
+                  "name": "p1-09",
+                  "passed": false
+                },
+                {
+                  "name": "p1-10",
+                  "passed": true
+                },
+                {
+                  "name": "p1-11",
+                  "passed": true
+                },
+                {
+                  "name": "p1-12",
+                  "passed": false
+                },
+                {
+                  "name": "p2-01",
+                  "passed": false
+                },
+                {
+                  "name": "p2-02",
+                  "passed": false
+                },
+                {
+                  "name": "p2-03",
+                  "passed": true
+                }
+              ],
+              "turns": 93,
+              "seconds": 1674.3
+            },
+            "lean-no-advisor": {
+              "claude_exit": 0,
+              "subtype": "success",
+              "cost_usd": 14.958591,
+              "excluded": 0,
+              "permission_denials": 0,
+              "passed": false,
+              "tokens": {
+                "in": 374,
+                "out": 237548,
+                "cache_read": 30170012,
+                "cache_write": 628038
+              },
+              "models": [
+                "claude-opus-5-5"
+              ],
+              "checks": [
+                {
+                  "name": "p1-01",
+                  "passed": true
+                },
+                {
+                  "name": "p1-02",
+                  "passed": true
+                },
+                {
+                  "name": "p1-03",
+                  "passed": false
+                },
+                {
+                  "name": "p1-04",
+                  "passed": false
+                },
+                {
+                  "name": "p1-05",
+                  "passed": false
+                },
+                {
+                  "name": "p1-06",
+                  "passed": false
+                },
+                {
+                  "name": "p1-07",
+                  "passed": false
+                },
+                {
+                  "name": "p1-08",
+                  "passed": false
+                },
+                {
+                  "name": "p1-09",
+                  "passed": true
+                },
+                {
+                  "name": "p1-10",
+                  "passed": true
+                },
+                {
+                  "name": "p1-11",
+                  "passed": true
+                },
+                {
+                  "name": "p1-12",
+                  "passed": false
+                },
+                {
+                  "name": "p2-01",
+                  "passed": false
+                },
+                {
+                  "name": "p2-02",
+                  "passed": true
+                },
+                {
+                  "name": "p2-03",
+                  "passed": true
+                }
+              ],
+              "turns": 2,
+              "seconds": 4514.2
+            },
+            "lean": {
+              "claude_exit": 0,
+              "subtype": "success",
+              "cost_usd": 19.849497,
+              "excluded": 0,
+              "permission_denials": 0,
+              "passed": false,
+              "tokens": {
+                "in": 760412,
+                "out": 252378,
+                "cache_read": 20689871,
+                "cache_write": 436674
+              },
+              "models": [
+                "claude-fable-5-2",
+                "claude-opus-5-5"
+              ],
+              "checks": [
+                {
+                  "name": "p1-01",
+                  "passed": true
+                },
+                {
+                  "name": "p1-02",
+                  "passed": true
+                },
+                {
+                  "name": "p1-03",
+                  "passed": true
+                },
+                {
+                  "name": "p1-04",
+                  "passed": true
+                },
+                {
+                  "name": "p1-05",
+                  "passed": true
+                },
+                {
+                  "name": "p1-06",
+                  "passed": false
+                },
+                {
+                  "name": "p1-07",
+                  "passed": true
+                },
+                {
+                  "name": "p1-08",
+                  "passed": false
+                },
+                {
+                  "name": "p1-09",
+                  "passed": true
+                },
+                {
+                  "name": "p1-10",
+                  "passed": true
+                },
+                {
+                  "name": "p1-11",
+                  "passed": true
+                },
+                {
+                  "name": "p1-12",
+                  "passed": false
+                },
+                {
+                  "name": "p2-01",
+                  "passed": false
+                },
+                {
+                  "name": "p2-02",
+                  "passed": true
+                },
+                {
+                  "name": "p2-03",
+                  "passed": true
+                }
+              ],
+              "turns": 98,
+              "seconds": 3898.5
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

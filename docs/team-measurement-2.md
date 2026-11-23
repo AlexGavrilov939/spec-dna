@@ -12,7 +12,7 @@ This page gives the result of protocol 2 in [ADR 0033](adr/0033-protocol-2-of-th
 
 ## The probes
 
-1 paid run of each arm on `t2-05-approver-hook` (12 tests in part 1, 3 in part 2). Limits: 300 turns, 25 USD and 7,200 seconds for the agent. No run hit a limit. The records are in `bench/results/evals/20261123T145413Z-harness.jsonl`.
+1 paid run of each arm on `t2-05-approver-hook` (12 tests in part 1, 3 in part 2). Limits: 300 turns, 25 USD and 7,200 seconds for the agent. No run hit a limit. The records are in `bench/results/evals/20261123T145413Z-harness.jsonl`. The result file, with the result of each test, is `bench/team2/results/arms-20261123T145413Z.json`. The scores of both parts come from it.
 
 | Arm | Part 1 | Part 2 (main measure) | Cost (USD) | Minutes | Turns | Advisor calls |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -46,6 +46,7 @@ The owner decides each change of a default. A new protocol needs a new ADR, and 
 - The probes have 1 run for each arm on 1 task. They give no interval and no verdict.
 - The runner gave `lean-no-advisor` 2 turns for a run of 75 minutes. The transcript of that run has 435 messages of the assistant, and the run used a background monitor, 6 messages to a subagent and 1 subagent. The runner reads `num_turns` of the last `result` event, so a result event after a background wake-up could give this count. The cause is not proved, because the runner does not keep the output of `claude`. The turn limit of the batch (200) comes from the 2 other probes, and it would rest on this count. The code was not changed.
 - The count of leaks marks the 3 probes as leaked, as the ADR defines it: 1 tool use of `none`, 5 of `lean-no-advisor` and 1 of `lean` match the pattern of `transcript_counts.py`. The matches are of 3 kinds: the folder of task output that Claude Code makes for the copy, a `git remote -v` inside the copy, and test text with the string `gh pr`. No tool input names the oracle, a checkout of this repository, the remote host or the pull request refs. The pattern has false positives, and the ADR fixes it, so it was not changed. Only tool inputs were checked by kind, not tool results.
+- Before the probes, the person deleted the folders `team2-target-*` and an old scratch copy of the runner from the temporary folder of the system. No tool input of a probe names a folder `team2-` or the copy of another run.
 - One repository, one language, one model family, one version of Claude Code.
 - The tasks are public and the fixed code is on the public repository. A model may know them.
 - The cost comes from the runner, not from an invoice.
