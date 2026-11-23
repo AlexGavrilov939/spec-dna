@@ -2,7 +2,7 @@
 
 This file lists the changes of each version. The project uses [Semantic Versioning](https://semver.org). Diagnostic codes are in [docs/diagnostics.md](docs/diagnostics.md).
 
-## 0.8.0 - 2026-11-22
+## 0.8.0 - 2026-11-23
 
 0.8.0 adds an independent acceptance of a change in one pass, test reports as evidence, a roll-up of requirements into summaries, and agent roles in `[owners]`. It adds 31 diagnostic codes in 5 new rule groups, 5 commands or command forms and 5 options of commands. A project of 0.7.1 moves with `spec-dna upgrade`. In `lite`, each new mechanism is off, and each generated file keeps its text of 0.7.1. In `standard`, only the acceptance of a `higher-risk` change and the roll-up are on. The other mechanisms need a key, or a marker for the proof debt.
 
@@ -38,7 +38,8 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 - The `summary` tier of `context`. The tier serves the chain of summaries and top documents of a request, after the conventions and before the rules, with at most a quarter of the budget. A stale document gets the word `stale`. The tier is new in `--json`, and a tree with no summary gets the output of 0.7.1.
 - The 5 rule groups. `reports` (SD613 to SD617), `proof` (SD618 to SD620), `acceptance` (SD927 to SD941), `rollup` (SD641 to SD645) and `area-budget` (SD705 to SD707). A rule for a group of 0.7.1 changes no code of them. [docs/profiles.md](docs/profiles.md) gives the severity of each code.
 - Evals. `eval run --arms` compares 2 or 3 harness arms (`none`, `lean`, `lean-no-advisor`, `full` and `project`), and `--harness` sets the team of a run. `eval verdict --compare` gives the verdict of 2 arms. A verdict below 15 pairs of 5 evals is `inconclusive`. A record has the 3 new keys `harness`, `turns` and `seconds`. An eval file can have the key `change`. `eval run --ab accept` runs the 5 evals `accept-1` to `accept-5` of the skill `review`.
-- The cost of one pass. The 5 evals ran 3 times in each arm, 15 pairs in each of 2 batches, with `claude` 2.1.330 and the effort `xhigh`. With the advisor, the arm with the new text had a mean of 1.74 USD and 4.6 minutes for a run, and it found each planted defect and accepted the control in 15 of 15 runs. Without the advisor, it had 0.53 USD and 2.2 minutes, and it passed 13 of 15 runs. Both verdicts are `inconclusive`. The fixtures are small changes, so a real slice costs more. The records are in `bench/results/evals/` (`20261122T064254Z-accept.jsonl` and `20261122T090136Z-accept-no-advisor.jsonl`).
+- The cost of one pass. The 5 evals ran 3 times in each arm, 15 pairs in each of 2 batches, with `claude` 2.1.330 and the effort `xhigh`. With the advisor, the arm with the new text had a mean of 1.74 USD and 4.6 minutes for a run, and it found each planted defect and accepted the control in 15 of 15 runs. Without the advisor, it had 0.53 USD and 2.2 minutes, and it passed 13 of 15 runs. Both verdicts are `inconclusive`. Both costs are of whole `claude -p` sessions, not of the subagent. The fixtures are small changes, so a real slice costs more.
+- The advisor of the acceptor. The new key `[harness.roles] acceptor.advisor` is `false` in `standard` and `true` in `strict`. `init` writes it by profile, `init --reconfigure` keeps it, and `upgrade` writes no key. With `false`, the generated `acceptor.md` has one more line that asks the agent not to consult the advisor. The line is a request: Claude Code has no setting of the advisor for one subagent, and a `tools` list, `disallowedTools` and a hook did not remove it in a probe on 2.1.330. For a pass with no advisor, run the acceptor in a session of its own with `CLAUDE_CODE_DISABLE_ADVISOR_TOOL=1`. In `lite`, there is no agent and no key. The records are in `bench/results/evals/` (`20261122T064254Z-accept.jsonl` and `20261122T090136Z-accept-no-advisor.jsonl`).
 
 The profiles. Each new mechanism is off in `lite`. A cell says when the mechanism is on:
 
@@ -61,6 +62,7 @@ The profiles. Each new mechanism is off in `lite`. A cell says when the mechanis
 - `finish` has the parts 5.1 to 5.3 and 5.5 in its step 5: the reports, the record, the deviations and the archive. A stop keeps a step number from 0 to 5.
 - A plan that a commit added when `spec-dna.toml` pinned a version before 0.8.0 needs no record. A plan that a branch adds always needs one when the rule asks for it.
 - The parser version is 18, so the cache rebuilds once.
+- The workflow of the evals that `init` writes (`.github/workflows/agent-evals.yml`) installs Claude Code 2.1.330, the version of the paid runs of this release. It was 2.1.325, the version of the probes of 0.6.0. `init` writes the file once, so a project that has it keeps its version.
 - `eval run --ab` without `--harness` keeps the copy of 0.7.1. The arm `without` of the target `accept` has the `review` text of `lite`.
 
 ### Fixed
@@ -75,9 +77,34 @@ The profiles. Each new mechanism is off in `lite`. A cell says when the mechanis
 - The persons of `[owners]` (`@<login>` and e-mails). 0.8.0 gives a warning and reads agent roles only.
 - The value `review` of `[change] approval`, and the command `spec-dna reviews`, which would read the reviews of the code host.
 
+### What the checks of 0.8.0 do not prove
+
+- The acceptance record. `check` and `finish` show that a record exists, that its form is right, and that it is bound to the code tree. They do not show that the acceptor is not the builder (`session` and `agent` are claims), that it read the brief or tried hard, or that the list of deviations is complete. The independent reviews of the release (3 final reviews, then a review of each commit) found 2 serious and about 10 minor defects, and a review cannot show that none is left.
+- The hook rule of the acceptor (rule D of `protect-approvals`). It reads the text of a command in a fixed grammar. It is no sandbox: it does not stop a write outside the worktree, or a script that does the same as a refused command. [docs/harness.md](docs/harness.md#spec-dna-hook-protect-approvals) lists what stays open.
+- The advisor of the acceptor. The key `advisor` sets a line in the agent file. Claude Code has no switch for one subagent, so the line is a request, and a hard off is a setting of the whole session. The 2 costs of one pass come from whole sessions, not from the subagent.
+- A test file that git does not track can prove a requirement while it is outside the tree hash (issue 113). Stage each test file that a tag uses.
+- The roll-up has no use on a real corpus yet. It pins active requirements only, so it has no summary for documents of decisions and research (issue 111). The tests and the example use a training project.
+
 ### Verdicts of the skills, rerun for 0.8.0
 
-The rerun of `specify` gives `on`, but 3 of the 6 failures of the arm `without` stopped at the turn limit with each check passed. `write-plan`, `finish` (reruns below the floor) and `execute` (no rerun) keep verdicts of older texts, and `accept` evals measure `review` but change no verdict.
+Three skills have a new run on the text of 0.8.0, with 15 pairs each and `--harness lean` (Claude Code 2.1.330). The table of the release (`RELEASE` in `src/verdict.rs`) follows these records.
+
+| Skill | Pairs | With the skill | Without it | Verdict | Text |
+| --- | --- | --- | --- | --- | --- |
+| `specify` | 15 | 15 of 15 | 9 of 15 | `on` (rule 1) | 0.8.0 |
+| `write-plan` | 15 | 15 of 15 | 11 of 15 | `on` (rule 2) | 0.8.0 |
+| `finish` | 15 | 14 of 15 | 14 of 15 | `inconclusive` | 0.8.0 |
+| `execute` | not rerun | | | older row | 0.7.1 |
+| `review` | not rerun | | | older row | 0.7.1 |
+
+What these verdicts do not prove:
+
+- The `on` of `specify` rests on 3 runs of the arm without the skill that stopped at the turn limit with each check passed. A run counts as a pass only when the agent exits normally. If these 3 runs counted as passes, the arm without the skill would have 12 of 15, and the verdict would not be `on`. The field `turns` of the records does not match the limit (issue 109).
+- `finish` moves from `on` (an older text) to `inconclusive`. It stays on by default, because a skill of D2 stays on unless its verdict is `off` (ADR 0023). Both arms are near the ceiling of the oracle, so the run shows no gain and no loss.
+- `execute` and `review` have no run on the text of 0.8.0 (issue 110). The 5 evals `accept-1` to `accept-5` measure the acceptance pass, and they decide no row.
+- The 15 pairs show a large gain only. They give no verdict for another project or another model.
+
+The costs come from small training fixtures of 1 or 2 files. A real change costs more: part A measured 13 to 25 minutes and about 190k to 250k tokens for each acceptance run on slices of this repository.
 
 ## 0.7.1 - 2026-11-19
 
