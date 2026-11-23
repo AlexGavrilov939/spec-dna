@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: closed
 class: routine
 ---
 # Protocol 2 of the model-team measurement
