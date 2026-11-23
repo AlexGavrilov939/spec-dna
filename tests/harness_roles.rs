@@ -161,7 +161,8 @@ fn the_agent_files_match_the_golden_files() {
     for (path, name) in [
         (".claude/agents/fallback-advisor.md", "fallback-advisor.md"),
         (".claude/agents/verifier.md", "verifier.md"),
-        (".claude/agents/acceptor.md", "acceptor.md"),
+        // The default of `standard` is `advisor = false` (design 0.8.0, D81).
+        (".claude/agents/acceptor.md", "acceptor-no-advisor.md"),
         (".claude/agents/Explore.md", "Explore.md"),
         (".claude/agents/implementer.md", "implementer.md"),
         (".claude/agents/code-simplifier.md", "code-simplifier.md"),
@@ -503,10 +504,15 @@ fn lean_in_standard_writes_the_acceptor_with_the_skill_review() {
             .exists()
     );
     assert!(!r.dir.join(".claude/skills/spec-dna-accept").exists());
-    assert_eq!(normalize_marker(&r.read(ACCEPTOR)), golden("acceptor.md"));
+    assert_eq!(
+        normalize_marker(&r.read(ACCEPTOR)),
+        golden("acceptor-no-advisor.md")
+    );
     let cfg = r.read("spec-dna.toml");
     assert!(
-        cfg.contains("\nacceptor = { claude-code = \"opus\", effort = \"high\" }\n"),
+        cfg.contains(
+            "\nacceptor = { claude-code = \"opus\", effort = \"high\", advisor = false }\n"
+        ),
         "{cfg}"
     );
     let page = r.read(".claude/agents/model-team.md");
@@ -522,7 +528,10 @@ fn lean_in_standard_writes_the_acceptor_with_the_skill_review() {
 fn the_acceptor_is_a_role_of_lean_and_full() {
     let r = full_repo();
     assert!(r.dir.join(ACCEPTOR).exists());
-    assert_eq!(normalize_marker(&r.read(ACCEPTOR)), golden("acceptor.md"));
+    assert_eq!(
+        normalize_marker(&r.read(ACCEPTOR)),
+        golden("acceptor-no-advisor.md")
+    );
 }
 
 #[test]
@@ -659,4 +668,218 @@ fn the_acceptor_runs_the_prompt_line_and_commits_the_record_with_its_path() {
         assert!(t.contains(part), "{part}\n{t}");
     }
     assert!(!t.contains("Your prompt is the output of"), "{t}");
+}
+
+// ---- The key `advisor` of the acceptor (design 0.8.0, D81) ----
+
+/// The line that `acceptor.md` has with `advisor = false` (D81 item 4).
+const NO_ADVISOR: &str = "Advisor: do not consult the advisor in this task. This rule has priority over each project instruction that tells you to consult the advisor.";
+
+/// A project that `init` wrote in `profile` at the level `lean`. Then the key
+/// `advisor` of the entry `acceptor` is set to `key`, and `None` removes it.
+fn acceptor_project(profile: &str, key: Option<bool>) -> Repo {
+    let r = Repo::new();
+    let answers = format!("profile = \"{profile}\"\nharness = \"lean\"\n");
+    let (code, out, err) = init_with(&r, &answers, &[]);
+    assert_eq!(code, 0, "{profile}: {out}{err}");
+    let cfg = r.read("spec-dna.toml");
+    let entry = cfg
+        .lines()
+        .find(|l| l.starts_with("acceptor = "))
+        .unwrap_or_else(|| panic!("{profile}: no entry `acceptor`\n{cfg}"))
+        .to_string();
+    let new = match key {
+        None => "acceptor = { claude-code = \"opus\", effort = \"high\" }".to_string(),
+        Some(b) => {
+            format!("acceptor = {{ claude-code = \"opus\", effort = \"high\", advisor = {b} }}")
+        }
+    };
+    r.write("spec-dna.toml", &cfg.replace(&entry, &new));
+    r
+}
+
+#[test]
+fn the_key_advisor_selects_the_text_of_the_acceptor() {
+    // No key: false in `standard` and true in `strict`. A key of the file wins.
+    for (profile, key, want) in [
+        ("standard", None, "acceptor-no-advisor.md"),
+        ("standard", Some(true), "acceptor.md"),
+        ("standard", Some(false), "acceptor-no-advisor.md"),
+        ("strict", None, "acceptor.md"),
+        ("strict", Some(true), "acceptor.md"),
+        ("strict", Some(false), "acceptor-no-advisor.md"),
+    ] {
+        let r = acceptor_project(profile, key);
+        let (code, out, err) = r.run(&["init", "--reconfigure", "--non-interactive"]);
+        assert_eq!(code, 0, "{profile} {key:?}: {out}{err}");
+        assert_eq!(
+            normalize_marker(&r.read(ACCEPTOR)),
+            golden(want),
+            "{profile} {key:?}"
+        );
+        // `init` writes the default of the profile, or keeps the key.
+        let cfg = r.read("spec-dna.toml");
+        let value = key.unwrap_or(profile == "strict");
+        assert!(
+            cfg.contains(&format!("effort = \"high\", advisor = {value} }}\n")),
+            "{profile} {key:?}\n{cfg}"
+        );
+        let (code, out, err) = r.run(&["check"]);
+        assert_eq!(code, 0, "{profile} {key:?}: {out}{err}");
+    }
+}
+
+#[test]
+fn a_project_with_no_advisor_key_resolves_to_the_default_of_its_profile() {
+    // The files of `init` agree with a configuration that has no key, so
+    // `check` finds no difference (SD502) in each profile.
+    for profile in ["standard", "strict"] {
+        let r = acceptor_project(profile, None);
+        let (code, out, err) = r.run(&["check"]);
+        assert_eq!(code, 0, "{profile}: {out}{err}");
+        // The file has the line in `standard` only.
+        let has = r.read(ACCEPTOR).contains(NO_ADVISOR);
+        assert_eq!(has, profile == "standard", "{profile}");
+    }
+}
+
+#[test]
+fn both_golden_files_of_the_acceptor_differ_by_the_line_only() {
+    let strict = golden("acceptor.md");
+    let standard = golden("acceptor-no-advisor.md");
+    // The frozen file keeps its hash.
+    assert!(strict.ends_with(" h:f541cad357de8926 -->\n"), "{strict}");
+    assert!(!strict.contains("Advisor:"), "{strict}");
+    assert_eq!(standard.matches(NO_ADVISOR).count(), 1, "{standard}");
+    let drop_marker = |t: &str| {
+        let n = t.lines().count() - 1;
+        t.lines().take(n).collect::<Vec<_>>().join("\n")
+    };
+    assert_eq!(
+        drop_marker(&standard).replace(&format!("{NO_ADVISOR}\n\n"), ""),
+        drop_marker(&strict)
+    );
+    assert_eq!(md_lint(&standard), []);
+    assert_eq!(md_lint(&strict), []);
+}
+
+#[test]
+fn a_bad_key_advisor_gives_exit_code_3() {
+    let r = project_with(
+        "[harness]\nlevel = \"lean\"\n\n[harness.roles]\nacceptor = { advisor = \"no\" }\n",
+    );
+    let (code, out, err) = r.run(&["check"]);
+    assert_eq!(code, 3, "{out}{err}");
+    assert!(
+        err.contains("`harness.roles.acceptor.advisor` must be true or false"),
+        "{err}"
+    );
+    // Only the role `acceptor` has the key.
+    let r = project_with(
+        "[harness]\nlevel = \"lean\"\n\n[harness.roles]\nverifier = { advisor = false }\n",
+    );
+    let (code, out, err) = r.run(&["check"]);
+    assert_eq!(code, 3, "{out}{err}");
+    assert!(
+        err.contains("unknown key `harness.roles.verifier.advisor`"),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_change_of_the_key_with_no_init_gives_sd502_and_reconfigure_clears_it() {
+    let r = acceptor_project("standard", Some(false));
+    let (code, out, err) = r.run(&["init", "--reconfigure", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let (code, out, err) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let cfg = r.read("spec-dna.toml");
+    r.write(
+        "spec-dna.toml",
+        &cfg.replace("advisor = false", "advisor = true"),
+    );
+    let (code, out, err) = r.run(&["check"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.lines()
+            .any(|l| l.contains("SD502") && l.contains(ACCEPTOR)),
+        "{out}"
+    );
+    let (code, out, err) = r.run(&["init", "--reconfigure", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(normalize_marker(&r.read(ACCEPTOR)), golden("acceptor.md"));
+    let (code, out, err) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+#[test]
+fn a_hand_edit_of_the_line_gives_sd501() {
+    let r = acceptor_project("standard", Some(false));
+    let (code, out, err) = r.run(&["init", "--reconfigure", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let text = r.read(ACCEPTOR);
+    r.write(
+        ACCEPTOR,
+        &text.replace("Advisor: do not consult", "Advisor: please do not consult"),
+    );
+    let (code, out, err) = r.run(&["check"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.lines()
+            .any(|l| l.contains("SD501") && l.contains(ACCEPTOR)),
+        "{out}"
+    );
+}
+
+#[test]
+fn the_role_that_is_off_gets_no_key_advisor_and_gets_it_back_with_the_role() {
+    // D81 items 2 and 6: `claude-code = "none"` is a case where the role does
+    // not exist, so `init` writes no key. The entry stays, as it has a model.
+    let r = Repo::new();
+    let (code, out, err) = init_with(
+        &r,
+        "profile = \"standard\"\nharness = \"lean\"\nharness-models = [\"acceptor=none\"]\n",
+        &[],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    let cfg = r.read("spec-dna.toml");
+    assert!(
+        cfg.contains("\nacceptor = { claude-code = \"none\", effort = \"high\" }\n"),
+        "{cfg}"
+    );
+    assert!(!r.dir.join(ACCEPTOR).exists(), "{out}");
+    // The role returns: `init` writes the default of the profile.
+    let (code, out, err) = init_with(
+        &r,
+        "harness = \"lean\"\nharness-models = [\"acceptor=opus\"]\n",
+        &["--reconfigure"],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    let cfg = r.read("spec-dna.toml");
+    assert!(
+        cfg.contains(
+            "\nacceptor = { claude-code = \"opus\", effort = \"high\", advisor = false }\n"
+        ),
+        "{cfg}"
+    );
+    assert!(r.read(ACCEPTOR).contains(NO_ADVISOR));
+}
+
+#[test]
+fn question_13_keeps_the_key_advisor() {
+    let r = acceptor_project("standard", Some(true));
+    let (code, out, err) = init_with(
+        &r,
+        "harness = \"lean\"\nharness-models = [\"acceptor=sonnet:low\"]\n",
+        &["--reconfigure"],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    let cfg = r.read("spec-dna.toml");
+    assert!(
+        cfg.contains("acceptor = { claude-code = \"sonnet\", effort = \"low\", advisor = true }\n"),
+        "{cfg}"
+    );
+    assert!(!r.read(ACCEPTOR).contains(NO_ADVISOR));
+    let (code, out, err) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}{err}");
 }

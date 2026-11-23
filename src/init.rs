@@ -845,6 +845,34 @@ fn settle_approvals_hook(plan: &mut Plan) {
     }
 }
 
+/// Sets `[harness.roles] acceptor.advisor` (design 0.8.0, D81 items 2, 6 and 7)
+/// where the role `acceptor` is in use. A file with no key gets the default of the
+/// profile, so `init` writes the key for each new project. `--reconfigure`
+/// keeps the value of the file. A new answer to question 1 moves a value that is
+/// the default of the profile of the current file (`Plan::preset`) to the
+/// default of the new profile, between `standard` and `strict`. Another value
+/// stays, because a person set it. Where the role does not exist, the call
+/// changes nothing. The call is idempotent.
+fn settle_advisor(plan: &mut Plan) {
+    // `on` is false for the level `none`, for a profile or a skill list with no
+    // role, and for `claude-code = "none"`.
+    if !plan.harness.on(Role::Acceptor) {
+        return;
+    }
+    let new = harness::default_acceptor_advisor(plan.profile);
+    let old = harness::default_acceptor_advisor(plan.preset);
+    let moves = plan.kind == "reconfigure"
+        && plan.profile != plan.preset
+        && plan.profile != Profile::Lite
+        && plan.preset != Profile::Lite;
+    let c = plan.harness.cfg_mut(Role::Acceptor);
+    c.advisor = match c.advisor {
+        None => Some(new),
+        Some(v) if moves && v == old => Some(new),
+        other => other,
+    };
+}
+
 /// The types that a graph has, in the order of `DocType::ALL`.
 fn graph_types(g: &Graph) -> Vec<DocType> {
     DocType::ALL
@@ -3912,6 +3940,7 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     settle_parts(&mut plan);
     settle_evals(&mut plan);
     settle_approvals_hook(&mut plan);
+    settle_advisor(&mut plan);
     let mut offered = before.clone();
     // The offered defaults are the defaults of the profile that was chosen.
     offered.apply_preset(plan.profile);
@@ -3921,6 +3950,7 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     settle_parts(&mut offered);
     settle_evals(&mut offered);
     settle_approvals_hook(&mut offered);
+    settle_advisor(&mut offered);
     let text = render(&plan);
     // spec-dna never writes a configuration that it cannot read.
     let parsed = Config::parse(&text)
