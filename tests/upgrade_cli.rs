@@ -2421,10 +2421,26 @@ fn the_first_upgrade_of_the_fixture_of_0_7_1_writes_the_files_of_its_profile() {
             assert_eq!(new_files, [".claude/agents/acceptor.md"], "{profile}");
             let skill = repo.read(".claude/skills/spec-dna-review/SKILL.md");
             assert!(skill.contains("acceptor"), "{profile}");
+            // D81 item 9: the new agent follows the default of the profile.
+            // `standard` gets the line, and `strict` gets the frozen file.
+            let golden = match profile {
+                "standard" => "acceptor-no-advisor.md",
+                _ => "acceptor.md",
+            };
+            let path = format!(
+                "{}/tests/golden/harness/{golden}",
+                env!("CARGO_MANIFEST_DIR")
+            );
+            assert_eq!(
+                normalize_marker(&repo.read(".claude/agents/acceptor.md")),
+                fs::read_to_string(&path).unwrap(),
+                "{profile}"
+            );
         }
         // The keys that `upgrade` leaves to the person.
         let text = repo.read("spec-dna.toml");
         for key in [
+            ", advisor = ",
             "acceptance-for",
             "higher-risk-acceptors",
             "invariants",
