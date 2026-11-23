@@ -49,7 +49,7 @@ status: approved
 - [x] t11: Add the rows for the new files and the paragraph on the acceptance record. Files: `.claude/agents/ownership.md`, `AGENTS.md`, `.claude/agents/README.md`. Verify: `pre-commit run --all-files`. Hours: 1.
 - [x] t12: Add the agent `acceptor` of this repository. Files: `.claude/agents/acceptor.md`. Verify: `pre-commit run --all-files`. Hours: 1.
 - [x] t14: Add the paragraph on the acceptance record to the contributor guide. Files: `CONTRIBUTING.md`. Verify: `pre-commit run --all-files`. Hours: 1.
-- [ ] t13: Run the independent review of each commit and the acceptance pass, and finish the change. Files: `docs/design/0.8.0.md`. Verify: `spec-dna finish release-080 --dry-run`. Hours: 3.
+- [ ] t13: Run the independent review of each commit and the acceptance pass `spec-dna accept release-080`, then run `spec-dna finish release-080`. Files: `docs/design/0.8.0.md`. Verify: `spec-dna finish release-080 --dry-run`. Hours: 3.
 
 ## Risks
 
