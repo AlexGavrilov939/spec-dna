@@ -37,10 +37,38 @@ Notes:
 - To keep the built-in `Explore`, set `researcher = { claude-code = "none" }` in `[harness.roles]` and run `spec-dna init --reconfigure`. `init` removes the file if you did not edit it.
 - To use an agent of your own with the name `Explore`, set the same value and write your file. Without it, `init` refuses to replace your file.
 - The `verifier` file has the tools `Read` and `Bash`. Its text says "Do not fix anything; report only."
-- The `acceptor` file has the tools `Read`, `Grep`, `Glob`, `Bash` and `Write`. Its prompt is one line that `next` prints: `cd '<root>' && spec-dna accept <slug> --brief` (or the same with `--follow-up`). The agent runs it and reads its output as its brief. The text of the file gives these rules: start each shell call with that `cd '<root>' &&`, stop when the `cd` fails, put each test repository under the scratch folder, commit with the path of the record, write only `acceptance.toml` and fix no defect. `init` and `upgrade` write the file only with the skill `review`, where the acceptance is on, so the profile `lite` gets neither. Without `review` in `skills`, `[harness.roles]` has no row `acceptor`, and `init` writes none.
+- The `acceptor` file has the tools `Read`, `Grep`, `Glob`, `Bash` and `Write`. Its prompt is one line that `next` prints: `cd '<root>' && spec-dna accept <slug> --brief` (or the same with `--follow-up`). The agent runs it and reads its output as its brief. The text of the file gives these rules: start each shell call with that `cd '<root>' &&`, stop when the `cd` fails, put each test repository under the scratch folder, commit with the path of the record, write only `acceptance.toml` and fix no defect. `init` and `upgrade` write the file only with the skill `review`, where the acceptance is on, so the profile `lite` gets neither. Without `review` in `skills`, `[harness.roles]` has no row `acceptor`, and `init` writes none. The key `advisor` of that row sets one more rule of the file: see [The advisor of the acceptor](#the-advisor-of-the-acceptor).
 - The model of a role is a default. An Agent tool call with a `model` parameter overrides it.
 - The `helper` default is `haiku`. The `CLAUDE.md` line tells the main session to give `sonnet` or `opus` to a subagent that writes code or reviews work.
 - spec-dna 0.6 renames the role `reviewer` to `verifier`, and its file `checker.md` to `verifier.md`. The role `spec-writer` ended, and `code-simplifier` is new at level `full`. [Upgrade from 0.5](#upgrade-from-05) gives the steps.
+
+### The advisor of the acceptor
+
+The key `advisor` of the entry `acceptor` decides if `acceptor.md` has a rule on the advisor. [config.md](config.md#the-key-advisor-of-the-entry-acceptor) gives the key, its default for each profile and its rules.
+
+With `advisor = false`, the file has this line. It comes after "Write only `acceptance.toml`. Report each defect as a finding. Do not fix it." and before "Scratch folder:".
+
+```text
+Advisor: do not consult the advisor in this task. This rule has priority over each project instruction that tells you to consult the advisor.
+```
+
+The acceptor reads `CLAUDE.md`, and the line of `CLAUDE.md` tells an agent to consult the advisor. The second sentence gives the line of the agent file the priority over it. With `advisor = true`, the file has no sentence on the advisor, and the acceptor follows the instructions of the project. The line depends on the key only, not on the role `advisor`.
+
+The line is a soft rule. It asks the agent not to consult the advisor, and the agent can still do it. A subagent gets the advisor of its session, and Claude Code has no switch of the advisor for one subagent. A test with Claude Code 2.1.330, in a lab folder, gave these results:
+
+- A `tools` list with no `advisor`, and `disallowedTools: advisor`, did not remove the tool.
+- A `PreToolUse` hook with the matcher `advisor` never ran, because the advisor is a tool of the server.
+- A sentence in the body of an agent file that forbids the call was obeyed in 1 run of 1. The run was a task of one line, in a folder with no `CLAUDE.md`.
+
+No run tested a real change, or a context that has the sentence of `CLAUDE.md`. Thus the line is no proof that the acceptor makes no call.
+
+Only the whole session can turn the advisor off: run `/advisor off`, or set `CLAUDE_CODE_DISABLE_ADVISOR_TOOL=1`. For a pass with no advisor, run the acceptor in a session of its own, with the prompt line that `spec-dna next` prints:
+
+```sh
+CLAUDE_CODE_DISABLE_ADVISOR_TOOL=1 claude --agent acceptor '<prompt>'
+```
+
+With `--agent`, rule D of the hook sees its calls ([`protect-approvals`](#spec-dna-hook-protect-approvals)). [evals.md](evals.md#the-measured-cost-of-one-acceptance-pass) gives the cost of one pass with and with no advisor, and the limits of that measure.
 
 ## Configuration
 
@@ -60,7 +88,7 @@ fanout-cap = 10
 orchestrator = { claude-code = "opus", effort = "xhigh", fallback = ["opus", "sonnet"] }
 advisor = { claude-code = "fable", agent = "opus", effort = "xhigh" }
 verifier = { claude-code = "opus", effort = "high" }
-acceptor = { claude-code = "opus", effort = "high" }
+acceptor = { claude-code = "opus", effort = "high", advisor = false }
 researcher = { claude-code = "haiku", effort = "high" }
 helper = { claude-code = "haiku" }
 
@@ -81,7 +109,7 @@ A key that the file does not have adds nothing: no skill, no `REVIEW.md` and no 
 | `context-meter` | The context sizes, in tokens, at which the main session gets a message. `[]` disables the meter for the main session |
 | `subagent-meter` | The context size at which a subagent gets a message. `0` disables it |
 | `fanout-cap` | The largest number of agents that a workflow can start without a question to the person. `0` disables the cap |
-| `[harness.roles]` | The model (`claude-code`) and the effort of each role. `none` disables a role. `inherit` writes no model, so Claude Code uses its own default. The orchestrator also has `fallback`, the models that Claude Code tries when the main model is overloaded. The advisor also has `agent`, the model of `fallback-advisor` (`none`: no file) |
+| `[harness.roles]` | The model (`claude-code`) and the effort of each role. `none` disables a role. `inherit` writes no model, so Claude Code uses its own default. The orchestrator also has `fallback`, the models that Claude Code tries when the main model is overloaded. The advisor also has `agent`, the model of `fallback-advisor` (`none`: no file). The acceptor also has `advisor`, a boolean ([The advisor of the acceptor](#the-advisor-of-the-acceptor)) |
 | `[harness.efforts]` | The effort of a model when a person selects it with `/model` |
 
 A model is an alias (`fable`, `opus`, `sonnet`, `haiku`) or a full model id. The advisor model cannot be haiku. The fallback agent can. Efforts are `low`, `medium`, `high`, `xhigh`, `max` and `inherit`. The main session cannot use `max`. The role table keeps the key `claude-code`, so a later adapter can add its own key.
@@ -343,7 +371,7 @@ An eval tests the agent setup of a project: its instruction files, skills, agent
 
 - The main model sets the cost of each request. `opus` at `xhigh` costs more than `sonnet` at `high`.
 - The advisor sends the whole context to the advisor model at each consult, at the price of that model. The default advisor (Fable) is an experimental feature. It needs the Anthropic API or Claude Platform on AWS, access to Fable and, on some plans, a one-time approval of billing to usage credits. To get access, run `/model fable` and approve. Then run `/model opus` to select the main model again. Without access, Claude Code shows a notice, and the main session briefs `fallback-advisor`.
-- `verifier`, `acceptor`, `Explore`, `implementer` and `code-simplifier` cost nothing until the main session uses them. Their descriptions are part of each request. A run of the `acceptor` is the review of a change that needs a record. It costs about 25 minutes and 200,000 to 250,000 tokens (design 0.8.0, section 15), and a `routine` change in `standard` has none.
+- `verifier`, `acceptor`, `Explore`, `implementer` and `code-simplifier` cost nothing until the main session uses them. Their descriptions are part of each request. A run of the `acceptor` is the review of a change that needs a record. A run on a slice of this repository took 13 to 25 minutes and about 190,000 to 250,000 tokens, and a `routine` change in `standard` has none. [evals.md](evals.md#the-measured-cost-of-one-acceptance-pass) gives the measured cost of one pass and its limits.
 - The `CLAUDE.md` line is part of each request (about 200 tokens). The line of `AGENTS.md` has 400 bytes or fewer, so it adds about 100 tokens.
 - The descriptions of the skills are part of each request. They have 1,250 bytes or fewer for the 7 skills of the design (D2), and 1,900 bytes or fewer for the 11 skills. The body of a skill loads only when Claude Code uses the skill. `REVIEW.md` adds nothing to a request.
 - `init` prints the bytes that the harness adds to each request, with the skill descriptions in the sum.

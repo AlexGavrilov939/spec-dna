@@ -828,6 +828,7 @@ fn reconfigure_keeps_each_key_that_0_8_0_added() {
         ("layers.summaries.types", list(&["summary"])),
         ("harness.roles.acceptor.claude-code", s("sonnet")),
         ("harness.roles.acceptor.effort", s("low")),
+        ("harness.roles.acceptor.advisor", Value::Boolean(true)),
     ];
     let mut report = Vec::new();
     for profile in ["lite", "standard", "strict"] {
@@ -837,7 +838,7 @@ fn reconfigure_keeps_each_key_that_0_8_0_added() {
         r.write(
             "spec-dna.toml",
             &format!(
-                "spec-dna = \"{VERSION}\"\nprofile = \"{profile}\"\n\n[change]\npolicy = \"three-class\"\ngate = \"warn\"\nacceptance-for = \"none\"\nhigher-risk-acceptors = 3\ninvariants = true\nmax-task-files = 5\n\n[owners]\n\"src/**\" = [\"security\"]\n\n[budgets.area]\nsoft = 111\nhard = 222\n\n[budgets.summary]\nsoft = 33\nhard = 44\n\n[evidence]\nreports = [\"reports/**/*.xml\"]\nreliable-runs = 4\nreliable-for = \"all\"\ntree-exclude = [\"**/*.txt\"]\n\n[rules]\nacceptance = \"off\"\nrollup = \"warning\"\narea-budget = \"off\"\nproof = \"off\"\nreports = \"off\"\n\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.intent]\ntypes = [\"intent\", \"spec\", \"plan\"]\n\n[layers.summaries]\ntypes = [\"summary\"]\n\n[harness]\nlevel = \"lean\"\n\n[harness.roles]\nacceptor = {{ claude-code = \"sonnet\", effort = \"low\" }}\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n"
+                "spec-dna = \"{VERSION}\"\nprofile = \"{profile}\"\n\n[change]\npolicy = \"three-class\"\ngate = \"warn\"\nacceptance-for = \"none\"\nhigher-risk-acceptors = 3\ninvariants = true\nmax-task-files = 5\n\n[owners]\n\"src/**\" = [\"security\"]\n\n[budgets.area]\nsoft = 111\nhard = 222\n\n[budgets.summary]\nsoft = 33\nhard = 44\n\n[evidence]\nreports = [\"reports/**/*.xml\"]\nreliable-runs = 4\nreliable-for = \"all\"\ntree-exclude = [\"**/*.txt\"]\n\n[rules]\nacceptance = \"off\"\nrollup = \"warning\"\narea-budget = \"off\"\nproof = \"off\"\nreports = \"off\"\n\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.intent]\ntypes = [\"intent\", \"spec\", \"plan\"]\n\n[layers.summaries]\ntypes = [\"summary\"]\n\n[harness]\nlevel = \"lean\"\n\n[harness.roles]\nacceptor = {{ claude-code = \"sonnet\", effort = \"low\", advisor = true }}\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n"
             ),
         );
         r.commit("set the keys");
@@ -905,4 +906,316 @@ fn reconfigure_keeps_the_acceptor_entry_where_the_role_is_not_in_use() {
         let (code, out, err) = run(&r, &["check"]);
         assert_eq!(code, 0, "{profile}: {out}{err}");
     }
+}
+
+// ---- The key `advisor` of the acceptor (design 0.8.0, D81) ----
+
+/// The line that `acceptor.md` has with `advisor = false` (D81 item 4).
+const NO_ADVISOR: &str = "Advisor: do not consult the advisor in this task. This rule has priority over each project instruction that tells you to consult the advisor.";
+
+const ACCEPTOR_FILE: &str = ".claude/agents/acceptor.md";
+
+/// `[harness.roles] acceptor.advisor` of `spec-dna.toml`.
+fn advisor_key(r: &Repo) -> Option<bool> {
+    at(&table(r), "harness.roles.acceptor.advisor").and_then(toml::Value::as_bool)
+}
+
+/// The number of lines of `acceptor.md` that are the line of the key, or
+/// `None` if the file does not exist.
+fn advisor_lines(r: &Repo) -> Option<usize> {
+    fs::read_to_string(r.dir.join(ACCEPTOR_FILE))
+        .ok()
+        .map(|t| t.matches(NO_ADVISOR).count())
+}
+
+/// The profile answers of a project at the level `lean`.
+fn answers_of(profile: &str) -> String {
+    format!("profile = \"{profile}\"\nharness = \"lean\"\n")
+}
+
+/// The test of the owner (Q54). `init` writes the default of each profile: the
+/// key and the text of the agent `acceptor`.
+#[test]
+fn each_profile_writes_the_advisor_of_the_acceptor() {
+    assert_eq!(NO_ADVISOR.len(), 141);
+    for (profile, key, lines) in [
+        ("lite", None, None),
+        ("standard", Some(false), Some(1)),
+        ("strict", Some(true), Some(0)),
+    ] {
+        let r = repo();
+        let (code, out, err) = init_with(&r, &answers_of(profile), &[]);
+        assert_eq!(code, 0, "{profile}: {out}{err}");
+        assert_eq!(
+            advisor_key(&r),
+            key,
+            "{profile}: {}",
+            r.read("spec-dna.toml")
+        );
+        assert_eq!(advisor_lines(&r), lines, "{profile}");
+        if profile == "lite" {
+            // The role does not exist: no entry and no file, as in 0.7.1.
+            assert!(
+                at(&table(&r), "harness.roles.acceptor").is_none(),
+                "{}",
+                r.read("spec-dna.toml")
+            );
+        }
+        let (code, out, err) = run(&r, &["check"]);
+        assert_eq!(code, 0, "{profile}: {out}{err}");
+    }
+}
+
+/// `--reconfigure` keeps the key, also a value that is the default of the
+/// profile, and it never writes the key twice. A file with the entry and no key
+/// gets the default of its profile.
+#[test]
+fn reconfigure_keeps_the_advisor_of_the_acceptor_in_each_profile() {
+    for profile in ["standard", "strict"] {
+        let default = profile == "strict";
+        for value in [true, false] {
+            let r = repo();
+            let answers = answers_of(profile);
+            let (code, out, err) = init_with(&r, &answers, &[]);
+            assert_eq!(code, 0, "{profile} {value}: {out}{err}");
+            let text = r.read("spec-dna.toml").replace(
+                &format!("advisor = {default}"),
+                &format!("advisor = {value}"),
+            );
+            r.write("spec-dna.toml", &text);
+            r.commit("set the key");
+            for round in 1..=2 {
+                let (code, out, err) = init_with(&r, &answers, &["--reconfigure"]);
+                assert_eq!(code, 0, "{profile} {value} {round}: {out}{err}");
+                assert_eq!(advisor_key(&r), Some(value), "{profile} {value} {round}");
+                assert_eq!(
+                    r.read("spec-dna.toml").matches(", advisor = ").count(),
+                    1,
+                    "{profile} {value} {round}"
+                );
+                assert_eq!(
+                    advisor_lines(&r),
+                    Some(usize::from(!value)),
+                    "{profile} {value} {round}"
+                );
+            }
+        }
+        // A file of the release candidate: the entry has no key.
+        let r = repo();
+        let answers = answers_of(profile);
+        let (code, out, err) = init_with(&r, &answers, &[]);
+        assert_eq!(code, 0, "{profile}: {out}{err}");
+        let text = r
+            .read("spec-dna.toml")
+            .replace(&format!(", advisor = {default}"), "");
+        r.write("spec-dna.toml", &text);
+        r.commit("remove the key");
+        let mut first = String::new();
+        for round in 1..=2 {
+            let (code, out, err) = init_with(&r, &answers, &["--reconfigure"]);
+            assert_eq!(code, 0, "{profile} {round}: {out}{err}");
+            assert_eq!(advisor_key(&r), Some(default), "{profile} {round}");
+            if round == 1 {
+                first = r.read("spec-dna.toml");
+            } else {
+                assert_eq!(r.read("spec-dna.toml"), first, "{profile}: second run");
+            }
+        }
+    }
+}
+
+/// A new answer to question 1 moves a value that is the default of the old
+/// profile to the default of the new profile (D81 item 7). Another value stays.
+#[test]
+fn reconfigure_with_another_profile_moves_a_default_advisor() {
+    let r = repo();
+    let (code, out, err) = init_with(&r, &answers_of("standard"), &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(advisor_key(&r), Some(false));
+    r.commit("adopt spec-dna");
+    // `standard` to `strict`: the default `false` becomes `true`.
+    let (code, out, err) = init_with(&r, &answers_of("strict"), &["--reconfigure"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(advisor_key(&r), Some(true), "{}", r.read("spec-dna.toml"));
+    assert_eq!(advisor_lines(&r), Some(0));
+    // A second run with the same profile changes nothing.
+    let first = r.read("spec-dna.toml");
+    let (code, out, err) = init_with(&r, &answers_of("strict"), &["--reconfigure"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(r.read("spec-dna.toml"), first);
+    r.commit("strict");
+    // The way back: `true` becomes `false`, and the line returns.
+    let (code, out, err) = init_with(&r, &answers_of("standard"), &["--reconfigure"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(advisor_key(&r), Some(false), "{}", r.read("spec-dna.toml"));
+    assert_eq!(advisor_lines(&r), Some(1));
+    let (code, out, err) = run(&r, &["check"]);
+    assert_eq!(code, 0, "{out}{err}");
+
+    // A value that is not the default of the old profile stays: `true` in a
+    // `standard` file stays in `strict`.
+    let r = repo();
+    let (code, out, err) = init_with(&r, &answers_of("standard"), &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let text = r
+        .read("spec-dna.toml")
+        .replace("advisor = false", "advisor = true");
+    r.write("spec-dna.toml", &text);
+    r.commit("set the key");
+    let (code, out, err) = init_with(&r, &answers_of("strict"), &["--reconfigure"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(advisor_key(&r), Some(true));
+    assert_eq!(advisor_lines(&r), Some(0));
+    // The file is now the same as a `strict` file with the default, so the way
+    // back moves the value: a file holds no mark of the person (D81 item 7).
+    let fresh = repo();
+    let (code, out, err) = init_with(&fresh, &answers_of("strict"), &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(
+        at(&table(&r), "harness.roles.acceptor"),
+        at(&table(&fresh), "harness.roles.acceptor")
+    );
+    assert_eq!(r.read(ACCEPTOR_FILE), fresh.read(ACCEPTOR_FILE));
+    r.commit("strict");
+    let (code, out, err) = init_with(&r, &answers_of("standard"), &["--reconfigure"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(advisor_key(&r), Some(false));
+
+    // `false` in a `strict` file is not the default of `strict`: it stays.
+    let r = repo();
+    let (code, out, err) = init_with(&r, &answers_of("strict"), &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let text = r
+        .read("spec-dna.toml")
+        .replace("advisor = true", "advisor = false");
+    r.write("spec-dna.toml", &text);
+    r.commit("set the key");
+    let (code, out, err) = init_with(&r, &answers_of("standard"), &["--reconfigure"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(advisor_key(&r), Some(false));
+    assert_eq!(advisor_lines(&r), Some(1));
+}
+
+/// A `lite` file with a kept entry (a model of a person) and `advisor = true`
+/// keeps the value when the answer to question 1 is `standard` (D81 item 7: `lite`
+/// has no default to move). It keeps it also when the skill `review` returns.
+#[test]
+fn reconfigure_from_lite_keeps_the_advisor_of_a_kept_entry() {
+    let file = |skills: &str| {
+        format!(
+            "spec-dna = \"{VERSION}\"\nprofile = \"lite\"\n\n[harness]\nlevel = \"lean\"\nskills = {skills}\n\n[harness.roles]\nacceptor = {{ claude-code = \"sonnet\", effort = \"high\", advisor = true }}\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n"
+        )
+    };
+    let answers = answers_of("standard");
+    let want = Some(true);
+    // Without `review`, the role does not exist: the entry stays, with no file.
+    let r = repo();
+    r.write("docs/a.md", "# A\n\nText.\n");
+    r.write("spec-dna.toml", &file("[\"brainstorm\"]"));
+    r.commit("set the role");
+    let (code, out, err) = init_with(&r, &answers, &["--reconfigure"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(advisor_key(&r), want, "{}", r.read("spec-dna.toml"));
+    assert_eq!(
+        at(&table(&r), "harness.roles.acceptor.claude-code").and_then(toml::Value::as_str),
+        Some("sonnet")
+    );
+    assert_eq!(advisor_lines(&r), None);
+    // The skill `review` returns: the file has no line, and `check` is clean.
+    r.write(
+        "spec-dna.toml",
+        &r.read("spec-dna.toml")
+            .replace("skills = [\"brainstorm\"]", "skills = [\"review\"]"),
+    );
+    r.commit("add review");
+    let (code, out, err) = init_with(&r, &answers, &["--reconfigure"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(advisor_key(&r), want, "{}", r.read("spec-dna.toml"));
+    assert_eq!(advisor_lines(&r), Some(0));
+    r.commit("reconfigure");
+    let (code, out, err) = run(&r, &["check"]);
+    assert_eq!(code, 0, "{out}{err}");
+    // With `review` in the list at once, the role appears with the answer
+    // `standard`, and the value is not the default of `lite` to move.
+    let r = repo();
+    r.write("docs/a.md", "# A\n\nText.\n");
+    r.write("spec-dna.toml", &file("[\"review\"]"));
+    r.commit("set the role");
+    let (code, out, err) = init_with(&r, &answers, &["--reconfigure"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(advisor_key(&r), want, "{}", r.read("spec-dna.toml"));
+    assert_eq!(advisor_lines(&r), Some(0));
+}
+
+/// Where the role `acceptor` does not exist, the key `advisor` alone never
+/// keeps the entry (D81 item 8). A model or an effort of a person keeps it, with
+/// its key.
+#[test]
+fn reconfigure_drops_an_entry_with_no_effect_that_holds_only_the_advisor() {
+    let skills_of_file = |r: &Repo, list: &str| {
+        let text = r.read("spec-dna.toml");
+        let line = text
+            .lines()
+            .find(|l| l.starts_with("skills = "))
+            .unwrap()
+            .to_string();
+        r.write(
+            "spec-dna.toml",
+            &text.replace(&line, &format!("skills = {list}")),
+        );
+        r.commit("set the skills");
+    };
+    // The skill `review` goes: the default entry goes too, with its key.
+    for (profile, value) in [("standard", false), ("standard", true), ("strict", true)] {
+        let r = repo();
+        let answers = answers_of(profile);
+        let (code, out, err) = init_with(&r, &answers, &[]);
+        assert_eq!(code, 0, "{profile}: {out}{err}");
+        let text = r.read("spec-dna.toml").replace(
+            &format!("advisor = {}", profile == "strict"),
+            &format!("advisor = {value}"),
+        );
+        r.write("spec-dna.toml", &text);
+        skills_of_file(&r, "[\"brainstorm\"]");
+        let (code, out, err) = init_with(&r, &answers, &["--reconfigure"]);
+        assert_eq!(code, 0, "{profile} {value}: {out}{err}");
+        let t = table(&r);
+        assert!(
+            at(&t, "harness.roles.acceptor").is_none(),
+            "{profile} {value}: {}",
+            r.read("spec-dna.toml")
+        );
+        assert_eq!(advisor_lines(&r), None, "{profile} {value}");
+    }
+    // A model of a person keeps the entry with both values.
+    let r = repo();
+    let answers = answers_of("standard");
+    let (code, out, err) = init_with(&r, &answers, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let text = r.read("spec-dna.toml").replace(
+        "claude-code = \"opus\", effort = \"high\", advisor = false",
+        "claude-code = \"sonnet\", effort = \"high\", advisor = true",
+    );
+    r.write("spec-dna.toml", &text);
+    skills_of_file(&r, "[\"brainstorm\"]");
+    let (code, out, err) = init_with(&r, &answers, &["--reconfigure"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let t = table(&r);
+    assert_eq!(
+        at(&t, "harness.roles.acceptor.claude-code").and_then(toml::Value::as_str),
+        Some("sonnet")
+    );
+    assert_eq!(advisor_key(&r), Some(true));
+    // A `strict` file that moves to `lite` loses the entry.
+    let r = repo();
+    let (code, out, err) = init_with(&r, &answers_of("strict"), &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    r.commit("adopt spec-dna");
+    let (code, out, err) = init_with(&r, &answers_of("lite"), &["--reconfigure"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        at(&table(&r), "harness.roles.acceptor").is_none(),
+        "{}",
+        r.read("spec-dna.toml")
+    );
 }

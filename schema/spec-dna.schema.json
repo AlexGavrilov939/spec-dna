@@ -600,6 +600,10 @@
                 },
                 "effort": {
                   "$ref": "#/$defs/harness-effort"
+                },
+                "advisor": {
+                  "type": "boolean",
+                  "description": "With `false`, the agent file asks the agent not to consult the advisor. This is a soft rule: no setting of an agent file removes the advisor tool. Default: `false` in the profile `standard`, `true` in the profile `strict`. `init` writes the value of the profile. It has no effect where the role does not exist."
                 }
               }
             },

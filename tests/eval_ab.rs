@@ -1384,8 +1384,8 @@ const RELEASED_ON: [&str; 7] = [
     "brainstorm",
     "specify",
     "clarify",
+    "write-plan",
     "tdd",
-    "finish",
     "post-mortem",
     "agents-line",
 ];
@@ -3117,6 +3117,11 @@ fn the_arm_with_has_acceptor_md_and_the_arm_without_has_the_review_of_0_7_1() {
     }
     assert!(fx.has_file(with, ".claude/agents/acceptor.md"));
     assert!(!fx.has_file(without, ".claude/agents/acceptor.md"));
+    // The copy has the profile `standard`, so its `acceptor.md` has the line of
+    // `advisor = false` one time (D81). No arm starts the agent.
+    let line = "Advisor: do not consult the advisor in this task. This rule has priority over each project instruction that tells you to consult the advisor.";
+    let agent = fx.text(with, ".claude/agents/acceptor.md");
+    assert_eq!(agent.matches(line).count(), 1, "{agent}");
     assert!(fx.has_file(with, &review));
     assert!(
         fx.has_file(without, &review),

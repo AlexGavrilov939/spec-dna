@@ -1131,6 +1131,18 @@ fn the_agent_acceptor_comes_with_review_in_standard_and_strict_and_never_in_lite
             r.dir.join(".claude/agents/acceptor.md").exists(),
             "{profile}: {out}"
         );
+        // D81: `standard` gets the line of `advisor = false`, and `strict` gets
+        // the file of the freeze, with the hash `f541cad357de8926`.
+        let want = if profile == "standard" {
+            "acceptor-no-advisor.md"
+        } else {
+            "acceptor.md"
+        };
+        assert_eq!(
+            normalize_marker(&r.read(".claude/agents/acceptor.md")),
+            golden(want),
+            "{profile}"
+        );
     }
     // No `review`, no agent.
     let r = project_with("[harness]\nlevel = \"lean\"\nskills = [\"brainstorm\"]\n");

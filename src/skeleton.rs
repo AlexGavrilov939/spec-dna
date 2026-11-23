@@ -5,8 +5,12 @@
 //! test pathspecs, the base branch and the install step of the CI job.
 
 /// The version of Claude Code that the workflow installs. It is the version of
-/// the probes of the release. `release-engineer` checks it at each release.
-pub const CLAUDE_CODE_VERSION: &str = "2.1.325";
+/// the paid eval runs of the release, so the CI job runs the version that the
+/// recorded verdicts measured (0.8.0: 2.1.330). The probes of ADR 0004 ran on
+/// 2.1.325, so the version differs from the version of those probes. The
+/// agent probes of 0.8.0 (the advisor of a subagent) ran on 2.1.330.
+/// `release-engineer` checks it at each release.
+pub const CLAUDE_CODE_VERSION: &str = "2.1.330";
 
 /// The text of `<dir>/fixtures/example/notes.txt`.
 pub const NOTES: &str = "status: draft\n";
