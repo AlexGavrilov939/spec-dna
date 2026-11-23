@@ -1,0 +1,102 @@
+format = 2
+change = "release-080"
+scope = [".claude/agents/README.md", ".claude/agents/acceptor.md", ".claude/agents/ownership.md", "AGENTS.md", "CHANGELOG.md", "CONTRIBUTING.md", "bench/results/evals/20261122T103358Z-write-plan.jsonl", "bench/results/evals/20261122T113622Z-finish.jsonl", "bench/results/evals/below-floor/20261122T103358Z-write-plan.json", "bench/results/evals/below-floor/20261122T113622Z-finish.json", "docs/adr/0032-acceptance-in-one-pass.md", "docs/config.md", "docs/design/0.8.0.md", "docs/evals.md", "docs/harness.md", "docs/init.md", "docs/profiles.md", "schema/spec-dna.schema.json", "src/harness.rs", "src/harness_text.rs", "src/init.rs", "src/skeleton.rs", "src/verdict.rs", "tests/eval_ab.rs", "tests/golden/evals/agent-evals.yml", "tests/golden/harness/acceptor-no-advisor.md", "tests/harness_roles.rs", "tests/harness_skills.rs", "tests/init_profiles.rs", "tests/upgrade_cli.rs"]
+paths = ["bench/results/evals/20261122T103358Z-write-plan.jsonl", "bench/results/evals/20261122T113622Z-finish.jsonl", "bench/results/evals/below-floor/20261122T103358Z-write-plan.json", "bench/results/evals/below-floor/20261122T113622Z-finish.json", "src/harness.rs", "src/harness_text.rs", "src/init.rs", "src/skeleton.rs", "src/verdict.rs", "tests/eval_ab.rs", "tests/golden/evals/agent-evals.yml", "tests/harness_roles.rs", "tests/harness_skills.rs", "tests/init_profiles.rs", "tests/upgrade_cli.rs"]
+tree = "7c39fd6e0db626fb"
+result = "accepted"
+acknowledged-by = []
+
+[[acceptor]]
+roles = ["acceptor"]
+brief = "a54eea91f39de1ac"
+session = "0fab9889-604a-401c-be23-08af656d4962"
+agent = "acceptor"
+model = "claude-opus-5-5"
+result = "accepted"
+
+[[attempt]]
+acceptor = 1
+text = "Proof: `cargo fmt --check` exit 0 and `cargo clippy --all-targets -- -D warnings` exit 0 on HEAD 7056287."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Proof: `cargo test` exit 0: 83 test binaries, 3304 passed, 0 failed, 3 ignored. This includes the tests of each path of `paths`: init_profiles, harness_roles, harness_skills, upgrade_cli, eval_ab, init_evals and the unit tests of harness and verdict."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Proof: `pre-commit run --all-files` exit 0 (markdownlint, typos, check-toml, check-json, zizmor and the others passed, 1 hook skipped with no files)."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Proof: `scripts/verify-release.sh` needs a draft release. No tag v0.8.0 exists locally or on origin, and `gh release view v0.8.0` gives `release not found`, so the assets cannot be verified yet. `bash -n` passes, and the script with no argument exits 2 with its usage line. This step comes after the tag (t13), so it is not a defect of the change. The report of `checker` is not in the tree. The commit 8d0d95c fixes the findings of a review."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Requirement as test (D81 items 2 and 6): `init --answers` at the level `lean` in scratch repos. `lite`: no entry `acceptor` and no acceptor.md. `standard`: `advisor = false` and the line 1 time in acceptor.md. `strict`: `advisor = true` and no line. `check` exits 0 in each profile."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Bad input (D81 item 1): `advisor = 1`, `\"false\"`, `[]` and `{ x = 1 }` give exit 3 with `harness.roles.acceptor.advisor must be true or false`. `Advisor = false` gives `unknown key harness.roles.acceptor.Advisor`. A duplicate key gives a TOML parse error. The key on `orchestrator` and on `advisor` gives `unknown key`, exit 3."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "The table form `[harness.roles.acceptor]` with `advisor = true` in a `standard` project: `check` gives SD502 for acceptor.md. `init --reconfigure` writes the inline entry with `advisor = true` and the file with no line. `check` then exits 0."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Limits (D81 item 8): a `lite` file with `skills = [\"review\", \"finish\"]` and `acceptor = { advisor = false }` only. `init --reconfigure` drops the entry, writes no acceptor.md, and `check` exits 0."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "D81 item 10: in `strict`, a hand edit to `advisor = false` gives SD502 for acceptor.md. `init --reconfigure` writes the line, and `check` exits 0. A hand edit of `profile` from `strict` to `standard` with the key in the file gives no SD502 for acceptor.md. With no key, a hand edit back to `strict` gives SD502, because the default follows the profile at run time."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "D81 item 7: a `standard` file with `advisor = true` (not the default), then `--reconfigure` with the answer `strict`. The value stays `true`, and acceptor.md has no line. The notes of init name no key. Read of `settle_advisor`: a value moves only on `reconfigure` between `standard` and `strict` where `on(Role::Acceptor)` is true, and a missing key gets the default of the new profile."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "The table of the release: a Python port of `analyze_unfloored` (SplitMix64, seed 24, 2000 resamples, the same 90 percent ends and rules of `decide`) on the committed .jsonl gives the rows of `RELEASE` exactly. write-plan: 15 of 15 against 11 of 15, difference 0.266667 [0.0, 0.533333], ratio 0.761054 [0.457821, 0.992802], on by rule 2. finish: 14 of 15 against 14 of 15, difference 0.0 [-0.2, 0.133333], ratio 0.894851 [0.710329, 1.124544], inconclusive. specify: on by rule 1."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "A claim of CHANGELOG.md: if the 3 turn-limit runs of specify (specify-2 run 1, specify-3 run 3, specify-5 run 1) were passes, the arm without would have 12 of 15 and the verdict would not be on. The same port with these 3 runs set to pass gives difference 0.2 [0.0, 0.6], no ratio, and inconclusive. The claim is true."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "ADR 0023 (the rule that `context` serves for src/verdict.rs): `skill list` of the built binary in a `standard` project gives write-plan and finish on, and execute, verify and debug off. This agrees with CHANGELOG.md. The change of the row of finish from on to inconclusive changes no default."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Golden files: acceptor-no-advisor.md differs from acceptor.md only by the line, one empty line and the marker hash ac3e6b19951dc492. acceptor.md keeps f541cad357de8926, as the freeze section of docs/evals.md says. The line is 141 bytes. The body of the hand-written .claude/agents/acceptor.md equals the golden file with no marker."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Scope: `git diff 169b452..HEAD` changes only paths of `Files` and the plan of the change. docs/adr/0032 has no diff on the branch: its status `accepted` and the D81 amendment came in the base commit 169b452 (#114). Each src/ and tests/ file added since v0.7.1 has a row in ownership.md, and `.claude/` has the ARC row. The schema has `advisor` only under `acceptor`, as a boolean, and the file is valid JSON."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Security: the change adds no secret, no network call and no new file write. The key is parsed with `as_bool`, and the line is a constant, so no input of the config reaches the agent text. The CI workflow template moves only the version string of Claude Code to 2.1.330, and the job keeps `contents: read`. No stale `2.1.325` stays in a reference page, except the dated probe facts."
+outcome = "held"
+
+[[finding]]
+acceptor = 1
+severity = "note"
+path = "src/harness.rs"
+line = 2585
+text = "The SD502 message says `a change of the profile changes the text, so run spec-dna init --reconfigure`. After D81, a change of the key `harness.roles.acceptor.advisor` also gives SD502 for acceptor.md (D81 item 10), for example in a `strict` project where the key is edited by hand to `false`. The message then names only the profile as the cause. The fix that it gives is still correct."
