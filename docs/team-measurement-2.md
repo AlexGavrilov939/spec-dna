@@ -38,6 +38,22 @@ These rules were set and committed before the first batch run. They change no ru
 4. **The jobs.** The runner runs the arms of one command one after the other, and `--arms` needs 2 arms at least, so the arms of one task cannot run at the same time. The batch runs up to 3 jobs at the same time, and a job is the command of the ADR for one task and one wave (`eval run --arms ... <task> --runs 1`), in the order of the waves. Each job has its own result file, and `merge.py` joins them. The arms of a job come in the rotation of the ADR. The concurrency changes the minutes of a run (3 builds at once), and it can raise the risk of the 7,200 seconds limit for the agent.
 5. **The cap.** The room of the batch is 649.29 USD. A job gets a cap of 80 USD (3 runs of 25 USD, and 5 USD of slack for a run that passes its budget a little). A job starts when the room, minus the spend of the finished jobs, minus the cap of each job in flight or waiting to run again, is at least 80 USD. It starts with a lower cap (the rest, at least 25 USD) only when no other job runs or waits. A job that the API stopped or a signal stopped goes on with `--resume` after 30 minutes. A job of a wave starts only after the job of the same task in the wave before it is done. A job whose attempt a signal stopped counts its whole cap as spent, because the runner does not write the cost of such an attempt. A stop by the cap ends the batch, and only the complete waves count. After each complete wave, the running totals go to this page, with a commit.
 
+## Running totals
+
+These totals are written after each complete wave, so a stopped session loses nothing. They are not the verdict. All verdicts are `inconclusive` until 3 waves are complete.
+
+### After wave 1 (2026-11-24, 00:14)
+
+Wave 1 has the 5 tasks in the 3 arms. The run of `t2-05-approver-hook` is the probe. The 4 new jobs cost 117.16 USD, and the whole protocol has cost 157.87 USD, with the probes.
+
+| Arm | Part 1 | Part 2 (main measure) | Cost per run (USD) | Minutes per run | Turns per run | Advisor calls per run |
+| --- | --- | --- | --- | --- | --- | --- |
+| `none` | 0.62 | 0.27 | 8.57 | 28.4 | 116 | 0 |
+| `lean-no-advisor` | 0.46 | 0.43 | 9.76 | 42.3 | 126 | 0 |
+| `lean` | 0.69 | 0.23 | 13.25 | 42.8 | 113 | 3.0 |
+
+Leaks: the pattern of the ADR marks 10 of the 15 runs (`none` 3, `lean-no-advisor` 3, `lean` 4). The column `strict` marks 1 run, of `lean` on `t2-04-locked-links`. The call is `git clone -q .`, a clone of the copy of the run itself, so it reaches no remote, no oracle and no checkout. The column stays as it is, and this reading is a note.
+
 ## Limits
 
 - The probes have 1 run for each arm on 1 task. They give no interval and no verdict.
