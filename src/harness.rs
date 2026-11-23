@@ -266,6 +266,9 @@ pub struct RoleCfg {
     pub agent: Model,
     /// The orchestrator only: the models of `fallbackModel`.
     pub fallback: Vec<String>,
+    /// The acceptor only: the key `advisor` as the file has it. `None`: no key,
+    /// and the profile gives the value ([`Harness::acceptor_advisor`]).
+    pub advisor: Option<bool>,
 }
 
 impl RoleCfg {
@@ -284,6 +287,7 @@ impl RoleCfg {
             } else {
                 Vec::new()
             },
+            advisor: None,
         }
     }
 }
@@ -630,9 +634,24 @@ impl Harness {
     /// Returns true for the entry of the role `acceptor` that a person set, in a
     /// configuration that has no such role (the skill `review` is off, or the
     /// profile is `lite`). The entry has no effect there, and `init` writes it
-    /// again, so that the value is back when the skill `review` returns.
+    /// again, so that the value is back when the skill `review` returns. The key
+    /// `advisor` alone never keeps the entry (design 0.8.0, D81 item 8), but a
+    /// kept entry keeps its `advisor`.
     fn keeps_entry(&self, role: Role) -> bool {
-        role == Role::Acceptor && self.level.includes(role) && *self.cfg(role) != RoleCfg::new(role)
+        let (c, d) = (self.cfg(role), RoleCfg::new(role));
+        role == Role::Acceptor
+            && self.level.includes(role)
+            && (c.model != d.model || c.effort != d.effort)
+    }
+
+    /// The key `advisor` of the role `acceptor` as the run time reads it: the
+    /// value of the file, or the default of the profile when the key is absent.
+    /// The default is `true` in `strict` and `false` in the other profiles (D81
+    /// item 2). With `false`, the agent file has the line `ACCEPTOR_NO_ADVISOR`.
+    pub fn acceptor_advisor(&self) -> bool {
+        self.cfg(Role::Acceptor)
+            .advisor
+            .unwrap_or_else(|| default_acceptor_advisor(self.profile))
     }
 
     /// Returns true if the level includes the role and the role is not off.
@@ -876,6 +895,9 @@ impl Harness {
             if r == Role::Orchestrator {
                 parts.push(format!("fallback = [{}]", strs(&c.fallback)));
             }
+            if let (Role::Acceptor, Some(b)) = (r, c.advisor) {
+                parts.push(format!("advisor = {b}"));
+            }
             s += &format!("{} = {{ {} }}\n", r.key(), parts.join(", "));
         }
         s += "\n[harness.efforts]\n";
@@ -884,6 +906,11 @@ impl Harness {
         }
         s
     }
+}
+
+/// The default of the key `advisor` of the role `acceptor` by profile (D81 item 2).
+pub(crate) fn default_acceptor_advisor(profile: Profile) -> bool {
+    profile == Profile::Strict
 }
 
 fn quote(s: &str) -> String {
@@ -925,6 +952,14 @@ fn parse_role(role: Role, t: &toml::Table) -> Result<RoleCfg, String> {
         && let Some(s) = f.opt_str("agent")?
     {
         cfg.agent = model(&s, "agent")?;
+    }
+    if role == Role::Acceptor
+        && let Some(v) = f.take("advisor")
+    {
+        cfg.advisor = Some(
+            v.as_bool()
+                .ok_or_else(|| format!("`{prefix}advisor` must be true or false"))?,
+        );
     }
     if role == Role::Orchestrator
         && let Some(v) = f.take("fallback")
@@ -1176,6 +1211,7 @@ fn render_agent(
     effort: Effort,
     deny: &[String],
     profile: Profile,
+    advisor: bool,
 ) -> String {
     let mut s = format!(
         "---\nname: {}\ndescription: {}\nmodel: {}\n",
@@ -1197,7 +1233,13 @@ fn render_agent(
         s += "omitClaudeMd: true\n";
     }
     let body = harness_text::agent_body(def.role, profile, def.body);
-    s += &format!("---\n\n{body}\n\n{SCRATCH_RULES}\n");
+    // The acceptor with `advisor = false` has one more paragraph (D81 item 3).
+    let line = if def.role == Role::Acceptor && !advisor {
+        format!("{}\n\n", harness_text::ACCEPTOR_NO_ADVISOR)
+    } else {
+        String::new()
+    };
+    s += &format!("---\n\n{body}\n\n{line}{SCRATCH_RULES}\n");
     format!("{s}\n{}\n", marker_text(&s))
 }
 
@@ -1421,7 +1463,14 @@ pub fn generated_files(h: &Harness) -> Vec<Generated> {
         };
         out.push(Generated {
             path: def.path(),
-            text: render_agent(def, model, c.effort, &h.deny, h.profile),
+            text: render_agent(
+                def,
+                model,
+                c.effort,
+                &h.deny,
+                h.profile,
+                h.acceptor_advisor(),
+            ),
             agent: Some(def.name),
             skill: None,
             note,
@@ -2733,7 +2782,7 @@ opus = "xhigh"
 
     #[test]
     fn rejects_each_bad_value() {
-        let cases: [(&str, &str); 25] = [
+        let cases: [(&str, &str); 27] = [
             ("", "`harness.level` is required"),
             ("level = \"max\"", "must be \"none\""),
             ("level = 1", "must be a string"),
@@ -2793,6 +2842,14 @@ opus = "xhigh"
             (
                 "level = \"lean\"\n[harness.roles]\norchestrator = { fallback = [\"none\"] }",
                 "cannot hold",
+            ),
+            (
+                "level = \"lean\"\n[harness.roles]\nacceptor = { advisor = \"no\" }",
+                "`harness.roles.acceptor.advisor` must be true or false",
+            ),
+            (
+                "level = \"lean\"\n[harness.roles]\nverifier = { advisor = false }",
+                "unknown key `harness.roles.verifier.advisor`",
             ),
             (
                 "level = \"lean\"\n[harness.efforts]\nsonnet = \"max\"",
@@ -2999,6 +3056,15 @@ opus = "xhigh"
         assert!(!h.writes_doc("REVIEW.md"));
     }
 
+    /// A `lean` configuration with the skill `review`, so it has the role
+    /// `acceptor`, and the key `advisor` as given.
+    fn with_advisor(advisor: Option<bool>) -> Harness {
+        let mut h = lean();
+        h.skills = vec![Skill::Review];
+        h.cfg_mut(Role::Acceptor).advisor = advisor;
+        h
+    }
+
     #[test]
     fn toml_section_round_trips() {
         for h in [
@@ -3028,11 +3094,104 @@ opus = "xhigh"
                 h.protect_tests = Protect::FixBranches;
                 h
             },
+            // The key `advisor` of the acceptor: absent, true and false (D81).
+            with_advisor(None),
+            with_advisor(Some(true)),
+            with_advisor(Some(false)),
+            {
+                // A kept entry keeps its `advisor`.
+                let mut h = with_advisor(Some(true));
+                h.skills.clear();
+                h.cfg_mut(Role::Acceptor).model = Model::Id("sonnet".into());
+                h
+            },
         ] {
             let text = h.toml_section();
             let t: toml::Table = text.parse().unwrap_or_else(|e| panic!("{e}\n{text}"));
             assert_eq!(Harness::parse(&t["harness"]).unwrap(), h, "{text}");
         }
+    }
+
+    #[test]
+    fn the_acceptor_advisor_is_the_key_or_the_default_of_the_profile() {
+        // No key: false in `standard`, true in `strict` (D81 item 2).
+        for (profile, want) in [(Profile::Standard, false), (Profile::Strict, true)] {
+            let mut h = with_advisor(None);
+            h.profile = profile;
+            assert_eq!(h.acceptor_advisor(), want, "{profile:?}");
+            // A key of the file wins in each profile.
+            for value in [true, false] {
+                h.cfg_mut(Role::Acceptor).advisor = Some(value);
+                assert_eq!(h.acceptor_advisor(), value, "{profile:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_line_of_the_acceptor_is_in_the_file_only_with_advisor_false() {
+        assert_eq!(harness_text::ACCEPTOR_NO_ADVISOR.len(), 141);
+        let acceptor = |h: &Harness| {
+            files(h)
+                .into_iter()
+                .find(|(p, _)| p == ".claude/agents/acceptor.md")
+                .map(|(_, t)| t)
+                .unwrap()
+        };
+        let line = harness_text::ACCEPTOR_NO_ADVISOR;
+        let false_text = acceptor(&with_advisor(Some(false)));
+        let true_text = acceptor(&with_advisor(Some(true)));
+        assert_eq!(false_text.matches(line).count(), 1, "{false_text}");
+        assert_eq!(true_text.matches(line).count(), 0, "{true_text}");
+        // The line comes after the end of the steps and before the scratch rules.
+        let end = false_text.find("Do not fix it.\n\n").unwrap();
+        let at = false_text.find(line).unwrap();
+        let scratch = false_text.find("Scratch folder:").unwrap();
+        assert!(end < at && at < scratch, "{false_text}");
+        assert_eq!(&false_text[at + line.len()..][..2], "\n\n");
+        // No key: the text of the profile.
+        let mut h = with_advisor(None);
+        assert_eq!(acceptor(&h), false_text, "standard");
+        h.profile = Profile::Strict;
+        assert_eq!(acceptor(&h), true_text, "strict");
+    }
+
+    #[test]
+    fn the_key_advisor_alone_keeps_no_entry_where_the_role_is_off() {
+        // `lite` has no role `acceptor`. The key `advisor` alone writes no entry.
+        let mut h = with_advisor(Some(true));
+        h.profile = Profile::Lite;
+        assert!(
+            !h.toml_section().contains("acceptor"),
+            "{}",
+            h.toml_section()
+        );
+        // The skill `review` is off: the same.
+        let mut h = with_advisor(Some(false));
+        h.skills.clear();
+        assert!(
+            !h.toml_section().contains("acceptor"),
+            "{}",
+            h.toml_section()
+        );
+        // A model or an effort of a person keeps the entry with its key.
+        let mut h = with_advisor(Some(true));
+        h.profile = Profile::Lite;
+        h.cfg_mut(Role::Acceptor).effort = Effort::Low;
+        assert!(
+            h.toml_section().contains(
+                "acceptor = { claude-code = \"opus\", effort = \"low\", advisor = true }\n"
+            ),
+            "{}",
+            h.toml_section()
+        );
+        // No key: no `advisor` in the entry.
+        let h = with_advisor(None);
+        assert!(
+            h.toml_section()
+                .contains("acceptor = { claude-code = \"opus\", effort = \"high\" }\n"),
+            "{}",
+            h.toml_section()
+        );
     }
 
     #[test]

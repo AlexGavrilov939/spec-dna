@@ -561,6 +561,13 @@ const V071_CODE_SIMPLIFIER_BODY: &str = r"You simplify the code of the diff that
 
 Report: the files that you changed, the commands that you ran with their result, and each simplification that you did not make, with the reason. Do not commit.";
 
+/// The line that the agent file of the role `acceptor` has when `advisor` is
+/// `false` (design 0.8.0, D81 item 4). It asks the agent not to consult the
+/// advisor. The second sentence gives it priority over the line of `CLAUDE.md`
+/// that tells the session to consult the advisor. A change of one word changes
+/// the hash of the file, and it needs a new rerun of the evals.
+pub const ACCEPTOR_NO_ADVISOR: &str = "Advisor: do not consult the advisor in this task. This rule has priority over each project instruction that tells you to consult the advisor.";
+
 /// The body of an agent file: `current`, the text of this release, or the
 /// frozen text of 0.7.1 for the profile `lite` (D76), when 0.8.0 changed the
 /// text of the role.
