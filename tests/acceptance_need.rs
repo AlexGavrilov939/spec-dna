@@ -702,3 +702,61 @@ fn a_change_that_would_need_no_record_if_its_plan_were_new_gets_no_note() {
     assert!(has(&out, "SD927"), "{out}{err}");
     assert!(!err.contains("before 0.8.0"), "{err}");
 }
+
+#[test]
+fn finish_checks_the_record_of_an_old_plan_as_it_checks_the_record_of_0_8_0() {
+    // A skeleton with `pending` values: SD928, as for a plan of 0.8.0.
+    let r = on_old_base(
+        "0.7.1",
+        &config("standard", "", ""),
+        &higher_risk(INTENT_TEXT),
+    );
+    commit_skeleton(&r);
+    let (code, out, err) = finish(&r);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(has(&out, "SD928"), "{out}");
+    assert!(r.dir.join(RECORD).exists(), "nothing is archived");
+    // A rejected record: SD930.
+    let r = on_old_base(
+        "0.7.1",
+        &config("standard", "", ""),
+        &higher_risk(INTENT_TEXT),
+    );
+    commit_accepted_record(&r);
+    let t = r
+        .read(RECORD)
+        .replace("result = \"accepted\"", "result = \"rejected\"");
+    r.write(
+        RECORD,
+        &format!("{t}\n[[finding]]\nacceptor = 1\nseverity = \"blocker\"\npath = \"src/valves.py\"\ntext = \"The timeout is not checked.\"\n"),
+    );
+    r.commit("reject");
+    let (code, out, err) = finish(&r);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(has(&out, "SD930"), "{out}");
+    // Too few acceptors for a higher-risk change: SD933.
+    let text = config("standard", "higher-risk-acceptors = 2\n", "");
+    let r = on_old_base("0.7.1", &text, &higher_risk(INTENT_TEXT));
+    commit_accepted_record(&r);
+    let (code, out, err) = finish(&r);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(has(&out, "SD933"), "{out}");
+}
+
+#[test]
+fn the_dry_run_of_an_old_plan_with_no_record_prints_the_note_and_the_json_has_none() {
+    let r = on_old_base(
+        "0.7.1",
+        &config("standard", "", ""),
+        &higher_risk(INTENT_TEXT),
+    );
+    let (code, out, err) = r.run(&["finish", SLUG, "--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        err.contains(OLD_NOTE_HEAD) && err.contains(OLD_NOTE_TAIL),
+        "{err}"
+    );
+    let (code, out, err) = r.run(&["finish", SLUG, "--json", "--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!out.contains("note"), "{out}");
+}
