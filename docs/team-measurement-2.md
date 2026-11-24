@@ -1,6 +1,6 @@
 # Measurement of the model team: protocol 2, real slices from the history
 
-This page gives the result of protocol 2 in [ADR 0033](adr/0033-protocol-2-of-the-model-team-measurement.md). It is for the owner, who decides the default harness level, the advisor rule of 0.8.1 and the advisor gate. The gate of the ADR first stopped the work after the 3 probes. On 2026-11-23 the owner raised the cap to 700 USD ([the amendment of the ADR](adr/0033-protocol-2-of-the-model-team-measurement.md#2026-11-23-the-cap-rises-to-700-usd)), and the batch follows. The section [Rules before the batch](#rules-before-the-batch) gives the rules that were set before its first run. The sections after it give the result.
+This page gives the result of protocol 2 in [ADR 0033](adr/0033-protocol-2-of-the-model-team-measurement.md). It is for the owner, who decides the default harness level, the advisor rule of 0.8.1 and the advisor gate. The gate of the ADR first stopped the work after the 3 probes. On 2026-11-23 the owner raised the cap to 700 USD (the ADR is at its hard budget of 14,000 characters, so it keeps its text and this page records the change), and the batch follows. The section [Rules before the batch](#rules-before-the-batch) gives the rules that were set before its first run. The sections after it give the result.
 
 ## What ran
 
@@ -8,7 +8,7 @@ This page gives the result of protocol 2 in [ADR 0033](adr/0033-protocol-2-of-th
 - The oracle has 2 parts. Part 1 holds the tests that the slice merged. Part 2 holds one test for each later defect, and a run that changes nothing scores 0 in it. The oracle is hidden from the agent.
 - The self-test `bench/team2/selftest.py` proved the 5 tasks on a stub agent, with no cost. The start tree fails part 1, the solution with the defects passes part 1 and fails part 2, and the reference passes both.
 - Models: Claude Opus 5.5 as the main model and Claude Fable 5.2 as the advisor, Claude Code 2.1.330, spec-dna 0.8.0, effort `xhigh`.
-- The order is fixed by the history. The commit of ADR 0033 (`d320f84`) has the time 14:53:59Z. The first probe started at 14:54:13Z. The only change of a rule of the ADR after that is the amendment of the cap of 2026-11-23, which came before the batch.
+- The order is fixed by the history. The commit of ADR 0033 (`d320f84`) has the time 14:53:59Z. The first probe started at 14:54:13Z. The only change of a rule of the ADR after that is the cap of 2026-11-23 (section [The gate](#the-gate)), which came before the batch. The cap changes no other rule: the projection, the limits, the arms, the tasks, the oracle, the runs and the verdict stay as they are.
 
 ## The probes
 
