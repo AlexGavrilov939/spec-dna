@@ -2754,3 +2754,130 @@ fn a_broken_quote_in_case_binds_no_case_and_never_the_test_under_the_tag() {
         assert_eq!(code, 1, "{tag}: {out}");
     }
 }
+
+// The review of 0.8.1: false proofs of the new rule
+
+#[test]
+fn a_testify_method_binds_only_the_cases_of_the_suite_function_that_runs_its_type() {
+    // The tag is above `ValveSuite.TestCloses`. `BSuite` has a method of the
+    // same name in another file of the package.
+    let a = "package valves\n\nfunc TestValveSuite(t *testing.T) {\n\tsuite.Run(t, new(ValveSuite))\n}\n\n// covers: requirements/valves#flush\nfunc (s *ValveSuite) TestCloses() {\n}\n";
+    let b = "package valves\n\nfunc TestBSuite(t *testing.T) {\n\tsuite.Run(t, &BSuite{})\n}\n\nfunc (s *BSuite) TestCloses() {\n}\n";
+    let pkg = "example.org/app/valves";
+    let r = pr(
+        "strict",
+        REPORTS,
+        &[("valves/suite_test.go", a), ("valves/b_test.go", b)],
+    );
+    r.write(
+        "reports/r.xml",
+        &junit(
+            "go",
+            &[
+                (pkg, "TestValveSuite/TestCloses", SKIPPED),
+                (pkg, "TestBSuite/TestCloses", ""),
+            ],
+        ),
+    );
+    stamp(&r);
+    let (code, out) = check(&r, &[]);
+    let found = lines(&out, "SD617");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].contains("`TestValveSuite/TestCloses` was skipped"),
+        "{out}"
+    );
+    assert_eq!(code, 1, "{out}");
+    // With no case of the suite of the tag, nothing binds.
+    let r = pr(
+        "strict",
+        REPORTS,
+        &[("valves/suite_test.go", a), ("valves/b_test.go", b)],
+    );
+    r.write(
+        "reports/r.xml",
+        &junit("go", &[(pkg, "TestBSuite/TestCloses", "")]),
+    );
+    stamp(&r);
+    let (code, out) = check(&r, &[]);
+    assert!(has(&out, "SD617"), "{out}");
+    assert_eq!(code, 1, "{out}");
+    // A suite method binds no top-level test of the same name.
+    let (code, out) = bind_check("valves/suite_test.go", a, &[(pkg, "TestCloses", "")]);
+    assert!(has(&out, "SD617"), "{out}");
+    assert_eq!(code, 1, "{out}");
+    // No suite function runs the type: the tag fails closed.
+    let lone = "package valves\n\n// covers: requirements/valves#flush\nfunc (s *ValveSuite) TestCloses() {\n}\n";
+    let (code, out) = bind_check(
+        "valves/suite_test.go",
+        lone,
+        &[(pkg, "TestValveSuite/TestCloses", "")],
+    );
+    let found = lines(&out, "SD617");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(found[0].contains("names the test `TestCloses`"), "{out}");
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn a_javascript_name_binds_the_exact_case_and_not_the_cases_of_a_table() {
+    let text = "describe('Valves', () => {\n  // covers: requirements/valves#flush\n  it('flushes', () => {\n  });\n\n  it.each(['slow', 'fast'])('flushes (%s)', (m) => {\n  });\n});\n";
+    let cl = "tests/valves.test.js";
+    let (code, out) = bind_check(
+        "tests/valves.test.js",
+        text,
+        &[
+            (cl, "Valves > flushes", SKIPPED),
+            (cl, "Valves > flushes (slow)", ""),
+            (cl, "Valves > flushes (fast)", ""),
+        ],
+    );
+    let found = lines(&out, "SD617");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(found[0].contains("`Valves > flushes` was skipped"), "{out}");
+    assert_eq!(code, 1, "{out}");
+    // With no case of the test, the cases of the table prove nothing.
+    let (code, out) = bind_check(
+        "tests/valves.test.js",
+        text,
+        &[
+            (cl, "Valves > flushes (slow)", ""),
+            (cl, "Valves > flushes (fast)", ""),
+        ],
+    );
+    assert!(has(&out, "SD617"), "{out}");
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn a_kotlin_name_in_backticks_binds_a_parameterized_case() {
+    let text = "class ValveTest {\n    // covers: requirements/valves#flush\n    @Test fun `closes`(n: Int) {\n    }\n}\n";
+    let (code, out) = bind_check(
+        "src/test/kotlin/com/example/ValveTest.kt",
+        text,
+        &[("com.example.ValveTest", "closes(int) [1] 3", "")],
+    );
+    assert!(!has(&out, "SD617"), "{out}");
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn a_case_with_a_space_after_the_colon_or_a_stray_quote_is_not_valid() {
+    for tag in [
+        "# covers: requirements/valves#flush case:",
+        "# covers: requirements/valves#flush case: \"test_closes_on_timeout\"",
+        "# covers: requirements/valves#flush case:\"test_closes_on_timeout\"-x\"",
+        "# covers: requirements/valves#flush case:\"test_closes_on_timeout\" x\"",
+    ] {
+        let text = format!("{tag}\ndef test_closes_on_timeout():\n    assert True\n");
+        let (code, out) = bind_check(
+            "tests/test_valves.py",
+            &text,
+            &[("tests.test_valves", "test_closes_on_timeout", "")],
+        );
+        let found = lines(&out, "SD617");
+        assert_eq!(found.len(), 1, "{tag}: {out}");
+        assert!(found[0].contains("is not valid"), "{tag}: {out}");
+        assert_eq!(code, 1, "{tag}: {out}");
+    }
+}

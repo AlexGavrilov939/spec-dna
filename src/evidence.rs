@@ -403,21 +403,28 @@ pub fn tags_with_case(line: &str) -> Vec<Tag> {
     out
 }
 
-/// The name after `case:`: a word, or a text in double quotes. `None` for no
-/// name. A quote that is not closed, an empty quoted name, and a `"` inside the
-/// name (the closing quote is followed by a letter, a digit, `_` or `"`) give
-/// the empty name `Some("")`. That tag binds no case, and it never falls back to
+/// The name after `case:`: a word, or a text in double quotes. A name that is not
+/// valid gives the empty name `Some("")`: no name or a space after the colon, a
+/// quote that is not closed, an empty quoted name, and a `"` inside the name or
+/// in the rest of the line. That tag binds no case, and it never falls back to
 /// the test under it.
 fn case_name(value: &str) -> Option<String> {
+    // No name, or a space after the colon: not valid.
+    if value.is_empty() || value.starts_with(char::is_whitespace) {
+        return Some(String::new());
+    }
     let name = match value.strip_prefix('"') {
         Some(quoted) => {
             let Some((name, after)) = quoted.split_once('"') else {
                 return Some(String::new());
             };
+            // The name ends at the quote that closes it. Another `"` in the rest
+            // of the line, or a letter after the quote, shows a broken name.
             let broken = after
                 .chars()
                 .next()
-                .is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '"');
+                .is_some_and(|c| c.is_alphanumeric() || c == '_')
+                || after.contains('"');
             if broken || name.is_empty() {
                 return Some(String::new());
             }
@@ -548,9 +555,14 @@ pub struct TestName {
     /// True for the form call (`it('<literal>', ...)`): the case name ends with
     /// the literal. Else the name is one segment of the head of the case name.
     pub call: bool,
-    /// True for a Go method of a suite (`func (s *Suite) TestX()`). The case is
-    /// `<Test function>/<method>`, so the last segment after `/` can name it.
-    pub sub: bool,
+    /// True for a Kotlin name in backticks (`` fun `closes on timeout`() ``). It
+    /// has the form call, and the case can add the parameters of the method:
+    /// `closes on timeout()` and `closes on timeout(int) [1] 3`.
+    pub bt: bool,
+    /// The type of the receiver of a Go method (`func (s *ValveSuite) TestX()`).
+    /// Only the method of a suite is a test, and the case is `<Test function>/
+    /// <method>`, where the function runs the suite (`suite.Run`).
+    pub recv: Option<String>,
 }
 
 /// The first byte index after the leading identifier of `s`: letters, digits,
@@ -790,7 +802,8 @@ fn call_form(rest: &str) -> Option<Under> {
     Some(Under::Test(TestName {
         name: name.to_string(),
         call: true,
-        sub: false,
+        bt: false,
+        recv: None,
     }))
 }
 
@@ -808,7 +821,8 @@ fn method_form(body: &str, annotated: bool) -> Option<Under> {
             Under::Test(TestName {
                 name: name.to_string(),
                 call: true,
-                sub: false,
+                bt: true,
+                recv: None,
             })
         });
     }
@@ -829,7 +843,8 @@ fn method_form(body: &str, annotated: bool) -> Option<Under> {
         Under::Test(TestName {
             name: name.to_string(),
             call: false,
-            sub: false,
+            bt: false,
+            recv: None,
         })
     })
 }
@@ -851,12 +866,13 @@ fn classify(text: &str, annotated: bool) -> Option<Under> {
     {
         return Some(Under::Group);
     }
-    let named = |name: &str, sub: bool| {
+    let named = |name: &str, recv: Option<String>| {
         (!name.is_empty()).then(|| {
             Under::Test(TestName {
                 name: name.to_string(),
                 call: false,
-                sub,
+                bt: false,
+                recv,
             })
         })
     };
@@ -866,28 +882,33 @@ fn classify(text: &str, annotated: bool) -> Option<Under> {
             let m = ident_end(r);
             let next = r[m..].chars().next();
             if matches!(next, None | Some('(' | ' ')) {
-                return named(&r[..m], false);
+                return named(&r[..m], None);
             }
         }
         "fn" if rest.starts_with(' ') => {
             let r = rest.trim_start();
             let m = ident_end(r);
             if r[m..].starts_with(['(', '<']) {
-                return named(&r[..m], false);
+                return named(&r[..m], None);
             }
         }
         "func" if rest.starts_with(' ') => {
             let mut r = rest.trim_start();
-            let mut receiver = false;
+            let mut recv = None;
             if r.starts_with('(') {
                 let one = [r];
                 let (_, o) = close_of(&one, 0, 0, 1)?;
+                // The type is the last word of `(s *ValveSuite)`, without `*` and
+                // type arguments.
+                let ty = r[1..o - 1].split_whitespace().last().unwrap_or("");
+                let ty = ty.trim_start_matches('*');
+                let ty = ty.split('[').next().unwrap_or("");
+                recv = Some(ty.to_string()).filter(|t| !t.is_empty());
                 r = r[o..].trim_start();
-                receiver = true;
             }
             let m = ident_end(r);
             if r[m..].starts_with(['(', '[']) {
-                return named(&r[..m], receiver);
+                return named(&r[..m], recv);
             }
         }
         "it" | "test" | "specify" | "example" | "scenario" => {
@@ -1029,37 +1050,71 @@ fn head_segments(name: &str) -> Vec<(&str, usize)> {
 /// (` > ` and ` \u{203a} ` end with a space). The other forms name it when it is
 /// one segment of the head.
 fn name_end(case: &str, test: &TestName) -> Option<usize> {
+    if test.recv.is_some() {
+        // A Go method of a suite: `<Test function>/<method>`, with more
+        // segments for a subtest. A case of one segment names no method.
+        let mut segs = case.split('/');
+        let first = segs.next()?;
+        let second = segs.next()?;
+        return (second == test.name).then_some(first.len() + 1 + second.len());
+    }
     if test.call {
-        // The report of a runner can add the `()` of a method to the name.
         let named = |c: &str| {
             c == test.name
                 || c.strip_suffix(test.name.as_str())
                     .is_some_and(|p| p.ends_with(' '))
         };
-        return (named(case) || named(without_params(case))).then_some(case.len());
+        // A report can add the parameters of a Kotlin method to its name.
+        let plain = if test.bt { without_tail(case) } else { case };
+        return (named(case) || named(plain)).then_some(case.len());
     }
-    let head = head_segments(case)
+    head_segments(case)
         .into_iter()
         .filter(|(s, _)| *s == test.name)
         .map(|(_, e)| e)
-        .max();
-    // A Go method of a suite: the last segment after `/` is the method.
-    let method = (test.sub && last_segment(case) == test.name).then_some(case.len());
-    head.max(method)
+        .max()
 }
 
-/// The name of a case without a final group `(...)`: `closes on timeout()` has
-/// the name `closes on timeout`.
-fn without_params(name: &str) -> &str {
-    match name.strip_suffix(')').and_then(|r| r.rfind('(')) {
+/// The name of a case without its parameters: the part before the first `(` or
+/// ` [`. The names `closes()` and `closes(int) [1] 3` have the name `closes`.
+fn without_tail(name: &str) -> &str {
+    let cut = [name.find('('), name.find(" [")]
+        .into_iter()
+        .flatten()
+        .min();
+    match cut {
         Some(i) if i > 0 => name[..i].trim_end(),
         _ => name,
     }
 }
 
-/// The part of a case name after its last `/`, or the whole name.
-fn last_segment(name: &str) -> &str {
-    name.rsplit_once('/').map_or(name, |(_, last)| last)
+/// The type that a Go suite method names, and the functions that run it. A
+/// function `func TestX(t *testing.T)` of the files runs the type when its
+/// lines have `suite.Run(t, new(<Type>))` or `suite.Run(t, &<Type>{...})`. The
+/// result is empty when no function runs the type, and then the method binds no
+/// case.
+pub fn suite_funcs<'a>(texts: impl IntoIterator<Item = &'a str>, ty: &str) -> Vec<String> {
+    let new = format!("new({ty})");
+    let literal = format!("&{ty}{{");
+    let mut out: Vec<String> = Vec::new();
+    for text in texts {
+        let mut current: Option<&str> = None;
+        for line in text.lines() {
+            if let Some(rest) = line.strip_prefix("func ") {
+                let name = &rest[..ident_end(rest)];
+                current = (name.starts_with("Test") && rest[name.len()..].starts_with('('))
+                    .then_some(name);
+            }
+            if let Some(func) = current
+                && let Some(at) = line.find("suite.Run(")
+                && (line[at..].contains(&new) || line[at..].contains(&literal))
+                && !out.iter().any(|f| f == func)
+            {
+                out.push(func.to_string());
+            }
+        }
+    }
+    out
 }
 
 /// True if the case belongs to another test of the file than `ours`: that
@@ -1155,9 +1210,9 @@ pub struct Binder<'a> {
     by_suffix: HashMap<&'a str, Vec<usize>>,
     /// A whole name, to the cases that have it.
     by_name: HashMap<&'a str, Vec<usize>>,
-    /// The part of a name after its last `/`, to the cases that have it: the
+    /// The second segment of a name with `/`, to the cases that have it: the
     /// method of a Go suite.
-    by_last: HashMap<&'a str, Vec<usize>>,
+    by_second: HashMap<&'a str, Vec<usize>>,
     /// For each case, the way that it fits a test file.
     kind: Vec<Kind>,
 }
@@ -1168,7 +1223,7 @@ impl<'a> Binder<'a> {
         let mut by_segment: HashMap<&str, Vec<usize>> = HashMap::new();
         let mut by_suffix: HashMap<&str, Vec<usize>> = HashMap::new();
         let mut by_name: HashMap<&str, Vec<usize>> = HashMap::new();
-        let mut by_last: HashMap<&str, Vec<usize>> = HashMap::new();
+        let mut by_second: HashMap<&str, Vec<usize>> = HashMap::new();
         let mut kind = Vec::with_capacity(cases.len());
         for (i, c) in cases.iter().enumerate() {
             let mut segs: Vec<&str> = head_segments(&c.name).into_iter().map(|s| s.0).collect();
@@ -1180,8 +1235,9 @@ impl<'a> Binder<'a> {
             let name = c.name.as_str();
             let mut tails = vec![name];
             tails.extend(name.match_indices(' ').map(|(p, _)| &name[p + 1..]));
-            // The same names without the `()` that a report can add.
-            let plain = without_params(name);
+            // The same names without the parameters that a report can add to a
+            // Kotlin name. The bind checks the form of the test again.
+            let plain = without_tail(name);
             if plain != name {
                 tails.push(plain);
                 tails.extend(plain.match_indices(' ').map(|(p, _)| &plain[p + 1..]));
@@ -1193,8 +1249,8 @@ impl<'a> Binder<'a> {
                 by_suffix.entry(k).or_default().push(i);
             }
             by_name.entry(name).or_default().push(i);
-            if name.contains('/') {
-                by_last.entry(last_segment(name)).or_default().push(i);
+            if let Some(second) = name.split('/').nth(1) {
+                by_second.entry(second).or_default().push(i);
             }
             kind.push(match (&c.file, &c.classname) {
                 (Some(f), _) => {
@@ -1213,7 +1269,7 @@ impl<'a> Binder<'a> {
             by_segment,
             by_suffix,
             by_name,
-            by_last,
+            by_second,
             kind,
         }
     }
@@ -1252,20 +1308,14 @@ impl<'a> Binder<'a> {
 
     /// The cases whose name the test has, by the name forms of the design.
     fn named_by(&self, test: &TestName) -> Vec<usize> {
-        let index = if test.call {
+        let index = if test.recv.is_some() {
+            &self.by_second
+        } else if test.call {
             &self.by_suffix
         } else {
             &self.by_segment
         };
-        let mut found = index.get(test.name.as_str()).cloned().unwrap_or_default();
-        if test.sub
-            && let Some(more) = self.by_last.get(test.name.as_str())
-        {
-            found.extend(more);
-            found.sort_unstable();
-            found.dedup();
-        }
-        found
+        index.get(test.name.as_str()).cloned().unwrap_or_default()
     }
 
     /// Binds one tag to the cases of the reports. `lines` are the lines of the
@@ -1273,13 +1323,30 @@ impl<'a> Binder<'a> {
     /// the tag binds to the cases that have this name. Else it binds to the test
     /// under it (design 0.8.1, D82): the cases that name that test, and no case
     /// that belongs to another test of the file. It also gives the bind: the
-    /// test, the fit, the strength and the reason for no case.
+    /// test, the fit, the strength and the reason for no case. The suite
+    /// functions of Go are those of the file of the tag.
+    #[cfg(test)]
     pub fn bind(
         &self,
         path: &str,
         lines: &[&str],
         tag: usize,
         case: Option<&str>,
+    ) -> (Proof, Bind) {
+        // The suite function is in the file of the tag only.
+        let suites = |ty: &str| suite_funcs([lines.join("\n").as_str()], ty);
+        self.bind_with(path, lines, tag, case, &suites)
+    }
+
+    /// Like `bind`. `suites` gives the functions that run the Go suite of a type
+    /// (`suite_funcs` over the test files of the package).
+    pub fn bind_with(
+        &self,
+        path: &str,
+        lines: &[&str],
+        tag: usize,
+        case: Option<&str>,
+        suites: &dyn Fn(&str) -> Vec<String>,
     ) -> (Proof, Bind) {
         let at = Place::new(path);
         let mut bind = Bind::default();
@@ -1322,6 +1389,19 @@ impl<'a> Binder<'a> {
                         ours = Some(t);
                     }
                 }
+            }
+        }
+        if let Some(t) = &ours {
+            // The index is wide. The name form of the test decides.
+            cand.retain(|&i| name_end(&self.cases[i].name, t).is_some());
+            if let Some(ty) = &t.recv {
+                // Only a case of the function that runs the suite binds. With no
+                // such function, the tag binds no case.
+                let funcs = suites(ty);
+                cand.retain(|&i| {
+                    let first = self.cases[i].name.split('/').next().unwrap_or("");
+                    funcs.iter().any(|f| f == first)
+                });
             }
         }
         if let Some(t) = &ours
@@ -1586,11 +1666,26 @@ pub fn bind_covers(root: &std::path::Path, covers: &mut [Cover], reads: &Reads) 
             .as_deref()
             .map(|t| t.lines().collect())
             .unwrap_or_default();
-        let (proof, bind) = binder.bind(
+        // The functions that run a Go suite are in the test files of the package.
+        let folder = cv.path.rsplit_once('/').map_or("", |(f, _)| f).to_string();
+        let suites = |ty: &str| -> Vec<String> {
+            let texts: Vec<String> = reads
+                .test_files
+                .iter()
+                .filter(|f| {
+                    f.ends_with(".go") && f.rsplit_once('/').map_or("", |(d, _)| d) == folder
+                })
+                .filter_map(|f| std::fs::read(root.join(f)).ok())
+                .map(|b| String::from_utf8_lossy(&b).into_owned())
+                .collect();
+            suite_funcs(texts.iter().map(String::as_str), ty)
+        };
+        let (proof, bind) = binder.bind_with(
             &cv.path,
             &lines,
             (cv.line as usize).saturating_sub(1),
             cv.case.as_deref(),
+            &suites,
         );
         cv.proof = Some(proof);
         cv.bind = Some(bind);
@@ -2157,7 +2252,19 @@ mod tests {
         assert_eq!(h.len(), 1);
         assert_eq!(h[0].case.as_deref(), Some("ValveTest#flushesFirst"));
         // No name, a quote that is not closed, and `case:` before an id.
-        assert_eq!(t("# covers: a#b case:")[0].case, None);
+        // No name, a space after the colon, and a quote that stops before the
+        // end of the word are not valid: the name is empty.
+        assert_eq!(t("# covers: a#b case:")[0].case.as_deref(), Some(""));
+        assert_eq!(t("# covers: a#b case: \"x\"")[0].case.as_deref(), Some(""));
+        assert_eq!(
+            t("# covers: a#b case:\"a\"-b\"")[0].case.as_deref(),
+            Some("")
+        );
+        assert_eq!(
+            t("# covers: a#b case:\"a\" b\"")[0].case.as_deref(),
+            Some("")
+        );
+        assert_eq!(t("# covers: a#b case:\"\"")[0].case.as_deref(), Some(""));
         // A quote that is not closed, or a `"` inside the name, is no name: the
         // tag gets the empty name, which binds no case. It never falls back to
         // the test under the tag.
@@ -2829,7 +2936,13 @@ mod tests {
         let java = |n: &str| format!("// covers: a#b\n@Test\nvoid {n}() {{\n}}\n");
         let call = |n: &str| format!("// covers: a#b\nit('{n}', () => {{\n}});\n");
         let kotlin = |n: &str| format!("// covers: a#b\n@Test fun `{n}`() {{\n}}\n");
-        let method = |n: &str| format!("// covers: a#b\nfunc (s *ValveSuite) {n}() {{\n}}\n");
+        let method = |n: &str| {
+            format!(
+                "func TestValveSuite(t *testing.T) {{\n\tsuite.Run(t, new(ValveSuite))\n}}\n\n// covers: a#b\nfunc (s *ValveSuite) {n}() {{\n}}\n"
+            )
+        };
+        // No suite function runs the type: the method binds no case.
+        let lone = |n: &str| format!("// covers: a#b\nfunc (s *ValveSuite) {n}() {{\n}}\n");
         let rows: Vec<(String, &str, bool)> = vec![
             // A Kotlin name with spaces, with and without the `()` of the report.
             (kotlin("closes on timeout"), "closes on timeout()", true),
@@ -2842,8 +2955,28 @@ mod tests {
             (kotlin("closes on timeout"), "closes on timeouts()", false),
             // A Go method of a suite: the case is `<Test function>/<method>`.
             (method("TestCloses"), "TestValveSuite/TestCloses", true),
-            (method("TestCloses"), "ValveSuite/TestCloses", true),
-            (method("TestCloses"), "TestCloses", true),
+            (
+                method("TestCloses"),
+                "TestValveSuite/TestCloses/case_1",
+                true,
+            ),
+            // The suite function must be the one that runs the type.
+            (method("TestCloses"), "TestBSuite/TestCloses", false),
+            (method("TestCloses"), "ValveSuite/TestCloses", false),
+            (method("TestCloses"), "TestCloses", false),
+            (lone("TestCloses"), "TestValveSuite/TestCloses", false),
+            // A parameterized case of a Kotlin name in backticks.
+            (kotlin("closes"), "closes(int) [1] 3", true),
+            (
+                kotlin("closes on timeout"),
+                "closes on timeout(int) [1] 3",
+                true,
+            ),
+            (kotlin("closes"), "closed(int) [1] 3", false),
+            // The `()` of a report is no part of a JavaScript name.
+            (call("flushes"), "Valves > flushes", true),
+            (call("flushes"), "Valves > flushes (slow)", false),
+            (call("flushes"), "Valves > flushes()", false),
             (method("TestCloses"), "TestValveSuite/TestOther", false),
             (method("TestCloses"), "TestValveSuite", false),
             (method("TestCloses"), "TestValveSuite/TestClosesLate", false),
@@ -2894,7 +3027,8 @@ mod tests {
         TestName {
             name: name.to_string(),
             call,
-            sub: false,
+            bt: false,
+            recv: None,
         }
     }
 
@@ -2933,7 +3067,8 @@ mod tests {
                 Under::Test(TestName {
                     name: "TestTimeout".into(),
                     call: false,
-                    sub: true,
+                    bt: false,
+                    recv: Some("Suite".into()),
                 }),
             ),
             // The form call, with its suffixes.
@@ -2955,7 +3090,12 @@ mod tests {
             ("// covers: a#b\n@Test fun closes() {\n", def("closes")),
             (
                 "// covers: a#b\n@Test fun `closes on timeout`() {\n",
-                call("closes on timeout"),
+                Under::Test(TestName {
+                    name: "closes on timeout".into(),
+                    call: true,
+                    bt: true,
+                    recv: None,
+                }),
             ),
             (
                 "// covers: a#b\n[Fact] public void ClosesOnTimeout()\n",
