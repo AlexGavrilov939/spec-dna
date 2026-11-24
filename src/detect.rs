@@ -1591,6 +1591,77 @@ pub fn typos_unguarded(read: &dyn Fn(&str) -> Option<String>) -> bool {
             .any(|f| read(f).is_some_and(|t| t.contains(TYPOS_GUARD)))
 }
 
+/// The words that make a pre-commit hook a hook that runs the tests (design
+/// 0.8.1, D89). A word is a run of letters and digits of the `id:` or of the
+/// `entry:`, in any case.
+const TEST_WORDS: [&str; 12] = [
+    "test",
+    "tests",
+    "pytest",
+    "nextest",
+    "jest",
+    "vitest",
+    "gotestsum",
+    "junit",
+    "junitxml",
+    "phpunit",
+    "rspec",
+    "unittest",
+];
+
+/// The id of each hook of a `.pre-commit-config.yaml` text that runs the tests
+/// and does not run `spec-dna evidence stamp` in its entry, in the order of the
+/// file (design 0.8.1, D89). The scan reads lines, as `typos_hook` does: a line
+/// `- id: <name>` starts a hook, and the lines `id:` and `entry:` of the hook
+/// give its words. A hook whose `entry:` has `evidence stamp` is no finding.
+pub fn test_hooks_without_stamp(pre_commit: &str) -> Vec<String> {
+    // (id, runs the tests, stamps)
+    let mut hooks: Vec<(String, bool, bool)> = Vec::new();
+    let mut open = false;
+    for line in pre_commit.lines() {
+        let mut text = line;
+        if let Some(at) = text
+            .find(" #")
+            .or_else(|| text.trim_start().starts_with('#').then_some(0))
+        {
+            text = &text[..at];
+        }
+        let mut text = text.trim();
+        let dash = text.starts_with("- ");
+        while let Some(rest) = text.strip_prefix("- ") {
+            text = rest.trim_start();
+        }
+        let words = |value: &str| -> bool {
+            value
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .any(|w| TEST_WORDS.contains(&w.to_ascii_lowercase().as_str()))
+        };
+        if let Some(value) = text.strip_prefix("id:") {
+            let id = value.trim().trim_matches(['"', '\'']).to_string();
+            if dash || !open {
+                hooks.push((id.clone(), words(&id), false));
+                open = true;
+            } else if let Some(h) = hooks.last_mut() {
+                h.1 |= words(&id);
+            }
+        } else if dash {
+            // Another list item, such as `- repo:`, ends the hook.
+            open = false;
+        } else if let Some(value) = text.strip_prefix("entry:")
+            && open
+            && let Some(h) = hooks.last_mut()
+        {
+            h.1 |= words(value);
+            h.2 |= value.contains("evidence stamp");
+        }
+    }
+    hooks
+        .into_iter()
+        .filter(|(_, runs, stamps)| *runs && !*stamps)
+        .map(|(id, ..)| id)
+        .collect()
+}
+
 #[cfg(test)]
 mod typos_tests {
     use super::*;
@@ -2062,5 +2133,25 @@ mod tests {
         // The most documents win, then the name: `valves` has 2 documents, and
         // `Pumps` is before `pumps`.
         assert_eq!(f.areas, ["Pumps", "sensors", "valves"], "{:?}", f.areas);
+    }
+}
+
+#[cfg(test)]
+mod test_hook_tests {
+    use super::*;
+
+    #[test]
+    fn a_hook_that_runs_the_tests_and_does_not_stamp_is_named() {
+        let yaml = "repos:\n  - repo: local\n    hooks:\n      - id: tests\n        entry: pytest -q\n      - id: format\n        entry: rustfmt\n      - id: slow\n        entry: cargo nextest run  # all\n      - id: stamped\n        entry: sh -c 'jest && spec-dna evidence stamp'\n  - repo: https://example.test/x\n    hooks:\n      - id: lint\n";
+        assert_eq!(test_hooks_without_stamp(yaml), ["tests", "slow"]);
+        // The words come from the id too, and a part of a word is no word.
+        let yaml = "- id: run-unit-tests\n  entry: make\n- id: attest\n  entry: make\n- id: contest-docs\n";
+        assert_eq!(test_hooks_without_stamp(yaml), ["run-unit-tests"]);
+        // A comment does not count, and an empty file has no hook.
+        assert!(test_hooks_without_stamp("      # - id: tests\n").is_empty());
+        assert!(test_hooks_without_stamp("").is_empty());
+        // The entry of the hook before is not the entry of the next hook.
+        let yaml = "- id: a\n  entry: sh -c 'pytest && spec-dna evidence stamp'\n- id: tests\n  entry: pytest\n";
+        assert_eq!(test_hooks_without_stamp(yaml), ["tests"]);
     }
 }

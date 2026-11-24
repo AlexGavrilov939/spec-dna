@@ -2900,6 +2900,27 @@ pub fn typos_note(read: &dyn Fn(&str) -> Option<String>) -> Option<String> {
     detect::typos_unguarded(read).then(|| TYPOS_NOTE.to_string())
 }
 
+/// The note for a pre-commit hook that runs the tests and does not run `spec-dna
+/// evidence stamp` (design 0.8.1, D89). Each commit writes the report again, so
+/// the stamp of the report is stale.
+fn test_hook_note_text(id: &str) -> String {
+    format!(
+        "the pre-commit hook `{id}` runs the tests. If it writes a report that `[evidence] reports` matches, each commit writes the report again after `spec-dna evidence stamp`, and `check --reports` gives SD614. Run the stamp in the same hook: entry: sh -c '<test command> && spec-dna evidence stamp' (docs/test-report.md#a-hook-that-runs-the-tests)"
+    )
+}
+
+/// The notes of `test_hook_note_text`, one for each hook of the pre-commit file
+/// that runs the tests and does not stamp. `read` gives the text of a file of
+/// the project. `init` and `upgrade` both call it.
+pub fn test_hook_notes(read: &dyn Fn(&str) -> Option<String>) -> Vec<String> {
+    read(".pre-commit-config.yaml")
+        .map(|t| detect::test_hooks_without_stamp(&t))
+        .unwrap_or_default()
+        .iter()
+        .map(|id| test_hook_note_text(id))
+        .collect()
+}
+
 /// The note for a project that also has the plugin Superpowers (D5). A spec-dna
 /// skill and a skill of the plugin for the same stage compete.
 const WORKFLOW_PLUGIN_NOTE: &str = "`.claude/settings.json` enables a plugin with the word `superpowers`. The description of each spec-dna skill starts with \"In a spec-dna project\", and the adapter skill `spec-dna` states that a spec-dna skill replaces a general skill of the same stage (for `write-plan`, `writing-plans`). Nothing proves that Claude Code selects the spec-dna skill first. `init` does not move a file that the plugin writes, such as `docs/superpowers/specs/`: exclude that folder from the roots.";
@@ -4035,6 +4056,7 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     let pack_exists = repo.root.join(&plan.evals_table.dir).join("pack").exists();
     profile_notes(&mut plan, pack_exists);
     plan.notes.extend(typos_note(&disk(repo)));
+    plan.notes.extend(test_hook_notes(&disk(repo)));
 
     let preview = o.dry_run || interactive || !write;
     let resolved = resolved_answers(&plan, &offered, &text, &changes, &manual, hrun.as_ref());
@@ -4781,7 +4803,10 @@ fn adapters_only(repo: &Repo, o: &Opts, cfg: &Config) -> Result<u8, Fatal> {
         if let Some(h) = &hrun {
             print_harness(h, false);
         }
-        if let Some(n) = typos_note(&disk(repo)) {
+        for n in typos_note(&disk(repo))
+            .into_iter()
+            .chain(test_hook_notes(&disk(repo)))
+        {
             println!("note: {n}");
         }
         println!("dry run: nothing written");
@@ -4809,7 +4834,10 @@ fn adapters_only(repo: &Repo, o: &Opts, cfg: &Config) -> Result<u8, Fatal> {
         report(&written, &chosen, &changes);
         report_harness(hrun.as_ref(), &written);
         report_commit(&written);
-        if let Some(n) = typos_note(&disk(repo)) {
+        for n in typos_note(&disk(repo))
+            .into_iter()
+            .chain(test_hook_notes(&disk(repo)))
+        {
             println!("note: {n}");
         }
     }

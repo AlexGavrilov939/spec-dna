@@ -1228,3 +1228,107 @@ fn question_5_asks_the_approvers_and_the_git_email_of_a_person_is_the_default() 
     assert_eq!(code, 2, "{out}");
     assert!(!r.exists("spec-dna.toml"));
 }
+
+// The hook that runs the tests (design 0.8.1, D89)
+
+/// The note for the hook `id`.
+fn test_hook_note(id: &str) -> String {
+    format!(
+        "note: the pre-commit hook `{id}` runs the tests. If it writes a report that `[evidence] reports` matches, each commit writes the report again after `spec-dna evidence stamp`, and `check --reports` gives SD614. Run the stamp in the same hook: entry: sh -c '<test command> && spec-dna evidence stamp' (docs/test-report.md#a-hook-that-runs-the-tests)"
+    )
+}
+
+/// A `.pre-commit-config.yaml` with the hooks of a local repository.
+fn hooks(entries: &[(&str, &str)]) -> String {
+    let mut out = String::from("repos:\n  - repo: local\n    hooks:\n");
+    for (id, entry) in entries {
+        out.push_str(&format!(
+            "      - id: {id}\n        name: {id}\n        entry: {entry}\n        language: system\n        pass_filenames: false\n"
+        ));
+    }
+    out
+}
+
+#[test]
+fn init_names_a_test_hook_that_does_not_stamp() {
+    let r = Repo::empty();
+    r.write(
+        ".pre-commit-config.yaml",
+        &hooks(&[("tests", "pytest -q"), ("spelling", "codespell")]),
+    );
+    r.commit("start");
+    // Each mode prints the note once: a preview and a write.
+    let (code, out, err) = r.run(&["init", "--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(out.matches(&test_hook_note("tests")).count(), 1, "{out}");
+    assert!(!out.contains("`spelling` runs the tests"), "{out}");
+    let (code, out, err) = r.run(&["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(out.matches(&test_hook_note("tests")).count(), 1, "{out}");
+    r.commit("init");
+    // A project that has a `spec-dna.toml` updates the adapters, and it prints
+    // the note too.
+    let (code, out, err) = r.run(&["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(out.matches(&test_hook_note("tests")).count(), 1, "{out}");
+}
+
+#[test]
+fn init_names_each_test_hook_by_its_id_or_its_entry() {
+    let r = Repo::empty();
+    r.write(
+        ".pre-commit-config.yaml",
+        &hooks(&[
+            ("unit", "cargo nextest run"),
+            ("check-js", "npx jest --ci"),
+            ("go-unit", "gotestsum --junitfile out.xml"),
+            ("lint", "sh -c 'ruff check'"),
+        ]),
+    );
+    r.commit("start");
+    let (_, out, _) = r.run(&["init", "--dry-run"]);
+    for id in ["unit", "check-js", "go-unit"] {
+        assert_eq!(out.matches(&test_hook_note(id)).count(), 1, "{id}: {out}");
+    }
+    assert!(!out.contains("`lint` runs the tests"), "{out}");
+}
+
+#[test]
+fn init_gives_no_test_hook_note_for_a_hook_that_stamps() {
+    // Guard: the entry of the setup of the docs has `evidence stamp`.
+    let r = Repo::empty();
+    r.write(
+        ".pre-commit-config.yaml",
+        &hooks(&[(
+            "tests",
+            "sh -c 'pytest --junitxml=reports/junit.xml && spec-dna evidence stamp'",
+        )]),
+    );
+    r.commit("start");
+    let (code, out, err) = r.run(&["init", "--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        !out.contains("runs the tests. If it writes a report"),
+        "{out}"
+    );
+    // A hook that is not about tests: no note. A project with no pre-commit
+    // file: no note.
+    let r = Repo::empty();
+    r.write(
+        ".pre-commit-config.yaml",
+        &hooks(&[("attest-docs", "codespell"), ("format", "rustfmt")]),
+    );
+    r.commit("start");
+    let (_, out, _) = r.run(&["init", "--dry-run"]);
+    assert!(
+        !out.contains("runs the tests. If it writes a report"),
+        "{out}"
+    );
+    let r = Repo::empty();
+    r.commit("start");
+    let (_, out, _) = r.run(&["init", "--dry-run"]);
+    assert!(
+        !out.contains("runs the tests. If it writes a report"),
+        "{out}"
+    );
+}
