@@ -860,6 +860,26 @@ fn an_added_requirement_in_a_new_document_with_a_required_section_gives_sd305_on
     );
 }
 
+#[test]
+#[allow(non_snake_case)]
+fn finish_titles_the_new_document_mcp_as_MCP() {
+    // D93 item 4: the title rule of `new` also writes the H1 of a document that
+    // `finish` creates, so a word with no vowel is an acronym.
+    let new = "- ADD requirements/mcp#call: The server SHALL answer a call.";
+    let r = Fx {
+        delta: &[new],
+        ..Fx::default()
+    }
+    .start();
+    r.write("tests/test_valves.py", "# covers: requirements/mcp#call\n");
+    let (code, out, err) = fin(&r, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(
+        r.read("docs/requirements/mcp.md"),
+        "---\nstatus: active\n---\n# MCP\n\n## Requirements\n\n- **call**: The server SHALL answer a call.\n"
+    );
+}
+
 // The preconditions
 
 #[test]

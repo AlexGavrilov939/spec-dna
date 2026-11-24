@@ -32,6 +32,7 @@ use crate::mv::{add_req_alias, dedent, line_span, parent, read, relative, write}
 use crate::parse::parse;
 use crate::parse::{FLAG_BCP14, FLAG_REQUIREMENT, FLAG_STATUS_WORD};
 use crate::repo::{Fatal, Repo};
+use crate::templates::title_of;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -949,17 +950,6 @@ fn check_names(
         }
     }
     Ok(())
-}
-
-/// The title of a new document: its slug with spaces, first letter in
-/// uppercase.
-pub(crate) fn title_of(id: &str) -> String {
-    let slug = id.rsplit('/').next().unwrap_or(id).replace(['-', '_'], " ");
-    let mut ch = slug.chars();
-    match ch.next() {
-        Some(f) => f.to_uppercase().chain(ch).collect(),
-        None => String::new(),
-    }
 }
 
 /// The new text for a destination: one section for each group of

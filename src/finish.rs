@@ -408,14 +408,10 @@ pub fn plan(cx: &Ctx) -> Result<Plan, Failure> {
         && ch.intent_status() != "closed"
     {
         // A task that names `spec-dna finish <slug>` closes with `finish`.
-        let open: Vec<change::PlanTask> = ch
-            .tasks(head)
+        let tasks = ch.tasks(head);
+        let open: Vec<change::PlanTask> = change::open_tasks(&tasks, &ch.slug, cx.accept_on)
             .into_iter()
-            .filter(|t| {
-                !t.closed()
-                    && !t.duplicate
-                    && !t.closes_with_finish_or_accept(&ch.slug, cx.accept_on)
-            })
+            .cloned()
             .collect();
         if !open.is_empty() {
             return stop(0, open_tasks_reason(&open, &ch.slug), Vec::new());
@@ -1827,7 +1823,7 @@ fn new_document(
     }
     out.push_str(&format!(
         "---\n# {}\n\n## {section}\n\n",
-        split::title_of(id)
+        crate::templates::title_of(id)
     ));
     for d in lines {
         out.push_str(&format!("- **{}**: {}\n", d.key, sentence(d)));
@@ -2097,7 +2093,7 @@ fn finish_indexes(
         let text = (cx.read)(&d.path).map_err(Failure::Io)?;
         let title = Some(d.parsed.title.clone())
             .filter(|t| !t.is_empty())
-            .unwrap_or_else(|| split::title_of(parent(&d.path)));
+            .unwrap_or_else(|| crate::templates::title_of(parent(&d.path)));
         // A place that gives no type keeps the front matter as it is.
         let status = registry::index_status(cx.config, &d.path, Some(&text)).unwrap_or(None);
         let new_text = registry::render(&d.path, &new, Some(&text), &title, status);
