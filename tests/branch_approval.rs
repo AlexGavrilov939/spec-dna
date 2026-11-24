@@ -2862,3 +2862,29 @@ fn next_notes_a_proof_test_outside_files() {
     let (_, out, _) = r.run(&["next", "valve-timeout"]);
     assert!(!out.contains("`Proof` names"), "{out}");
 }
+
+#[test]
+fn next_gives_no_false_note_for_a_path_that_files_already_lists() {
+    // The forms that name a path that `Files` lists, and the paths that are no
+    // test file by name, give no note. A suffix is removed before the match.
+    let r = start("");
+    r.write(INTENT, &intent("accepted", "routine"));
+    r.write(SPEC, &spec("approved"));
+    let covers = "The test covers `requirements/valves#sensor-timeout`.";
+    let quiet = "Run `tests/test_valves.py::test_x`, `tests/test_valves.py:12`, `./tests/test_valves.py`, ``tests/test_valves.py``, the folder `tests/` and the data `tests/fixtures/data.json`.";
+    r.write(PLAN, &plan("approved", &FILES).replace(covers, quiet));
+    r.commit("the change");
+    let (code, out, err) = r.run(&["next", "valve-timeout"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!out.contains("`Proof` names"), "{out}");
+    // A node id of a test that `Files` lacks names the file, with no suffix.
+    let loud = "Run `tests/test_extra.py::test_y` and ``tests/test_more.py:7``.";
+    r.write(PLAN, &plan("approved", &FILES).replace(covers, loud));
+    r.commit("a test outside Files");
+    let (_, out, _) = r.run(&["next", "valve-timeout"]);
+    assert!(
+        out.lines().any(|l| l
+            .starts_with("note: `Proof` names `tests/test_extra.py` (and 1 more), and no item")),
+        "{out}"
+    );
+}

@@ -1390,8 +1390,9 @@ pub fn next(
 /// and with `branch` a path that `Files` gets after the approval needs a new
 /// approval (SD910, reason 8). A note is not a code: the check reads prose, and
 /// its false positives would block nothing useful. Each code span of `Proof`
-/// with no white space and no `#` that is a test file (`[evidence] tests`) counts.
-/// With `[evidence] tests = []` no span is a test file, so there is no note.
+/// that [`proof_test_path`] reads as a path of a test file, and that matches
+/// `[evidence] tests`, counts. With `[evidence] tests = []` no span is a test
+/// file, so there is no note.
 fn proof_note(
     repo: &Repo,
     cfg: &Config,
@@ -1406,19 +1407,14 @@ fn proof_note(
     let text = std::fs::read_to_string(repo.root.join(&plan.path)).ok()?;
     let files = ch.files(head);
     let proof = record::section_text(&text, "Proof");
-    let mut outside: Vec<&str> = Vec::new();
-    // The spans of one backtick, in the order of the text.
-    for (n, span) in proof.split('`').enumerate() {
-        let odd = n % 2 == 1;
-        if odd
-            && !span.is_empty()
-            && !span.contains(char::is_whitespace)
-            && !span.contains('#')
-            && cfg.is_test_file(span)
-            && !change::in_scope(&files, span)
-            && !outside.contains(&span)
+    let mut outside: Vec<String> = Vec::new();
+    for span in code_spans(&proof) {
+        if let Some(path) = proof_test_path(&span)
+            && cfg.is_test_file(&path)
+            && !change::in_scope(&files, &path)
+            && !outside.contains(&path)
         {
-            outside.push(span);
+            outside.push(path);
         }
     }
     let first = outside.first()?;
@@ -1429,6 +1425,121 @@ fn proof_note(
     Some(format!(
         "`Proof` names `{first}`{more}, and no item of `Files` matches it; add it to `Files`, or SD913 reports the edit of the test"
     ))
+}
+
+/// The code spans of a text, as CommonMark reads them: a run of `n` backticks
+/// opens a span, and the next run of exactly `n` backticks closes it. An open
+/// run with no close is plain text. The content is trimmed.
+fn code_spans(text: &str) -> Vec<String> {
+    let b = text.as_bytes();
+    let run_at = |i: usize| b[i..].iter().take_while(|c| **c == b'`').count();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] != b'`' {
+            i += 1;
+            continue;
+        }
+        let n = run_at(i);
+        let start = i + n;
+        let mut j = start;
+        let mut close = None;
+        while j < b.len() {
+            if b[j] == b'`' {
+                let m = run_at(j);
+                if m == n {
+                    close = Some(j);
+                    break;
+                }
+                j += m;
+            } else {
+                j += 1;
+            }
+        }
+        match close {
+            Some(c) => {
+                out.push(text[start..c].trim().to_string());
+                i = c + n;
+            }
+            None => i = start,
+        }
+    }
+    out
+}
+
+/// The extensions of a source file that a test can be.
+const TEST_SOURCE_EXTENSIONS: [&str; 17] = [
+    "py", "rs", "go", "js", "jsx", "mjs", "cjs", "ts", "tsx", "java", "kt", "cs", "rb", "php",
+    "swift", "scala", "sh",
+];
+
+/// The folders of test data: a file in one of them is no test file.
+const TEST_DATA_FOLDERS: [&str; 5] = [
+    "fixtures",
+    "fixture",
+    "testdata",
+    "snapshots",
+    "__snapshots__",
+];
+
+/// The path of a test file that a code span of `Proof` names, or `None`. The
+/// rule for the note of `next` (D93 item 5), with these steps:
+///
+/// 1. The span has no white space and no `#`, so a command and a `covers:` id
+///    are no path.
+/// 2. A leading `./`, a suffix `::<name>` (the id of a test in `pytest`) and a
+///    suffix `:<line>` or `:<line>:<column>` are removed.
+/// 3. A path that ends with `/` is a folder, and it is no file.
+/// 4. The file has an extension of source code ([`TEST_SOURCE_EXTENSIONS`]), so
+///    `tests/fixtures/data.json` is no test.
+/// 5. No folder of the path is a folder of test data ([`TEST_DATA_FOLDERS`]).
+/// 6. The name says that it is a test: `test_*.py`, `*_test.go`, `*_spec.rb`,
+///    `*.test.ts`, `*.spec.ts`, `*Test.java` or `*Tests.cs`. Else a file with an
+///    extension of source code in a folder `tests`, `test`, `__tests__` or
+///    `spec` is a test, as `tests/cli.rs`.
+///
+/// The caller also asks `[evidence] tests`, so a project that sets other globs
+/// decides what a test file is for it.
+fn proof_test_path(span: &str) -> Option<String> {
+    if span.is_empty() || span.contains(char::is_whitespace) || span.contains('#') {
+        return None;
+    }
+    let p = span.strip_prefix("./").unwrap_or(span);
+    let p = p.split("::").next().unwrap_or(p);
+    let mut p = p;
+    // `:<line>` and `:<line>:<column>`.
+    while let Some((head, tail)) = p.rsplit_once(':') {
+        if !tail.is_empty() && tail.bytes().all(|c| c.is_ascii_digit()) {
+            p = head;
+        } else {
+            break;
+        }
+    }
+    if p.is_empty() || p.ends_with('/') {
+        return None;
+    }
+    let mut parts: Vec<&str> = p.split('/').collect();
+    let file = parts.pop()?;
+    let (stem, ext) = file.rsplit_once('.')?;
+    if !TEST_SOURCE_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()) {
+        return None;
+    }
+    if parts.iter().any(|d| TEST_DATA_FOLDERS.contains(d)) {
+        return None;
+    }
+    let lower = stem.to_ascii_lowercase();
+    let by_name = lower.starts_with("test_")
+        || lower.ends_with("_test")
+        || lower.ends_with("_tests")
+        || lower.ends_with("_spec")
+        || lower.ends_with(".test")
+        || lower.ends_with(".spec")
+        || stem.ends_with("Test")
+        || stem.ends_with("Tests");
+    let by_folder = parts
+        .iter()
+        .any(|d| matches!(*d, "tests" | "test" | "__tests__" | "spec"));
+    (by_name || by_folder).then(|| p.to_string())
 }
 
 /// The note for the roll-up documents that the delta of a change makes due at
@@ -1820,5 +1931,49 @@ mod tests {
         assert_eq!(out.len(), MAX_ITEMS);
         assert_eq!(out.last().unwrap().text, "line 11");
         assert_eq!(out[0].text, "line 0");
+    }
+
+    #[test]
+    fn a_code_span_follows_commonmark_for_runs_of_backticks() {
+        assert_eq!(code_spans("Run `a.py` and ``b.py`` now"), ["a.py", "b.py"]);
+        assert_eq!(code_spans("`` a`b ``"), ["a`b"]);
+        // A run with no close is plain text.
+        assert_eq!(code_spans("a ` b"), Vec::<String>::new());
+        // The run of 2 has no close, so the single backticks pair after it.
+        assert_eq!(code_spans("``a` then `b`"), ["then"]);
+    }
+
+    #[test]
+    fn the_proof_note_reads_a_test_file_by_its_name_and_removes_the_suffixes() {
+        let path = |s: &str| proof_test_path(s);
+        for (span, want) in [
+            ("tests/test_dose.py", "tests/test_dose.py"),
+            ("tests/test_dose.py::test_x", "tests/test_dose.py"),
+            ("tests/test_dose.py::Case::test_x", "tests/test_dose.py"),
+            ("tests/test_dose.py:12", "tests/test_dose.py"),
+            ("tests/test_dose.py:12:3", "tests/test_dose.py"),
+            ("./tests/test_dose.py", "tests/test_dose.py"),
+            ("pkg/dose_test.go", "pkg/dose_test.go"),
+            ("web/dose.test.ts", "web/dose.test.ts"),
+            ("src/DoseTest.java", "src/DoseTest.java"),
+            ("spec/dose_spec.rb", "spec/dose_spec.rb"),
+            ("tests/cli.rs", "tests/cli.rs"),
+        ] {
+            assert_eq!(path(span).as_deref(), Some(want), "{span}");
+        }
+        for span in [
+            "tests/",
+            "tests",
+            "tests/fixtures/data.json",
+            "tests/data.json",
+            "tests/fixtures/helper.py",
+            "src/dose.py",
+            "requirements/valves#overflow",
+            "cargo test",
+            "tests/test_dose.py#x",
+            "",
+        ] {
+            assert_eq!(path(span), None, "{span}");
+        }
     }
 }
