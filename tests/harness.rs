@@ -285,8 +285,11 @@ fn init_writes_the_lean_harness_and_check_is_clean() {
         out.contains("Each teammate needs spec-dna 0.6.0 or later on PATH for the hooks."),
         "{out}"
     );
+    // A team with no advisor: the line names no `/advisor`.
     assert!(
-        out.contains("\nRestart Claude Code. Then check: the header shows the main model, /advisor shows the advisor, and @ lists the agents.\n"),
+        out.contains(
+            "\nRestart Claude Code. Then check: the header shows the main model, and @ lists the agents.\n"
+        ),
         "{out}"
     );
     let (code, out) = r.run(&["check"]);

@@ -1328,6 +1328,13 @@ fn a_new_strict_project_has_the_advisor() {
     );
     let claude = r.read("CLAUDE.md");
     assert!(claude.contains("Consult the advisor only"), "{claude}");
+    // With the advisor, the restart line is the line of 0.8.0.
+    assert!(
+        out.contains(
+            "\nRestart Claude Code. Then check: the header shows the main model, /advisor shows the advisor, and @ lists the agents.\n"
+        ),
+        "{out}"
+    );
 }
 
 /// A new project of `profile` at the level `lean`, in a commit.

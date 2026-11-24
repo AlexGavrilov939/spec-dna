@@ -846,7 +846,12 @@ fn fresh_project_init_check_uninstall() {
     );
     // A new project of `standard` has no advisor (D97).
     assert!(!out.contains("fallback-advisor"), "{out}");
-    assert!(out.contains("\nRestart Claude Code. Then check:"), "{out}");
+    assert!(
+        out.contains(
+            "\nRestart Claude Code. Then check: the header shows the main model, and @ lists the agents.\n"
+        ),
+        "{out}"
+    );
     assert_eq!(r.read("AGENTS.md").lines().count(), 1);
     // CLAUDE.md has the same line, a blank line and the model-team line.
     let claude = r.read("CLAUDE.md");

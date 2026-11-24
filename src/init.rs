@@ -2564,6 +2564,8 @@ pub(crate) struct HarnessRun {
     level: Level,
     /// The first version of spec-dna that has the hooks of the configuration.
     hooks_version: &'static str,
+    /// True if the team has the advisor: the restart line then names it.
+    advisor: bool,
     pub(crate) plan: harness::Plan,
     notes: Vec<String>,
 }
@@ -2658,6 +2660,7 @@ pub(crate) fn harness_run(
     Ok(HarnessRun {
         level: new.level,
         hooks_version: harness::hooks_version(new),
+        advisor: new.on(Role::Advisor),
         plan,
         notes,
     })
@@ -2983,6 +2986,9 @@ fn harness_json(h: Option<&HarnessRun>, level: Level) -> String {
 }
 
 const RESTART: &str = "Restart Claude Code. Then check: the header shows the main model, /advisor shows the advisor, and @ lists the agents.";
+/// The restart line of a team with no advisor.
+const RESTART_NO_ADVISOR: &str =
+    "Restart Claude Code. Then check: the header shows the main model, and @ lists the agents.";
 
 /// Makes the roots fit the layer graph. A root that holds one type is not
 /// written if no layer has that type. A mixed root keeps its place, but loses
@@ -4698,7 +4704,12 @@ fn report_harness(h: Option<&HarnessRun>, written: &[String]) {
     let Some(h) = h else { return };
     print_harness(h, false);
     if h.level != Level::None && h.plan.changes.iter().any(|c| written.contains(&c.path)) {
-        println!("{RESTART}");
+        let line = if h.advisor {
+            RESTART
+        } else {
+            RESTART_NO_ADVISOR
+        };
+        println!("{line}");
     }
 }
 
