@@ -192,6 +192,14 @@ impl Finding {
     pub fn is_stale(&self) -> bool {
         matches!(self.kind, Kind::Stale | Kind::Incomplete)
     }
+
+    /// True for a finding that the guard of `refresh` reads: a stale finding,
+    /// and SD647 (design 0.8.1, D84, item 9). A refresh with no edit after a
+    /// changed note is then a named claim. SD647 is no "stale" finding for
+    /// `check` and `finish`.
+    pub fn guards(&self) -> bool {
+        self.is_stale() || self.kind == Kind::Note
+    }
 }
 
 /// The folders of a path, without the file: `a/b/c.md` gives `a`, `b`.
@@ -1351,13 +1359,19 @@ pub struct Planned {
 /// hashes and the canonical ids, sorted. It changes the front matter only.
 ///
 /// The guard: a document that has a stale pin (the shared rule `Finding::
-/// is_stale`) and has the `frozen_hash` of the base is not refreshed, unless
+/// is_stale`) or a changed note (SD647), and has the `frozen_hash` of the base
+/// is not refreshed, unless
 /// `holds` is true. A document that the base does not have, or has as a
 /// document that is no roll-up document, has no guard.
 pub fn plan(roll: &Rollup, base: Option<&Corpus>, di: u32, holds: bool, text: &str) -> Planned {
     let c = roll.c;
     let d = &c.docs[di as usize];
-    let stale: Vec<String> = roll.stale(di).into_iter().map(|f| f.target).collect();
+    let stale: Vec<String> = roll
+        .findings(di)
+        .into_iter()
+        .filter(Finding::guards)
+        .map(|f| f.target)
+        .collect();
     let in_base = base.and_then(|b| crate::check::head_to_base(b, d));
     // The base copy must be a roll-up document too. A `system` or `product`
     // document that gets its first `rests-on` has no pins in the base, so its
