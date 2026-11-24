@@ -581,3 +581,239 @@ fn a_file_with_a_byte_order_mark_is_refused_and_a_file_with_crlf_keeps_one_block
     assert_eq!(now.matches("---").count(), 2, "{now:?}");
     assert!(!now.replace("\r\n", "").contains('\n'), "{now:?}");
 }
+
+// The source layers of the roll-up (design 0.8.1, D84).
+
+const STORAGE_LAYERS: &str = "[layers.decisions]\ntypes = [\"decision\"]\n\n[layers.research]\ntypes = [\"research\"]\n\n[layers.summaries]\ntypes = [\"summary\"]\nrolls-up = [\"decisions\", \"research\"]\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n";
+
+const USE_SQLITE: &str = "---\nstatus: accepted\n---\n# Use SQLite\n\n## Context and Problem Statement\n\nThe service keeps its data in one place.\n\n## Decision Outcome\n\nUse one SQLite file with a write-ahead log.\n";
+
+const WRITE_LOAD: &str =
+    "# Write load\n\nOne writer at a time is enough for 200 writes in a second.\n";
+
+const STORAGE: &str = "docs/summaries/storage.md";
+
+/// A project with only the layers `decisions` and `research`, and the summary
+/// `summaries/storage` that `new summary` wrote, committed.
+fn storage_project() -> Repo {
+    let r = Repo::with_config(&format!("profile = \"standard\"\n\n{STORAGE_LAYERS}"));
+    r.write("docs/decisions/storage/use-sqlite.md", USE_SQLITE);
+    r.write("docs/research/storage/write-load.md", WRITE_LOAD);
+    let (code, out, err) = r.run(&["new", "summary", "storage"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let text = r.read(STORAGE);
+    let at = text.find("# Storage").unwrap();
+    r.write(
+        STORAGE,
+        &format!(
+            "{}# Storage\n\nThe service keeps its data in one SQLite file with a write-ahead log.\n",
+            &text[..at]
+        ),
+    );
+    r.commit("base");
+    r
+}
+
+#[test]
+fn new_summary_in_a_project_with_only_decisions_and_research_writes_the_pins() {
+    let r = storage_project();
+    let text = r.read(STORAGE);
+    assert!(text.contains("  - decisions/storage/use-sqlite@"), "{text}");
+    assert!(text.contains("  - research/storage/write-load@"), "{text}");
+    let out = check_all(&r);
+    assert!(!out.contains("SD64"), "{out}");
+    // A name that no source layer has as a folder is a usage error that names
+    // the folders of the source layers.
+    let (code, out, err) = r.run(&["new", "summary", "pumps"]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(
+        err.contains("`decisions/pumps`") && err.contains("`research/pumps`"),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_changed_note_with_the_text_of_the_base_is_refused_and_holds_writes_the_pins() {
+    let r = storage_project();
+    edit(
+        &r,
+        "docs/research/storage/write-load.md",
+        "200 writes",
+        "400 writes",
+    );
+    let before = r.read(STORAGE);
+    let out = check_all(&r);
+    assert_eq!(lines_of(&out, "SD647").len(), 1, "{out}");
+    let (code, out, err) = r.run(&["refresh", "summaries/storage"]);
+    assert_eq!(code, 1, "{out}{err}");
+    let text = format!("{out}{err}");
+    assert!(
+        text.contains("refused summaries/storage")
+            && text.contains("research/storage/write-load")
+            && text.contains("--holds"),
+        "{text}"
+    );
+    assert_eq!(r.read(STORAGE), before, "a refusal writes nothing");
+    // An edit of the text lets the refresh pass with no flag.
+    edit(
+        &r,
+        STORAGE,
+        "write-ahead log.",
+        "write-ahead log. One writer is enough.",
+    );
+    let (code, out, err) = r.run(&["refresh", "summaries/storage"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!check_all(&r).contains("SD64"));
+    // With the text of the base, `--holds` is the claim, and SD645 shows it.
+    r.commit("a new base");
+    edit(
+        &r,
+        "docs/research/storage/write-load.md",
+        "400 writes",
+        "300 writes",
+    );
+    let (code, out, err) = r.run(&["refresh", "summaries/storage", "--holds"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("held summaries/storage: the text did not change (SD645 shows it)"),
+        "{out}"
+    );
+    let out = check_all(&r);
+    assert_eq!(lines_of(&out, "SD645").len(), 1, "{out}");
+    assert!(!out.contains("SD647") && !out.contains("SD641"), "{out}");
+}
+
+#[test]
+fn refresh_writes_the_frontier_of_the_source_layers() {
+    let r = storage_project();
+    // A new accepted decision, a new note and a note that is gone.
+    r.write(
+        "docs/decisions/storage/write-ahead-log.md",
+        &USE_SQLITE.replace("Use SQLite", "Write-ahead log"),
+    );
+    r.write(
+        "docs/research/storage/read-load.md",
+        "# Read load\n\nReads are cheap.\n",
+    );
+    std::fs::remove_file(r.dir.join("docs/research/storage/write-load.md")).unwrap();
+    edit(
+        &r,
+        STORAGE,
+        "write-ahead log.",
+        "write-ahead log. Reads are cheap.",
+    );
+    let (code, out, err) = r.run(&["refresh", "summaries/storage"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("refreshed summaries/storage: 3 pins (2 added, 0 changed, 1 removed)"),
+        "{out}"
+    );
+    let text = r.read(STORAGE);
+    assert!(
+        text.contains("decisions/storage/write-ahead-log@")
+            && text.contains("research/storage/read-load@")
+            && !text.contains("write-load"),
+        "{text}"
+    );
+    assert!(!check_all(&r).contains("SD64"));
+}
+
+/// A project with only decisions and research in the 2 areas `storage` and
+/// `billing`, each with a summary that has current pins, committed.
+fn two_area_project() -> Repo {
+    let r = Repo::with_config(&format!("profile = \"standard\"\n\n{STORAGE_LAYERS}"));
+    r.write("docs/decisions/storage/use-sqlite.md", USE_SQLITE);
+    r.write("docs/research/storage/write-load.md", WRITE_LOAD);
+    r.write(
+        "docs/decisions/billing/use-ledger.md",
+        &USE_SQLITE.replace("SQLite", "ledger"),
+    );
+    for area in ["storage", "billing"] {
+        let (code, out, err) = r.run(&["new", "summary", area]);
+        assert_eq!(code, 0, "{out}{err}");
+        let path = format!("docs/summaries/{area}.md");
+        let text = r.read(&path);
+        let end = text.find("\n---\n").unwrap() + 5;
+        r.write(
+            &path,
+            &format!("{}\n# Area {area}\n\nText.\n", &text[..end]),
+        );
+    }
+    r.commit("start");
+    r
+}
+
+#[test]
+fn a_move_of_a_decision_to_another_area_names_the_2_summaries() {
+    let r = two_area_project();
+    let (code, out, err) = r.run(&[
+        "mv",
+        "decisions/storage/use-sqlite",
+        "decisions/billing/use-sqlite",
+    ]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains(
+            "roll-up: the move changes the frontier of summaries/billing, summaries/storage"
+        ),
+        "{out}"
+    );
+    // The pin of the old area is stale, and the new area has an item with no pin.
+    let text = check_all(&r);
+    assert_eq!(lines_of(&text, "SD641").len(), 1, "{text}");
+    assert_eq!(lines_of(&text, "SD642").len(), 1, "{text}");
+}
+
+#[test]
+fn a_move_of_a_research_note_to_another_area_names_the_2_summaries() {
+    let r = two_area_project();
+    let (code, out, err) = r.run(&[
+        "mv",
+        "research/storage/write-load",
+        "research/billing/write-load",
+        "--json",
+    ]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("\"summaries\":[\"summaries/billing\",\"summaries/storage\"]"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_move_of_a_decision_inside_one_area_names_no_summary() {
+    let r = two_area_project();
+    let (code, out, err) = r.run(&[
+        "mv",
+        "decisions/storage/use-sqlite",
+        "decisions/storage/pick-sqlite",
+    ]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!out.contains("roll-up"), "{out}");
+    let text = check_all(&r);
+    assert!(!text.contains("SD64"), "{text}");
+}
+
+#[test]
+fn refresh_of_a_summary_with_no_area_names_the_source_folders() {
+    // A project with only decisions and research: the words name its folders.
+    let r = storage_project();
+    r.write("docs/summaries/nope.md", "# Nope\n\nText.\n");
+    let (code, out, err) = r.run(&["refresh", "summaries/nope"]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(
+        err.contains("`decisions`")
+            && err.contains("`research`")
+            && !err.contains("layer `requirements`"),
+        "{err}"
+    );
+    // The words of 0.8.0 stay for the layer `requirements`.
+    let r = project();
+    r.write("docs/summaries/nope.md", "# Nope\n\nText.\n");
+    let (code, out, err) = r.run(&["refresh", "summaries/nope"]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(
+        err.contains("of a folder of the layer `requirements` (SD644)"),
+        "{err}"
+    );
+}

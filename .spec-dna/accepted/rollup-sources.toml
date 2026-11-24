@@ -1,0 +1,84 @@
+format = 2
+change = "rollup-sources"
+scope = ["CHANGELOG.md", "docs/adr/0028-roll-up-and-summaries.md", "docs/commands.md", "docs/config.md", "docs/design/0.8.1-a-evidence-and-context.md", "docs/diagnostics.md", "docs/profiles.md", "docs/types.md", "schema/spec-dna.schema.json", "src/acceptance.rs", "src/check.rs", "src/config.rs", "src/context.rs", "src/diag.rs", "src/finish.rs", "src/layer.rs", "src/main.rs", "src/model.rs", "src/mv.rs", "src/rollup.rs", "src/split.rs", "src/stage.rs", "tests/accept_next.rs", "tests/acceptance_checks.rs", "tests/acceptance_need.rs", "tests/config_layers.rs", "tests/context_layers.rs", "tests/finish_sd913.rs", "tests/rollup_checks.rs", "tests/rollup_refresh.rs"]
+paths = ["src/acceptance.rs", "src/check.rs", "src/config.rs", "src/context.rs", "src/diag.rs", "src/layer.rs", "src/main.rs", "src/model.rs", "src/rollup.rs", "src/stage.rs", "tests/accept_next.rs", "tests/acceptance_checks.rs", "tests/acceptance_need.rs", "tests/config_layers.rs", "tests/context_layers.rs", "tests/finish_sd913.rs", "tests/rollup_checks.rs", "tests/rollup_refresh.rs"]
+tree = "8355d4f982b30bb5"
+result = "accepted"
+acknowledged-by = []
+
+[[acceptor]]
+roles = ["acceptor"]
+brief = "aa20af351c93b317"
+session = "c51acbf1-5aed-497f-8ed7-0e87fb4f43ac"
+agent = "acceptor"
+result = "accepted"
+model = "claude-opus-5-5"
+
+[[attempt]]
+acceptor = 1
+text = "Second pass. A first record (eb2ed10) was rejected: with no key, a removed research note that a summary pinned gave warning SD647 and exit 0 in check --base, where 0.8.0 gives error SD641 and exit 1; and docs/config.md told an opted-in project to run refresh --all, which refuses each summary. Commit 7520c30 makes removed_note_in need the key and a source layer of the type research, and fixes the text. The old record went out in b000973. Proof: cargo test --test rollup_checks (46 passed), rollup_refresh (28), context_layers (49), config_layers (16), accept_next (31), acceptance_need (30), acceptance_checks (96), finish_sd913 (17); cargo test --bin spec-dna (999 passed, 3 ignored); cargo fmt --check, cargo clippy --all-targets -- -D warnings and pre-commit run --all-files pass; check --all of this repository gives no SD102 and no SD602."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "No key, fixture with separate layers requirements, interfaces, rules, decisions, research, summaries and foundation, and summaries that pin each kind by hand. 167 runs of the installed 0.8.0, a build of the base e2d6dde and the change are byte for byte the same: check --all text and --json in lite, standard and strict, check, check --base HEAD~1 text and --json, context text and --json for 11 ids, show, refresh --all, refresh <id> and --holds (dry run and write), new summary of 5 areas, mv of a decision, a note, an interface, a requirement and mv --stub, history, index, status, stats --sdlc, log and layer list. The edits: an amendment, an edited note, an edited interface key and rule, a superseded decision with a successor, git rm of a pinned note, a new interface document. The removed note gives SD641 'the target was removed' with and without a base, as in 0.8.0."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "No key, one layer specs with the types requirements, interface, rule, decision and research, with areas, a group, the area budget and links between areas: 119 runs. Against the base, the only change is SD646 on summaries/storage, an area with only a decision and a note that system pins (D84 item 7 and the spec accept it). context --budget differs from 0.8.0 the same way in the base (summary-tier). A removed note of the mixed layer gives SD641 against the base. A proposed decision of the layer keeps the summary tier of 0.8.0."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "No key, a change whose delta adds 2 keys in the interfaces layer, changes a requirement and removes the last requirement of an area: next, next --json, finish --dry-run text and --json, check, status and finish (write) are the same in standard and strict. The interface lines make no summary due, as in 0.8.0."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "No key, strict: the same change with finish --holds summaries/zones. The summary of the emptied area gets rests-on: [] and system pins it, so a new SD646 error stops finish at step 5 with exit 1. 0.8.0 and the base finish with exit 0. A hand refresh --holds then check --base gives the same new error. In standard it is a warning and the outputs are the same. D84 item 7 gives SD646 with no key condition, so this is the intended code, see the note."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "No key, more commands on the same fixture: show --conventions summary, decision and research, check --all --lint, check --all --reports, check --staged text and --json, skill list, and check --all with the cache on (2 runs of each binary): the same as 0.8.0 and the base."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "A key that names only some layers, rolls-up = [requirements, interfaces]: pins to a decision, a rule key and a note of the other layers keep SD643 with the text of the source layers; the interface key is an item; a summary of an area of decisions only keeps SD644. A removed note of the research layer that the key does not name gives SD641 'the target was removed' against the base, as in 0.8.0."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Full key, fresh pins at the base, one edit for each try against the base. An amendment: SD641 'its text in force changed'. An edit of the live section Status, of the history, of a link destination, and CRLF line ends: no finding. An edit of the outcome: SD405 and SD641. Superseded: SD641 names the successor, and SD642 names the new decision. Rejected, and no status: SD641. An edited note: SD647, a warning, exit 0 in standard. A removed note: SD647 'the note was removed'. A new note: SD647 'has no pin'. A new proposed decision: no finding. refresh --all refuses each of these documents. SD646 is off, a warning and an error in lite, standard and strict. The cache gives the same verdicts."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Opt-in: a commit that only adds the key gives 0 new errors against the base, because the base gets the same findings. layer add keeps the line rolls-up. With the key, mv of a decision, a note or an interface to another area names both summaries; a rename in one area and the move of an interface key into a requirements document of the same area name none."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "D86: a higher-risk change in standard whose plan the base added at the pin 0.7.1. next prints the note after the checklist with the prompt, next --json has it in notes, and finish --dry-run prints the new text on stderr. lite and a routine change give no note and the output of the base. With a record in the folder, next shows the record item and no note. accept --brief works for the old plan."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "context with the key: a decision that the target links is served in the tier decision, and the summary of its area comes into the tier; a research note that the target only links is not served and adds no summary; a research target adds the summary of its area."
+outcome = "held"
+
+[[finding]]
+acceptor = 1
+severity = "note"
+path = "docs/diagnostics.md"
+line = 209
+text = "The text says that SD646 in strict 'is not new and the gate does not stop' (also CHANGELOG.md line 17 and the concern of the spec). That holds for the upgrade only. With no key, in strict, a change whose REMOVE line empties the area of a summary that system pins gets a new SD646 error after finish --holds or refresh, and finish stops at step 5 with exit 1, where 0.8.0 finishes. D84 item 7 gives this, so it is no blocker, but no page tells a project with no key that SD646 can stop finish and check. Add one sentence, for example: remove the summary and its pin when its area has no item."
+
+[[finding]]
+acceptor = 1
+severity = "note"
+path = "docs/commands.md"
+line = 252
+text = "The tier summary text says that an active requirements, interface or rule document counts, and an accepted decision. With no key, the rule of 0.8.0 stays: each document of the layer requirements that is not inactive counts, so a proposed decision of a mixed layer reaches the summary of its area (the same output as 0.8.0). The page could say that the status rule needs the key."

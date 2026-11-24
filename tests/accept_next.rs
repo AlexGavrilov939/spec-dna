@@ -114,6 +114,37 @@ fn accept_line(out: &str) -> Option<&str> {
         .find(|l| l.ends_with("[skill: review]") && !l.contains("review the diff against"))
 }
 
+/// The note of a plan that a commit added when `spec-dna.toml` pinned 0.7.1
+/// (design 0.8.1, D86), as `next` prints it after the checklist. The project has
+/// no agent `acceptor`.
+fn old_plan_note(r: &Repo) -> String {
+    format!(
+        "note: `docs/intent/valve-timeout/plan.md` was added when spec-dna.toml pinned 0.7.1, before 0.8.0, so the change needs no acceptance record; to opt in, start one agent that did not build the change with the prompt `cd '{}' && spec-dna accept valve-timeout --brief`: its record ends the exemption",
+        std::fs::canonicalize(&r.dir).unwrap().to_string_lossy()
+    )
+}
+
+/// A project with the plan on the base, added when the pin was `pin`, and the
+/// code on the branch. `cfg` is the configuration. `extra` has a file to add with
+/// the plan.
+fn on_base_with(pin: &str, cfg: &str, extra: Option<(&str, &str)>) -> Repo {
+    let r = Repo::new();
+    r.write("spec-dna.toml", &format!("spec-dna = \"{pin}\"\n{cfg}"));
+    base_files(&r);
+    change_files(&r);
+    if let Some((path, text)) = extra {
+        r.write(path, text);
+    }
+    r.commit("plan");
+    r.write("spec-dna.toml", &format!("spec-dna = \"{VERSION}\"\n{cfg}"));
+    r.write("README.md", "# Project, with the new pin\n");
+    r.commit("move the pin");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    add_code(&r);
+    r
+}
+
 /// The hash of the brief of the change.
 fn brief_hash(r: &Repo) -> String {
     let (code, out, err) = r.run(&["accept", SLUG, "--brief"]);
@@ -272,9 +303,14 @@ fn the_record_item_replaces_only_the_review_line_and_no_need_gives_the_output_of
     assert!(accept_line(&standard).is_some(), "{standard}");
     assert!(accept_line(&lite).is_none(), "{lite}");
     // A plan of an earlier version has the same lines as `lite`, with the review
-    // line of 0.7.1.
-    let old = next_text(&on_base("0.7.1"));
-    assert_eq!(no_base(&old), no_base(&lite), "{old}\n---\n{lite}");
+    // line of 0.7.1, and the note of the old plan after them (design 0.8.1, D86).
+    let r = on_base("0.7.1");
+    let old = next_text(&r);
+    assert_eq!(
+        no_base(&old),
+        format!("{}{}\n", no_base(&lite), old_plan_note(&r)),
+        "{old}\n---\n{lite}"
+    );
     let (s, l) = (next_json(&built("standard")), next_json(&built("lite")));
     assert!(!s.contains("\"skill\":\"accept\""), "{s}");
     assert!(!l.contains("\"skill\":\"accept\""), "{l}");
@@ -285,7 +321,14 @@ fn a_plan_that_was_added_before_0_8_0_needs_no_accept_item() {
     let r = on_base("0.7.1");
     let out = next_text(&r);
     assert!(out.contains("[skill: finish]"), "{out}");
-    assert!(!out.contains("spec-dna accept"), "{out}");
+    // No line of the checklist names the command. The note after the checklist
+    // does (design 0.8.1, D86).
+    assert!(
+        !out.lines()
+            .filter(|l| !l.starts_with("note: "))
+            .any(|l| l.contains("spec-dna accept")),
+        "{out}"
+    );
     // The same plan, added at a pin of 0.8.0, needs the item.
     let r = on_base("0.8.0");
     assert!(accept_line(&next_text(&r)).is_some());
@@ -945,4 +988,90 @@ fn a_branch_that_turns_sd927_off_does_not_change_the_gate_of_the_open_task() {
     let r = with_accept_task(&config("lite"), ACCEPT_TASK);
     let (_, out, err) = r.run(&["finish", SLUG, "--dry-run"]);
     assert!(err.contains("step 0"), "{out}{err}");
+}
+
+// The note of a plan before 0.8.0 (design 0.8.1, D86).
+
+#[test]
+fn a_plan_before_0_8_0_gets_the_note_as_the_last_line_of_next_byte_for_byte() {
+    let r = on_base("0.7.1");
+    let out = next_text(&r);
+    assert_eq!(out.lines().last().unwrap(), old_plan_note(&r), "{out}");
+    // One line only, and the checklist before it has no record item.
+    assert_eq!(out.matches("\nnote: ").count(), 1, "{out}");
+    assert!(accept_line(&out).is_none(), "{out}");
+    // The project has the agent `acceptor`.
+    let r = on_base_with("0.7.1", &with_agent("standard"), None);
+    let out = next_text(&r);
+    assert_eq!(
+        out.lines().last().unwrap(),
+        old_plan_note(&r).replace(
+            "one agent that did not build the change",
+            "one agent `acceptor`"
+        ),
+        "{out}"
+    );
+}
+
+#[test]
+fn the_json_of_next_has_the_note_of_an_old_plan_in_notes() {
+    let r = on_base("0.7.1");
+    let out = next_json(&r);
+    let note = old_plan_note(&r);
+    let note = note.strip_prefix("note: ").unwrap();
+    assert!(out.contains(&format!("\"notes\":[\"{note}\"]")), "{out}");
+}
+
+#[test]
+fn the_note_of_an_old_plan_comes_before_the_note_of_the_roll_up() {
+    let cfg = format!(
+        "{}\n[layers.foundation]\ntypes = [\"product\", \"system\", \"terms\"]\nfiles = [\"product.md\", \"system.md\", \"terms.md\"]\n",
+        config("standard")
+    );
+    let r = on_base_with(
+        "0.7.1",
+        &cfg,
+        Some((
+            "docs/system.md",
+            "---\nrests-on: []\n---\n# System\n\nValves.\n",
+        )),
+    );
+    let out = next_text(&r);
+    let notes: Vec<&str> = out.lines().filter(|l| l.starts_with("note: ")).collect();
+    assert_eq!(notes.len(), 2, "{out}");
+    assert!(notes[0].contains("before 0.8.0"), "{out}");
+    assert!(notes[1].contains("makes system due"), "{out}");
+    let json = next_json(&r);
+    let at = |needle: &str| {
+        json.find(needle)
+            .unwrap_or_else(|| panic!("{needle}: {json}"))
+    };
+    assert!(at("before 0.8.0") < at("makes system due"), "{json}");
+}
+
+#[test]
+fn a_change_that_would_need_no_record_gets_no_note() {
+    // `lite`: the acceptance is off.
+    let r = on_base_with("0.7.1", &config("lite"), None);
+    let out = next_text(&r);
+    assert!(!out.contains("note: "), "{out}");
+    assert!(!next_json(&r).contains("before 0.8.0"));
+    // A routine change in `standard` with the default `acceptance-for`.
+    let cfg = config("standard").replace("acceptance-for = \"all\"\n", "");
+    let r = on_base_with("0.7.1", &cfg, None);
+    let out = next_text(&r);
+    assert!(!out.contains("note: "), "{out}");
+    // A plan of 0.8.0 needs a record: no note, and the record item.
+    let out = next_text(&on_base("0.8.0"));
+    assert!(!out.contains("before 0.8.0"), "{out}");
+}
+
+#[test]
+fn a_record_in_the_folder_of_an_old_plan_ends_the_note_and_gives_the_record_item() {
+    let r = on_base("0.7.1");
+    commit_record(&r, "accepted");
+    let out = next_text(&r);
+    assert!(!out.contains("before 0.8.0"), "{out}");
+    let line = accept_line(&out).unwrap_or_else(|| panic!("{out}"));
+    assert!(line.starts_with("[x] "), "{line}");
 }

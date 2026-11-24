@@ -811,3 +811,824 @@ fn removing_rests_on_from_a_system_document_of_the_base_gives_sd645() {
     let (_, out) = check_all(&r);
     assert!(!out.contains("SD645"), "{out}");
 }
+
+// The source layers of the roll-up (design 0.8.1, D84).
+
+const API: &str = "---\ntype: interface\nstatus: active\n---\n# Valve API\n\n- **open-close**: The valve API SHALL accept the command open and the command close.\n";
+
+const LIMITS: &str = "---\ntype: rule\nstatus: active\n---\n# Limits\n\n- **max-pressure**: A valve SHALL NOT work above 10 bar.\n";
+
+/// The layers of a project that has a layer for the interfaces and a layer for
+/// the rules. `rolls_up` is the line of the key of the summaries, or empty.
+fn source_layers(rolls_up: &str) -> String {
+    format!(
+        "[layers.foundation]\ntypes = [\"product\", \"system\", \"terms\"]\nfiles = [\"product.md\", \"system.md\", \"terms.md\"]\n\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.interfaces]\ntypes = [\"interface\"]\n\n[layers.rules]\ntypes = [\"rule\"]\n\n[layers.summaries]\ntypes = [\"summary\"]\n{rolls_up}\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n"
+    )
+}
+
+/// A project of the profile `standard` with the valve requirements and the
+/// layers of `source_layers`.
+fn source_project(rolls_up: &str) -> Repo {
+    let r = Repo::with_config(&format!(
+        "profile = \"standard\"\n{}",
+        source_layers(rolls_up)
+    ));
+    r.write("docs/requirements/valves/closing.md", CLOSING);
+    r
+}
+
+#[test]
+fn an_interface_source_gives_each_key_as_an_item() {
+    let r = source_project("rolls-up = [\"requirements\", \"interfaces\"]\n");
+    r.write("docs/interfaces/valves/api.md", API);
+    let r = with_summary_of(r);
+    // `new summary` writes the pin of the key of the interface.
+    let text = r.read("docs/summaries/valves.md");
+    assert!(
+        text.contains("  - interfaces/valves/api#open-close@"),
+        "{text}"
+    );
+    let (code, out) = check_all(&r);
+    assert!(!out.contains("SD64"), "{out}");
+    assert_eq!(code, 0, "{out}");
+    // A new key has no pin: SD642 names it.
+    r.write(
+        "docs/interfaces/valves/api.md",
+        &API.replace(
+            "\n- **open-close**",
+            "\n- **close-rate**: The valve API SHALL report the closing rate.\n- **open-close**",
+        ),
+    );
+    let (_, out) = check_all(&r);
+    let found = lines_of(&out, "SD642");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].contains("`interfaces/valves/api#close-rate`"),
+        "{}",
+        found[0]
+    );
+    // After a refresh, an edit of the key makes its pin stale: SD641.
+    assert_eq!(r.run(&["refresh", "summaries/valves", "--holds"]).0, 0);
+    let (_, out) = check_all(&r);
+    assert!(!out.contains("SD64"), "{out}");
+    // An edit of a part with no key does not make the summary stale.
+    edit(
+        &r,
+        "docs/interfaces/valves/api.md",
+        "# Valve API\n",
+        "# Valve API\n\nThe API of the valve.\n",
+    );
+    let (_, out) = check_all(&r);
+    assert!(!out.contains("SD64"), "{out}");
+    edit(
+        &r,
+        "docs/interfaces/valves/api.md",
+        "command open and",
+        "command open or",
+    );
+    let (code, out) = check_all(&r);
+    let found = lines_of(&out, "SD641");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].contains("`interfaces/valves/api#open-close`")
+            && found[0].contains("its text changed"),
+        "{}",
+        found[0]
+    );
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn an_interface_document_that_is_not_active_gives_no_item() {
+    let r = source_project("rolls-up = [\"requirements\", \"interfaces\"]\n");
+    r.write(
+        "docs/interfaces/valves/api.md",
+        &API.replace("status: active", "status: draft"),
+    );
+    let r = with_summary_of(r);
+    assert!(!r.read("docs/summaries/valves.md").contains("interfaces/"));
+    let (_, out) = check_all(&r);
+    assert!(!out.contains("SD64"), "{out}");
+    // The document becomes active: its key is a new item.
+    edit(
+        &r,
+        "docs/interfaces/valves/api.md",
+        "status: draft",
+        "status: active",
+    );
+    let (_, out) = check_all(&r);
+    let found = lines_of(&out, "SD642");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].contains("`interfaces/valves/api#open-close`"),
+        "{out}"
+    );
+}
+
+#[test]
+fn an_area_can_exist_in_a_source_layer_only() {
+    let r = source_project("rolls-up = [\"requirements\", \"interfaces\"]\n");
+    r.write("docs/interfaces/pumps/api.md", API);
+    r.write("docs/summaries/pumps.md", "# Pumps\n\nPumps move water.\n");
+    let (_, out) = check_all(&r);
+    // The folder `interfaces/pumps` is the area: no SD644, and the key of the
+    // interface is an item with no pin.
+    assert!(lines_of(&out, "SD644").is_empty(), "{out}");
+    let found = lines_of(&out, "SD642");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].contains("`interfaces/pumps/api#open-close`"),
+        "{out}"
+    );
+    // A summary of no folder of any source layer still gives SD644. The message
+    // names the source folders.
+    r.write("docs/summaries/zones.md", "# Zones\n\nText.\n");
+    let (_, out) = check_all(&r);
+    let found = lines_of(&out, "SD644");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].contains("requirements/zones") && found[0].contains("interfaces/zones"),
+        "{}",
+        found[0]
+    );
+}
+
+#[test]
+fn a_rule_source_gives_its_keys_and_a_layer_outside_the_key_gives_no_item() {
+    // The key names the rules only, so the requirements are no source.
+    let r = source_project("rolls-up = [\"rules\"]\n");
+    r.write("docs/rules/valves/limits.md", LIMITS);
+    let r = with_summary_of(r);
+    let text = r.read("docs/summaries/valves.md");
+    assert!(
+        text.contains("  - rules/valves/limits#max-pressure@"),
+        "{text}"
+    );
+    assert!(!text.contains("requirements/"), "{text}");
+    let (_, out) = check_all(&r);
+    assert!(!out.contains("SD64"), "{out}");
+    // A pin to a requirement that no source layer holds is SD643.
+    let hash = shown_hash(&r, "requirements/valves/closing#max-angle");
+    add_pin(&r, &format!("requirements/valves/closing#max-angle@{hash}"));
+    let (_, out) = check_all(&r);
+    let found = lines_of(&out, "SD643");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].contains("`requirements/valves/closing#max-angle`")
+            && found[0].contains("source layers"),
+        "{}",
+        found[0]
+    );
+    // A new requirement is no item and gives no SD642.
+    assert!(lines_of(&out, "SD642").is_empty(), "{out}");
+}
+
+#[test]
+fn a_project_with_no_key_has_no_item_of_an_interface_or_a_rule() {
+    // Guard: the layers exist, and the summaries have no key.
+    let r = source_project("");
+    r.write("docs/interfaces/valves/api.md", API);
+    r.write("docs/rules/valves/limits.md", LIMITS);
+    let r = with_summary_of(r);
+    let text = r.read("docs/summaries/valves.md");
+    assert!(
+        !text.contains("interfaces/") && !text.contains("rules/"),
+        "{text}"
+    );
+    let (_, out) = check_all(&r);
+    assert!(!out.contains("SD64"), "{out}");
+    // A pin to the key of the interface is SD643, as in 0.8.0.
+    let hash = shown_hash(&r, "interfaces/valves/api#open-close");
+    add_pin(&r, &format!("interfaces/valves/api#open-close@{hash}"));
+    let (_, out) = check_all(&r);
+    assert_eq!(lines_of(&out, "SD643").len(), 1, "{out}");
+}
+
+// Decisions and research documents as whole items (design 0.8.1, D84).
+
+const USE_SQLITE: &str = "---\nstatus: accepted\n---\n# Use SQLite\n\n## Context and Problem Statement\n\nThe service keeps its data in one place.\n\n## Decision Outcome\n\nUse one SQLite file with a write-ahead log.\n";
+
+const USE_POSTGRES: &str = "---\nstatus: accepted\nsupersedes: [decisions/storage/use-sqlite]\n---\n# Use Postgres\n\n## Context and Problem Statement\n\nOne file is not enough for 2 writers.\n\n## Decision Outcome\n\nUse a Postgres server.\n";
+
+const WRITE_LOAD: &str =
+    "# Write load\n\nOne writer at a time is enough for 200 writes in a second.\n";
+
+/// A project of the profile `profile` with the layers for the decisions and
+/// the research, and the key `rolls-up` with the layers in `rolls_up`.
+fn note_project(profile: &str, rolls_up: &str) -> Repo {
+    let r = Repo::with_config(&format!(
+        "profile = \"{profile}\"\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.decisions]\ntypes = [\"decision\"]\n\n[layers.research]\ntypes = [\"research\"]\n\n[layers.summaries]\ntypes = [\"summary\"]\nrolls-up = {rolls_up}\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n"
+    ));
+    r.write("docs/requirements/valves/closing.md", CLOSING);
+    r.write("docs/decisions/storage/use-sqlite.md", USE_SQLITE);
+    r.write("docs/research/storage/write-load.md", WRITE_LOAD);
+    r
+}
+
+/// The project with the summary `summaries/storage` that `new summary` wrote.
+fn with_storage_summary(r: Repo) -> Repo {
+    let (code, out, err) = r.run(&["new", "summary", "storage"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let text = r.read("docs/summaries/storage.md");
+    let at = text.find("# Storage").unwrap();
+    r.write(
+        "docs/summaries/storage.md",
+        &format!(
+            "{}# Storage\n\nThe service keeps its data in one SQLite file with a write-ahead log.\n",
+            &text[..at]
+        ),
+    );
+    r
+}
+
+#[test]
+fn an_accepted_decision_is_pinned_as_a_whole_document_and_an_amendment_makes_it_stale() {
+    let r = with_storage_summary(note_project(
+        "standard",
+        "[\"requirements\", \"decisions\"]",
+    ));
+    let text = r.read("docs/summaries/storage.md");
+    assert!(text.contains("  - decisions/storage/use-sqlite@"), "{text}");
+    // The research note is no source here.
+    assert!(!text.contains("research/"), "{text}");
+    let (code, out) = check_all(&r);
+    assert!(!out.contains("SD64"), "{out}");
+    assert_eq!(code, 0, "{out}");
+    // An edit of a live section changes no hash in force.
+    edit(
+        &r,
+        "docs/decisions/storage/use-sqlite.md",
+        "## Decision Outcome",
+        "## Status\n\n- step 1: done\n\n## Decision Outcome",
+    );
+    let (_, out) = check_all(&r);
+    assert!(!out.contains("SD64"), "{out}");
+    // An amendment section does: SD641.
+    let path = "docs/decisions/storage/use-sqlite.md";
+    r.write(
+        path,
+        &format!(
+            "{}\n## Amendments\n\n### 2026-11-24\n\nThe log is checked each hour.\n",
+            r.read(path)
+        ),
+    );
+    let (code, out) = check_all(&r);
+    let found = lines_of(&out, "SD641");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].contains("`decisions/storage/use-sqlite`")
+            && found[0].contains("text in force changed"),
+        "{}",
+        found[0]
+    );
+    assert_eq!(code, 1, "{out}");
+    // After a refresh the pin holds again.
+    assert_eq!(r.run(&["refresh", "summaries/storage", "--holds"]).0, 0);
+    let (_, out) = check_all(&r);
+    assert!(!out.contains("SD64"), "{out}");
+}
+
+#[test]
+fn a_superseded_decision_gives_sd641_with_its_successor_and_the_new_one_gives_sd642() {
+    let r = with_storage_summary(note_project(
+        "standard",
+        "[\"requirements\", \"decisions\"]",
+    ));
+    edit(
+        &r,
+        "docs/decisions/storage/use-sqlite.md",
+        "status: accepted",
+        "status: superseded",
+    );
+    r.write("docs/decisions/storage/use-postgres.md", USE_POSTGRES);
+    let (_, out) = check_all(&r);
+    let stale = lines_of(&out, "SD641");
+    assert_eq!(stale.len(), 1, "{out}");
+    assert!(
+        stale[0].contains("`decisions/storage/use-sqlite`")
+            && stale[0].contains("superseded")
+            && stale[0].contains("successor: `decisions/storage/use-postgres`"),
+        "{}",
+        stale[0]
+    );
+    let missing = lines_of(&out, "SD642");
+    assert_eq!(missing.len(), 1, "{out}");
+    assert!(
+        missing[0].contains("`decisions/storage/use-postgres`"),
+        "{}",
+        missing[0]
+    );
+    // A decision that is no longer accepted and has no successor: no name.
+    edit(
+        &r,
+        "docs/decisions/storage/use-postgres.md",
+        "supersedes: [decisions/storage/use-sqlite]\n",
+        "",
+    );
+    let (_, out) = check_all(&r);
+    let stale = lines_of(&out, "SD641");
+    assert_eq!(stale.len(), 1, "{out}");
+    assert!(
+        stale[0].contains("superseded") && !stale[0].contains("successor"),
+        "{}",
+        stale[0]
+    );
+}
+
+#[test]
+fn a_decision_that_is_not_accepted_is_no_item() {
+    let r = note_project("standard", "[\"requirements\", \"decisions\"]");
+    edit(
+        &r,
+        "docs/decisions/storage/use-sqlite.md",
+        "status: accepted",
+        "status: proposed",
+    );
+    let r = with_storage_summary(r);
+    assert!(!r.read("docs/summaries/storage.md").contains("decisions/"));
+    let (_, out) = check_all(&r);
+    assert!(!out.contains("SD64"), "{out}");
+}
+
+#[test]
+fn a_changed_research_note_gives_sd647_a_warning_and_no_sd641() {
+    let r = with_storage_summary(note_project(
+        "standard",
+        "[\"requirements\", \"decisions\", \"research\"]",
+    ));
+    let text = r.read("docs/summaries/storage.md");
+    assert!(text.contains("  - research/storage/write-load@"), "{text}");
+    let (code, out) = check_all(&r);
+    assert!(!out.contains("SD64"), "{out}");
+    assert_eq!(code, 0, "{out}");
+    edit(
+        &r,
+        "docs/research/storage/write-load.md",
+        "200 writes",
+        "400 writes",
+    );
+    let (code, out) = check_all(&r);
+    let found = lines_of(&out, "SD647");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].contains("warning SD647 summary-note-changed")
+            && found[0].contains("`research/storage/write-load`")
+            && found[0].contains("the note changed")
+            && found[0].contains("spec-dna refresh summaries/storage"),
+        "{}",
+        found[0]
+    );
+    assert!(!out.contains("SD641"), "{out}");
+    assert_eq!(code, 0, "{out}");
+    // A new note of the area has no pin: SD647, not SD642.
+    r.write(
+        "docs/research/storage/read-load.md",
+        "# Read load\n\nReads are cheap.\n",
+    );
+    let (_, out) = check_all(&r);
+    let found = lines_of(&out, "SD647");
+    assert_eq!(found.len(), 2, "{out}");
+    assert!(
+        found
+            .iter()
+            .any(|l| l.contains("`research/storage/read-load`") && l.contains("no pin")),
+        "{out}"
+    );
+    assert!(lines_of(&out, "SD642").is_empty(), "{out}");
+    // A removed note: SD647 too.
+    r.write(
+        "docs/research/storage/read-load.md",
+        "# Read load\n\nReads are cheap.\n",
+    );
+    std::fs::remove_file(r.dir.join("docs/research/storage/write-load.md")).unwrap();
+    let (_, out) = check_all(&r);
+    assert!(
+        lines_of(&out, "SD647")
+            .iter()
+            .any(|l| l.contains("`research/storage/write-load`") && l.contains("removed")),
+        "{out}"
+    );
+    assert!(lines_of(&out, "SD641").is_empty(), "{out}");
+}
+
+#[test]
+fn sd647_is_a_warning_in_strict_and_off_in_lite() {
+    for (profile, want) in [("strict", true), ("lite", false)] {
+        let r = with_storage_summary(note_project(
+            profile,
+            "[\"requirements\", \"decisions\", \"research\"]",
+        ));
+        edit(
+            &r,
+            "docs/research/storage/write-load.md",
+            "200 writes",
+            "400 writes",
+        );
+        let (_, out) = check_all(&r);
+        assert_eq!(lines_of(&out, "SD647").len(), usize::from(want), "{out}");
+        if want {
+            assert!(out.contains("warning SD647"), "{out}");
+        }
+        assert!(
+            !out.contains("SD641") && !out.contains("error SD647"),
+            "{out}"
+        );
+    }
+}
+
+#[test]
+fn a_decision_or_a_note_outside_the_key_gives_sd643() {
+    let r = with_storage_summary(note_project(
+        "standard",
+        "[\"requirements\", \"decisions\"]",
+    ));
+    let hash = shown_hash(&r, "research/storage/write-load");
+    let text = r.read("docs/summaries/storage.md");
+    r.write(
+        "docs/summaries/storage.md",
+        &text.replacen(
+            "---\n# Storage",
+            &format!("  - research/storage/write-load@{hash}\n---\n# Storage"),
+            1,
+        ),
+    );
+    let (_, out) = check_all(&r);
+    let found = lines_of(&out, "SD643");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].contains("`research/storage/write-load`") && found[0].contains("source layers"),
+        "{}",
+        found[0]
+    );
+    assert!(lines_of(&out, "SD647").is_empty(), "{out}");
+}
+
+// A roll-up document that rests on nothing (design 0.8.1, D84, item 7).
+
+const SYSTEM_TOP: &str =
+    "---\nrests-on: []\n---\n# System\n\n## Overview\n\nValves.\n\n## Constraints\n\n- None.\n";
+
+/// A project with an area `valves` that has only a draft requirement, the
+/// summary of the area and a `system` document that pins the summary.
+fn nothing_project(profile: &str) -> Repo {
+    let r = project(profile);
+    r.write(
+        "docs/requirements/valves/closing.md",
+        &CLOSING.replace("status: active", "status: draft"),
+    );
+    r.write(
+        "docs/summaries/valves.md",
+        "---\nrests-on: []\n---\n# Valves\n\nA valve closes after its sensor stops.\n",
+    );
+    r.write("docs/system.md", SYSTEM_TOP);
+    let (code, out, err) = r.run(&["refresh", "system"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(r.read("docs/system.md").contains("summaries/valves@"));
+    r
+}
+
+#[test]
+fn a_summary_with_no_pin_and_no_item_that_system_pins_gives_sd646() {
+    // A warning in `standard`, an error in `strict`, and nothing in `lite`.
+    for (profile, severity) in [("standard", "warning"), ("strict", "error")] {
+        let r = nothing_project(profile);
+        let (code, out) = check_all(&r);
+        let found = lines_of(&out, "SD646");
+        assert_eq!(found.len(), 1, "{profile}: {out}");
+        assert!(
+            found[0].starts_with("docs/summaries/valves.md:")
+                && found[0].contains(&format!("{severity} SD646 summary-rests-on-nothing"))
+                && found[0].contains("`system`")
+                && found[0].contains("rolls-up"),
+            "{}",
+            found[0]
+        );
+        // The severity decides the exit code: the finding is new (no base).
+        assert_eq!(code, i32::from(severity == "error"), "{profile}: {out}");
+        assert!(!out.contains("SD641") && !out.contains("SD642"), "{out}");
+    }
+    let (_, out) = check_all(&nothing_project("lite"));
+    assert!(!out.contains("SD646"), "{out}");
+}
+
+#[test]
+fn sd646_is_not_new_against_a_base_that_has_it() {
+    let r = nothing_project("strict");
+    r.commit("rests on nothing");
+    // A change of a draft requirement: no item of any frontier.
+    edit(
+        &r,
+        "docs/requirements/valves/closing.md",
+        "after 30 seconds",
+        "after 31 seconds",
+    );
+    // The base has the same finding, so the gate does not stop on it.
+    let (code, out, err) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}{err}");
+    // `--all` shows it, and it is an error in `strict`.
+    let (code, out) = check_all(&r);
+    assert!(out.contains("error SD646"), "{out}");
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn sd646_is_silent_where_sd641_or_sd642_speaks_and_when_the_document_has_an_item() {
+    let r = nothing_project("standard");
+    // The summary gets an active requirement: the frontier is not empty, and
+    // the summary has no pin, so SD642 names the requirement and the pin of
+    // `system` is stale (SD641).
+    edit(
+        &r,
+        "docs/requirements/valves/closing.md",
+        "status: draft",
+        "status: active",
+    );
+    let (_, out) = check_all(&r);
+    assert!(!out.contains("SD646"), "{out}");
+    assert_eq!(lines_of(&out, "SD642").len(), 2, "{out}");
+    // The summary pins both requirements, and the pin of `system` is stale
+    // after the text changed.
+    assert_eq!(r.run(&["refresh", "summaries/valves", "--holds"]).0, 0);
+    let (_, out) = check_all(&r);
+    assert!(!out.contains("SD646"), "{out}");
+    // A summary of the draft area whose pin in `system` has a wrong hash: SD641
+    // speaks, and SD646 stays silent.
+    let r = nothing_project("standard");
+    let text = r.read("docs/system.md");
+    let at = text.find("summaries/valves@").unwrap() + "summaries/valves@".len();
+    r.write(
+        "docs/system.md",
+        &format!("{}{}{}", &text[..at], "0".repeat(16), &text[at + 16..]),
+    );
+    let (_, out) = check_all(&r);
+    assert_eq!(lines_of(&out, "SD641").len(), 1, "{out}");
+    assert!(!out.contains("SD646"), "{out}");
+}
+
+#[test]
+fn a_system_with_no_pin_that_product_pins_gives_sd646_and_a_system_with_no_field_stays_sd641() {
+    let r = project("standard");
+    r.write(
+        "docs/requirements/valves/closing.md",
+        &CLOSING.replace("status: active", "status: draft"),
+    );
+    // `system` has the field and no item; `product` pins it.
+    r.write("docs/system.md", SYSTEM_TOP);
+    r.write(
+        "docs/product.md",
+        "---\nrests-on: []\n---\n# Product\n\n## Vision\n\nValves.\n",
+    );
+    assert_eq!(r.run(&["refresh", "product"]).0, 0);
+    let (_, out) = check_all(&r);
+    let found = lines_of(&out, "SD646");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].starts_with("docs/system.md:") && found[0].contains("`product`"),
+        "{}",
+        found[0]
+    );
+    // The field `rests-on` goes: `system` is no roll-up document, and the pin of
+    // `product` is SD641, as in 0.8.0.
+    r.write(
+        "docs/system.md",
+        &SYSTEM_TOP.replace("---\nrests-on: []\n---\n", ""),
+    );
+    let (_, out) = check_all(&r);
+    assert!(!out.contains("SD646"), "{out}");
+    assert_eq!(lines_of(&out, "SD641").len(), 1, "{out}");
+}
+
+// A layer with the types requirements, decision and research, and no key
+// `rolls-up`: the roll-up gives the result of 0.8.0 (design 0.8.1, D84, item 1).
+
+/// The project of one layer `specs` with 3 types, no key, the summary of the
+/// area `storage` and a `system` document. The pins follow the rules of 0.8.0.
+fn specs_project(profile: &str) -> Repo {
+    let r = Repo::with_config(&format!(
+        "profile = \"{profile}\"\n[layers.foundation]\ntypes = [\"product\", \"system\", \"terms\"]\nfiles = [\"product.md\", \"system.md\", \"terms.md\"]\n\n[layers.specs]\ntypes = [\"requirements\", \"decision\", \"research\"]\n\n[layers.summaries]\ntypes = [\"summary\"]\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n"
+    ));
+    r.write(
+        "docs/specs/storage/closing.md",
+        &format!("---\ntype: requirements\n{}", &CLOSING["---\n".len()..]),
+    );
+    r.write(
+        "docs/specs/storage/use-sqlite.md",
+        &USE_SQLITE.replace("---\n", "---\ntype: decision\n"),
+    );
+    r.write(
+        "docs/specs/storage/use-files.md",
+        &USE_SQLITE
+            .replace("---\n", "---\ntype: decision\n")
+            .replace("accepted", "proposed"),
+    );
+    r.write(
+        "docs/specs/storage/write-load.md",
+        &format!("---\ntype: research\n---\n{WRITE_LOAD}"),
+    );
+    r.write(
+        "docs/summaries/storage.md",
+        "---\nrests-on: []\n---\n# Storage\n\nThe valve closes after its sensor stops.\n",
+    );
+    r.write(
+        "docs/system.md",
+        "---\nrests-on: []\n---\n# System\n\n## Overview\n\nValves.\n\n## Constraints\n\n- None.\n",
+    );
+    for id in ["summaries/storage", "system"] {
+        let (code, out, err) = r.run(&["refresh", id, "--holds"]);
+        assert_eq!(code, 0, "{out}{err}");
+    }
+    r
+}
+
+#[test]
+fn a_layer_with_decisions_and_notes_and_no_key_gives_the_roll_up_of_0_8_0() {
+    for profile in ["standard", "strict"] {
+        let r = specs_project(profile);
+        // The pins are the pins of 0.8.0: the requirements of the layer only.
+        let text = r.read("docs/summaries/storage.md");
+        assert!(
+            text.contains("specs/storage/closing#close-on-timeout@"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("use-sqlite") && !text.contains("write-load"),
+            "{text}"
+        );
+        let (_, out) = check_all(&r);
+        assert!(
+            !out.contains("SD642") && !out.contains("SD647") && !out.contains("SD64"),
+            "{profile}: {out}"
+        );
+        assert!(!out.contains("error SD64"), "{profile}: {out}");
+        // `refresh --all` has nothing to do.
+        let (code, out, err) = r.run(&["refresh", "--all", "--dry-run"]);
+        assert_eq!(code, 0, "{out}{err}");
+        assert!(!out.contains("would refresh"), "{out}");
+        // A decision or a note does not make a pin stale.
+        edit(
+            &r,
+            "docs/specs/storage/write-load.md",
+            "200 writes",
+            "400 writes",
+        );
+        r.write(
+            "docs/specs/storage/use-sqlite.md",
+            &format!(
+                "{}\n## Amendments\n\n### 2026-11-24\n\nMore.\n",
+                r.read("docs/specs/storage/use-sqlite.md")
+            ),
+        );
+        let (_, out) = check_all(&r);
+        assert!(!out.contains("SD64"), "{profile}: {out}");
+    }
+}
+
+#[test]
+fn the_fix_texts_of_the_roll_up_are_the_texts_of_0_8_0_with_no_key() {
+    // The text of 0.8.0, byte for byte, for a project with no key.
+    let r = project("standard");
+    r.write("docs/summaries/nope.md", "# Nope\n\nText.\n");
+    r.write(
+        "docs/summaries/valves.md",
+        "---\nrests-on:\n  - requirements/valves/closing#max-angle@0000000000000000\n  - requirements/valves/closing@0000000000000000\n---\n# Valves\n\nText.\n",
+    );
+    let (_, out) = check_all(&r);
+    let fix = |code: &str| {
+        out.lines()
+            .find(|l| l.starts_with(&format!("{code} fix: ")))
+            .unwrap_or_else(|| panic!("no {code} fix: {out}"))
+            .to_string()
+    };
+    assert_eq!(
+        fix("SD642"),
+        "SD642 fix: An item of the frontier of the document has no pin: a new requirement, a requirement that became active, or a new summary of a sub-area. Read the item that the message names. Edit the text of the summary to cover it, then run `spec-dna refresh <id>`. If the text of the summary still holds, run `spec-dna refresh <id> --holds`."
+    );
+    assert_eq!(
+        fix("SD643"),
+        "SD643 fix: Fix the pin. Write `<doc-id>#<key>@<16 hex>` for a requirement, or `<doc-id>@<16 hex>` for a document, with the hash that `spec-dna show` prints. A pin names an item below its document: a summary pins the requirements and the summaries of its area, a `system` document pins the summaries, and a `product` document pins the `system` documents. An alias that names more than one document is ambiguous: use the full id. Put `rests-on` only in a summary, a `system` document or a `product` document. Run `spec-dna refresh <id>` to write the pins again."
+    );
+    assert_eq!(
+        fix("SD644"),
+        "SD644 fix: A summary is the file `<summaries folder>/<area>.md` of an area, and `<requirements folder>/<area>/` must be a folder of the layer `requirements`. Move the summary to the path of an existing area, or delete it. `spec-dna new summary <area>` writes a summary at the right path."
+    );
+}
+
+#[test]
+fn the_fix_texts_name_the_decisions_and_the_notes_only_with_the_key() {
+    let r = note_project("standard", "[\"requirements\", \"decisions\"]");
+    r.write("docs/summaries/nope.md", "# Nope\n\nText.\n");
+    r.write(
+        "docs/summaries/storage.md",
+        "---\nrests-on:\n  - requirements/valves/closing@0000000000000000\n---\n# Storage\n\nText.\n",
+    );
+    let (_, out) = check_all(&r);
+    for code in ["SD642", "SD643", "SD644"] {
+        assert!(out.contains(&format!("{code} fix: ")), "{code}: {out}");
+    }
+    let fix = |code: &str| {
+        out.lines()
+            .find(|l| l.starts_with(&format!("{code} fix: ")))
+            .unwrap()
+            .to_string()
+    };
+    assert!(
+        fix("SD642").contains("accepted decision"),
+        "{}",
+        fix("SD642")
+    );
+    assert!(fix("SD643").contains("`rolls-up`"), "{}", fix("SD643"));
+    assert!(fix("SD644").contains("`rolls-up`"), "{}", fix("SD644"));
+    // The text does not send a person to `show` for the hash of a whole document.
+    assert!(
+        !fix("SD643").contains("`spec-dna show` prints"),
+        "{}",
+        fix("SD643")
+    );
+}
+
+#[test]
+fn a_removed_note_of_a_layer_with_other_types_gives_sd647_when_the_base_has_the_note() {
+    let r = Repo::with_config(
+        "profile = \"standard\"\n[layers.specs]\ntypes = [\"requirements\", \"decision\", \"research\"]\n\n[layers.summaries]\ntypes = [\"summary\"]\nrolls-up = [\"specs\"]\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n",
+    );
+    r.write(
+        "docs/specs/storage/use-sqlite.md",
+        &USE_SQLITE.replace("---\n", "---\ntype: decision\n"),
+    );
+    r.write(
+        "docs/specs/storage/write-load.md",
+        &format!("---\ntype: research\n---\n{WRITE_LOAD}"),
+    );
+    let r = with_storage_summary(r);
+    r.commit("base");
+    std::fs::remove_file(r.dir.join("docs/specs/storage/write-load.md")).unwrap();
+    // With a base, the type of the removed document is known.
+    let (_, out, err) = r.run(&["check"]);
+    let out = format!("{out}{err}");
+    let found = lines_of(&out, "SD647");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].contains("`specs/storage/write-load`") && found[0].contains("removed"),
+        "{}",
+        found[0]
+    );
+    assert!(lines_of(&out, "SD641").is_empty(), "{out}");
+}
+
+/// A project with a layer `research`, a summary that pins a research note by
+/// hand, committed, and the note removed. `key` is the line of the key
+/// `rolls-up`, or empty. SD202 is off, so the removal gives no other finding.
+fn removed_note_project(key: &str) -> Repo {
+    let layers = LAYERS.replace(
+        "[layers.summaries]\ntypes = [\"summary\"]\n",
+        &format!(
+            "[layers.research]\ntypes = [\"research\"]\n\n[layers.summaries]\ntypes = [\"summary\"]\n{key}"
+        ),
+    );
+    let r = Repo::with_config(&format!(
+        "profile = \"standard\"\n[rules]\nSD202 = \"off\"\n\n{layers}"
+    ));
+    r.write("docs/requirements/valves/closing.md", CLOSING);
+    r.write("docs/research/valves/load.md", WRITE_LOAD);
+    let r = with_summary_of(r);
+    if !key.contains("research") {
+        let hash = shown_hash(&r, "research/valves/load");
+        add_pin(&r, &format!("research/valves/load@{hash}"));
+    }
+    r.commit("base");
+    std::fs::remove_file(r.dir.join("docs/research/valves/load.md")).unwrap();
+    r
+}
+
+#[test]
+fn a_removed_note_gives_sd647_only_when_the_key_names_its_layer() {
+    // No key: the finding is SD641, an error, as in 0.8.0.
+    // The key names another layer: the same.
+    for key in ["", "rolls-up = [\"requirements\"]\n"] {
+        let r = removed_note_project(key);
+        let (code, out, err) = r.run(&["check"]);
+        let out = format!("{out}{err}");
+        let found = lines_of(&out, "SD641");
+        assert_eq!(found.len(), 1, "`{key}`: {out}");
+        assert!(
+            found[0].contains("error SD641") && found[0].contains("the target was removed"),
+            "`{key}`: {}",
+            found[0]
+        );
+        assert!(!out.contains("SD647"), "`{key}`: {out}");
+        assert_eq!(code, 1, "`{key}`: {out}");
+    }
+    // The key names the layer: SD647, a warning.
+    let r = removed_note_project("rolls-up = [\"requirements\", \"research\"]\n");
+    let (code, out, err) = r.run(&["check"]);
+    let out = format!("{out}{err}");
+    let found = lines_of(&out, "SD647");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].contains("warning SD647") && found[0].contains("the note was removed"),
+        "{}",
+        found[0]
+    );
+    assert!(lines_of(&out, "SD641").is_empty(), "{out}");
+    assert_eq!(code, 0, "{out}");
+}

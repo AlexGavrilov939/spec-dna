@@ -1908,3 +1908,135 @@ fn the_tier_never_pushes_out_the_full_entry_that_a_tree_with_no_summary_serves()
     // The sweep is not empty: the entry is in full for some budgets.
     assert!(served_by_plain > 10, "{served_by_plain}");
 }
+
+// The source layers of the roll-up in the chain (design 0.8.1, D84, item 8).
+
+const SOURCE_HEAD: &str = "[layers.decisions]\ntypes = [\"decision\"]\n\n[layers.research]\ntypes = [\"research\"]\ncontext = \"on-request\"\n\n[layers.interfaces]\ntypes = [\"interface\"]\n\n[layers.summaries]\ntypes = [\"summary\"]\nrolls-up = [\"decisions\", \"research\", \"interfaces\"]\n\n";
+
+const STORAGE_DECISION: &str = "---\nstatus: accepted\n---\n# Use SQLite\n\n## Context and Problem Statement\n\nThe service keeps its data in one place.\n\n## Decision Outcome\n\nUse one SQLite file with a write-ahead log.\n";
+
+/// A project with decisions, research and interfaces as source layers and the
+/// summary `summaries/storage`, with current pins.
+fn sources() -> Repo {
+    let r = Repo::with(SOURCE_HEAD, ROLL_ROOTS);
+    r.write("docs/decisions/storage/use-sqlite.md", STORAGE_DECISION);
+    r.write(
+        "docs/research/storage/write-load.md",
+        "# Write load\n\nOne writer at a time is enough for 200 writes in a second.\n",
+    );
+    r.write(
+        "docs/interfaces/storage/api.md",
+        "---\nstatus: active\n---\n# Storage API\n\n- **put**: The storage API SHALL store a value under a key.\n",
+    );
+    summary(
+        &r,
+        "storage",
+        "The service keeps its data in one SQLite file.",
+    );
+    r
+}
+
+#[test]
+fn the_chain_of_an_accepted_decision_has_the_summary_of_its_area() {
+    let r = sources();
+    let docs = docs_of(&r.served(&["context", "decisions/storage/use-sqlite"]));
+    assert!(
+        docs.iter().any(|d| d == "summaries/storage"),
+        "the tier has no summary: {docs:?}"
+    );
+    let at = |d: &str| docs.iter().position(|x| x == d).unwrap();
+    assert!(
+        at("summaries/storage") < at("decisions/storage/use-sqlite"),
+        "{docs:?}"
+    );
+}
+
+#[test]
+fn the_chain_of_a_note_that_a_target_names_and_of_an_interface_has_the_summary() {
+    let r = sources();
+    for target in ["research/storage/write-load", "interfaces/storage/api"] {
+        let docs = docs_of(&r.served(&["context", target]));
+        assert!(
+            docs.iter().any(|d| d == "summaries/storage"),
+            "{target}: {docs:?}"
+        );
+    }
+}
+
+#[test]
+fn a_decision_that_is_not_accepted_reaches_no_area() {
+    let r = sources();
+    r.write(
+        "docs/decisions/storage/use-postgres.md",
+        &STORAGE_DECISION.replace("accepted", "proposed"),
+    );
+    let (code, out, err) = r.run(&["context", "decisions/storage/use-postgres"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!out.contains("summaries/storage"), "{out}");
+}
+
+#[test]
+fn a_changed_note_does_not_mark_the_summary_stale_in_the_chain() {
+    let r = sources();
+    r.write(
+        "docs/research/storage/write-load.md",
+        "# Write load\n\nOne writer at a time is enough for 400 writes in a second.\n",
+    );
+    let (code, out, err) = r.run(&["context", "decisions/storage/use-sqlite"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("summaries/storage"), "{out}");
+    assert!(
+        !header_of(&out, "summaries/storage").contains("stale"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_layer_with_decisions_and_notes_and_no_key_serves_the_chain_of_0_8_0() {
+    let head = "[layers.foundation]\ntypes = [\"product\", \"system\", \"terms\"]\nfiles = [\"product.md\", \"system.md\", \"terms.md\"]\n\n[layers.specs]\ntypes = [\"requirements\", \"decision\", \"research\"]\n\n[layers.summaries]\ntypes = [\"summary\"]\n\n";
+    let r = Repo::with(head, ROLL_ROOTS);
+    r.write(
+        "docs/specs/storage/closing.md",
+        "---\ntype: requirements\nstatus: active\n---\n# Closing\n\n## Requirements\n\n- **close-on-timeout**: The valve SHALL close.\n",
+    );
+    r.write(
+        "docs/specs/storage/use-sqlite.md",
+        &STORAGE_DECISION.replace("---\n", "---\ntype: decision\n"),
+    );
+    r.write(
+        "docs/specs/storage/use-files.md",
+        &STORAGE_DECISION
+            .replace("---\n", "---\ntype: decision\n")
+            .replace("accepted", "proposed"),
+    );
+    r.write(
+        "docs/specs/storage/write-load.md",
+        "---\ntype: research\n---\n# Write load\n\nOne writer is enough.\n",
+    );
+    summary(&r, "storage", "The valve closes.");
+    top(&r, "docs/system.md", "system", "System", "The system.");
+    let text = fs::read_to_string(r.dir.join("docs/summaries/storage.md")).unwrap();
+    assert!(
+        !text.contains("use-sqlite") && !text.contains("write-load"),
+        "{text}"
+    );
+    // A requirement, an accepted decision and a proposed decision of the layer
+    // reach the area, as in 0.8.0. The summary is current, so it is not stale.
+    for target in [
+        "specs/storage/closing",
+        "specs/storage/use-sqlite",
+        "specs/storage/use-files",
+    ] {
+        let (code, out, err) = r.run(&["context", target]);
+        assert_eq!(code, 0, "{out}{err}");
+        assert!(out.contains("summaries/storage"), "{target}: {out}");
+        assert!(
+            !header_of(&out, "summaries/storage").contains("stale"),
+            "{target}: {out}"
+        );
+        assert!(
+            !header_of(&out, "system").contains("stale"),
+            "{target}: {out}"
+        );
+    }
+}

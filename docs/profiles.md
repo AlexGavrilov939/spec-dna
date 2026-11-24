@@ -33,6 +33,8 @@ An error fails `check` when the error is new against the base. A warning never f
 | `acceptance` | SD936 (invariant invalid), SD937 (invariant stale). They run only with `[change] invariants = true`, also when a rule for the group or the code turns them on | off | error | error |
 | `rollup` | SD641 (summary stale), SD642 (summary incomplete), SD643 (pin invalid), SD644 (summary of no area) | off | error | error |
 | `rollup` | SD645 (a re-pin with the same text, against the base) | off | warning | warning |
+| `rollup` | SD646 (a summary that rests on nothing) | off | warning | error |
+| `rollup` | SD647 (a research note changed) | off | warning | warning |
 | `lint` | SD801 to SD805 (BCP 14 keyword, EARS pattern, sentence length, vague terms, passive voice) | off | off | warning |
 | `layers` | SD901 (link direction), SD902 (layer limit), SD903 (history in requirements), SD904 (forbidden term) | off | warning | warning |
 | `changes` | SD905 (fan-out), SD911 (stale change), SD913 (outside the plan), SD918 (incident with no eval) | off | warning | warning |

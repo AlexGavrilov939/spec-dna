@@ -213,3 +213,81 @@ fn layers_areas_and_groups_do_not_change_check() {
     assert_eq!(a.0, 0, "{}", a.2);
     assert_eq!(a, b);
 }
+
+/// The layers of a project whose summaries roll up the layers in `rolls_up`.
+fn rollup_layers(rolls_up: &str) -> String {
+    format!(
+        "[layers.requirements]\ntypes = [\"requirements\"]\n[layers.decisions]\ntypes = [\"decision\"]\n[layers.incidents]\ntypes = [\"incident\"]\n[layers.procedures]\ntypes = [\"procedure\"]\n[layers.summaries]\ntypes = [\"summary\"]\nrolls-up = {rolls_up}\n"
+    )
+}
+
+#[test]
+fn rolls_up_on_the_layer_of_the_type_summary_is_valid() {
+    let r = Repo::with("", &rollup_layers("[\"requirements\", \"decisions\"]"));
+    let (code, _, err) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{err}");
+    // The list can be empty: the summaries then have no source layer.
+    let r = Repo::with("", &rollup_layers("[]"));
+    let (code, _, err) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{err}");
+}
+
+#[test]
+fn rolls_up_on_a_layer_with_no_type_summary_is_an_error() {
+    rejects(
+        "",
+        "[layers.rules]\ntypes = [\"rule\"]\nrolls-up = [\"rules\"]\n",
+        &["layers.rules.rolls-up", "type `summary`"],
+    );
+    // The key is an error also when the list is empty.
+    rejects(
+        "",
+        "[layers.rules]\ntypes = [\"rule\"]\nrolls-up = []\n",
+        &["layers.rules.rolls-up", "type `summary`"],
+    );
+}
+
+#[test]
+fn rolls_up_with_a_layer_of_another_type_is_an_error() {
+    rejects(
+        "",
+        &rollup_layers("[\"requirements\", \"procedures\"]"),
+        &["layers.summaries.rolls-up", "`procedures`", "`research`"],
+    );
+    // A layer of the type `summary` is no source of a summary.
+    rejects(
+        "",
+        &rollup_layers("[\"summaries\"]"),
+        &["layers.summaries.rolls-up", "`summaries`", "`research`"],
+    );
+}
+
+#[test]
+fn rolls_up_with_an_absent_layer_is_an_error() {
+    rejects(
+        "",
+        &rollup_layers("[\"nowhere\"]"),
+        &["layers.summaries.rolls-up", "`nowhere`", "[layers]"],
+    );
+}
+
+#[test]
+fn a_source_folder_inside_another_source_folder_is_an_error() {
+    rejects(
+        "",
+        "[layers.requirements]\ntypes = [\"requirements\"]\n[layers.interfaces]\ntypes = [\"interface\"]\ndir = \"requirements/interfaces\"\n[layers.summaries]\ntypes = [\"summary\"]\nrolls-up = [\"requirements\", \"interfaces\"]\n",
+        &[
+            "layers.summaries.rolls-up",
+            "`requirements/interfaces`",
+            "inside",
+            "`requirements`",
+        ],
+    );
+    // A folder with the same start but not inside is valid.
+    let r = Repo::with(
+        "",
+        "[layers.requirements]\ntypes = [\"requirements\"]\n[layers.interfaces]\ntypes = [\"interface\"]\ndir = \"requirements-api\"\n[layers.incidents]\ntypes = [\"incident\"]\n[layers.summaries]\ntypes = [\"summary\"]\nrolls-up = [\"requirements\", \"interfaces\"]\n",
+    );
+    let (code, _, err) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{err}");
+}

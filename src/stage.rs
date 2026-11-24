@@ -237,6 +237,11 @@ pub struct View {
     /// slug (design 0.8.0, D3 item 1). A change that needs none has no entry,
     /// so `next` prints no item for it.
     pub accept: HashMap<String, AcceptItem>,
+    /// The note of each change whose plan a commit added when `spec-dna.toml`
+    /// pinned a version before 0.8.0, by slug (design 0.8.1, D86). Such a change
+    /// needs no record while its folder has none. `next` prints the note after
+    /// the checklist.
+    pub old_plan: HashMap<String, String>,
     /// True if a task that names `spec-dna accept <slug>` closes with `finish`:
     /// the acceptance is on (SD927 is not off, design 0.8.0, D75 item 6).
     pub accept_tasks: bool,
@@ -283,7 +288,7 @@ pub fn load(repo: &Repo, cfg: &Config, base: Option<&str>, use_cache: bool) -> R
     if base_rev.is_none() {
         notes.push(lifecycle::no_base_note(cfg, &repo.git, base));
     }
-    let accept = accept_items(
+    let (accept, old_plan) = accept_items(
         repo,
         cfg,
         &head,
@@ -301,14 +306,20 @@ pub fn load(repo: &Repo, cfg: &Config, base: Option<&str>, use_cache: bool) -> R
         notes,
         branch: cfg.change_approval == Approval::Branch,
         accept,
+        old_plan,
         accept_tasks,
     })
 }
 
+/// The record item of each change that needs a record, and the note of each change
+/// whose plan is old, both by slug.
+type AcceptMaps = (HashMap<String, AcceptItem>, HashMap<String, String>);
+
 /// The item `accept` of each open change that has an approved plan and needs a
 /// record, by the rule of `acceptance::need_for_change`. The map is empty with
-/// the acceptance off (the profile `lite`), with no base, or with a plan of a
-/// version before 0.8.0. Then `next` prints the output of 0.7.1.
+/// the acceptance off (the profile `lite`), or with no base. A plan of a version
+/// before 0.8.0 has no item while its folder has no record, and it has the note
+/// of the second map (design 0.8.1, D86).
 fn accept_items(
     repo: &Repo,
     cfg: &Config,
@@ -316,8 +327,9 @@ fn accept_items(
     base: Option<&Corpus>,
     base_rev: Option<&str>,
     diff: Option<&Diff>,
-) -> Result<HashMap<String, AcceptItem>, Fatal> {
+) -> Result<AcceptMaps, Fatal> {
     let mut out = HashMap::new();
+    let mut notes = HashMap::new();
     // The configuration of the need (D70 item 6): the head and the base tree.
     let nc = match base_rev {
         Some(r) => acceptance::need_config(cfg, &repo.git, r).map_err(Fatal::Io)?,
@@ -330,6 +342,13 @@ fn accept_items(
         }
         let decision =
             acceptance::need_for_change(repo, cfg, &nc, &ch, head, base, base_rev, diff)?;
+        if let Some(acceptance::Decision {
+            need: Need::No(Some(note)),
+            ..
+        }) = &decision
+        {
+            notes.insert(ch.slug.clone(), note.clone());
+        }
         if let (Some(d), Some(base_rev), Some(base)) = (&decision, base_rev, base)
             && matches!(d.need, Need::Yes { .. })
         {
@@ -347,7 +366,7 @@ fn accept_items(
             );
         }
     }
-    Ok(out)
+    Ok((out, notes))
 }
 
 /// The item `accept` of one change that needs a record. The record is done when
@@ -407,7 +426,7 @@ fn accept_item(
 /// the root becomes `'\''`). The acceptor runs it as its first call, so the builder
 /// writes about 80 bytes and no word of the brief. With `follow_up`, it is the
 /// command of the follow-up (D73 item 10).
-fn prompt_line(root: &std::path::Path, slug: &str, follow_up: bool) -> String {
+pub(crate) fn prompt_line(root: &std::path::Path, slug: &str, follow_up: bool) -> String {
     let root = root.to_string_lossy().replace('\'', "'\\''");
     let form = if follow_up { " --follow-up" } else { "" };
     format!("cd '{root}' && spec-dna accept {slug}{form} --brief")
@@ -424,7 +443,7 @@ fn quote_paths(paths: &[String]) -> String {
 
 /// Who runs the prompt: the agent `acceptor` where the harness writes it, else any
 /// agent that did not build the change (D71 item 4).
-fn acceptor_phrase(cfg: &Config) -> &'static str {
+pub(crate) fn acceptor_phrase(cfg: &Config) -> &'static str {
     if cfg
         .harness
         .as_ref()
@@ -1329,6 +1348,8 @@ pub fn next(
     // The note of the roll-up (design 0.8.0, D54). It comes after the notes of
     // the base, which the text prints as the reason of the missing base.
     let mut notes = view.notes.clone();
+    // The note of an old plan comes before the note of the roll-up (D86).
+    notes.extend(view.old_plan.get(slug).cloned());
     notes.extend(rollup_note(cfg, &view.head, ch, r.stage));
     notes.extend(proof_note(repo, cfg, &view.head, ch, r.stage));
     if json {

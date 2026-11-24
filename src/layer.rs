@@ -82,6 +82,9 @@ pub struct Layer {
     pub max_chars: Option<u32>,
     pub max_started: Option<u32>,
     pub stale_days: Option<u32>,
+    /// The key `rolls-up`, if the file has it: the source layers of the
+    /// summaries (design 0.8.1, D84). Use [`Graph::rollup_sources`].
+    pub rolls_up: Option<Vec<String>>,
 }
 
 impl Layer {
@@ -101,6 +104,7 @@ impl Layer {
             max_chars: None,
             max_started: None,
             stale_days: None,
+            rolls_up: None,
         }
     }
 
@@ -155,6 +159,9 @@ impl Layer {
         l.max_chars = f.opt_u32("max-chars")?;
         l.max_started = f.opt_u32("max-started")?;
         l.stale_days = f.opt_u32("stale-days")?;
+        if tbl.contains_key("rolls-up") {
+            l.rolls_up = Some(dedup(f.opt_strs("rolls-up")?));
+        }
         f.done()?;
         Ok(l)
     }
@@ -186,6 +193,57 @@ pub fn check_file(file: &str) -> Result<(), String> {
         return Err(format!(
             "has the entry `{file}`: it must be a relative path inside the root, such as `terms.md`, with no `..`, no `\\` and no `:`"
         ));
+    }
+    Ok(())
+}
+
+/// The types that a source layer of a summary can have (design 0.8.1, D84).
+pub const ROLLUP_SOURCE_TYPES: [DocType; 5] = [
+    DocType::Requirements,
+    DocType::Interface,
+    DocType::Rule,
+    DocType::Decision,
+    DocType::Research,
+];
+
+/// Checks the key `rolls-up` of each layer: only the layer of the type
+/// `summary` has it, each name is a layer that holds a source type, and no
+/// source folder is inside another. The error names the key.
+fn check_rolls_up(layers: &[Layer]) -> Result<(), String> {
+    for l in layers {
+        let Some(names) = &l.rolls_up else { continue };
+        let key = format!("layers.{}.rolls-up", l.name);
+        if !l.types.contains(&DocType::Summary) {
+            return Err(format!(
+                "`{key}`: only a layer with the type `summary` has this key"
+            ));
+        }
+        let mut sources: Vec<&Layer> = Vec::new();
+        for n in names {
+            let Some(s) = layers.iter().find(|o| &o.name == n) else {
+                return Err(format!("`{key}`: layer `{n}` is not in `[layers]`"));
+            };
+            if !s.types.iter().any(|t| ROLLUP_SOURCE_TYPES.contains(t)) {
+                return Err(format!(
+                    "`{key}`: layer `{n}` has none of the types `requirements`, `interface`, `rule`, `decision` and `research`"
+                ));
+            }
+            sources.push(s);
+        }
+        for a in &sources {
+            for b in &sources {
+                if let (Some(da), Some(db)) = (a.dir(), b.dir())
+                    && db.len() > da.len()
+                    && db.starts_with(da)
+                    && db[da.len()..].starts_with('/')
+                {
+                    return Err(format!(
+                        "`{key}`: the folder `{db}` of layer `{}` is inside the folder `{da}` of layer `{}`; a source folder is not inside another",
+                        b.name, a.name
+                    ));
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -281,12 +339,45 @@ impl Graph {
                 }
             }
         }
+        check_rolls_up(&layers)?;
         let mut g = Graph {
             layers,
             levels: Vec::new(),
         };
         g.levels = g.find_levels()?;
         Ok(g)
+    }
+
+    /// True if the layer of the type `summary` has the key `rolls-up`. A decision
+    /// or a research document is a source of the roll-up only then (design
+    /// 0.8.1, D84): with no key, the roll-up is the roll-up of 0.8.0.
+    pub fn rollup_keyed(&self) -> bool {
+        self.layers
+            .iter()
+            .any(|l| l.types.contains(&DocType::Summary) && l.rolls_up.is_some())
+    }
+
+    /// The positions of the source layers of the summaries (design 0.8.1,
+    /// D84): the layers that the key `rolls-up` names, in the order of the key,
+    /// or the layer of the type `requirements` when the layer of the type
+    /// `summary` has no key. `Graph::new` has checked the key.
+    pub fn rollup_sources(&self) -> Vec<usize> {
+        let keyed = self
+            .layers
+            .iter()
+            .find_map(|l| {
+                l.types
+                    .contains(&DocType::Summary)
+                    .then_some(l.rolls_up.as_ref())
+            })
+            .flatten();
+        match keyed {
+            Some(names) => names.iter().filter_map(|n| self.index(n)).collect(),
+            None => self
+                .layer_of_type(DocType::Requirements)
+                .into_iter()
+                .collect(),
+        }
     }
 
     /// The level of each layer. It fails on a cycle of `moves-to` edges.
@@ -822,6 +913,9 @@ pub fn render_table(l: &Layer) -> String {
             out.push_str(&format!("{key} = {n}\n"));
         }
     }
+    if let Some(names) = &l.rolls_up {
+        out.push_str(&format!("rolls-up = {}\n", quote_list(names)));
+    }
     out
 }
 
@@ -958,6 +1052,85 @@ pub fn add_layer(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The graph of the `[layers]` table in `text`.
+    fn graph_of(text: &str) -> Result<Graph, String> {
+        let table: Table = text.parse().unwrap();
+        parse_table(table["layers"].as_table().unwrap(), text)
+    }
+
+    #[test]
+    fn the_source_layers_default_to_the_layer_of_the_requirements() {
+        let g = graph_of(
+            "[layers.rules]\ntypes = [\"rule\"]\n[layers.reqs]\ntypes = [\"requirements\"]\n[layers.sums]\ntypes = [\"summary\"]\n",
+        )
+        .unwrap();
+        assert_eq!(g.rollup_sources(), [g.index("reqs").unwrap()]);
+        // A graph with no summary layer gives the same default.
+        assert_eq!(Graph::implied(&[]).rollup_sources().len(), 1);
+        assert_eq!(Graph::default_graph().rollup_sources().len(), 1);
+        // A graph with no layer of the requirements has no source layer.
+        let g = graph_of("[layers.sums]\ntypes = [\"summary\"]\n").unwrap();
+        assert!(g.rollup_sources().is_empty());
+    }
+
+    #[test]
+    fn the_key_rolls_up_gives_the_source_layers_in_its_order() {
+        let g = graph_of(
+            "[layers.reqs]\ntypes = [\"requirements\"]\n[layers.decs]\ntypes = [\"decision\"]\n[layers.notes]\ntypes = [\"research\"]\n[layers.sums]\ntypes = [\"summary\"]\nrolls-up = [\"notes\", \"reqs\", \"notes\"]\n",
+        )
+        .unwrap();
+        let at = |n: &str| g.index(n).unwrap();
+        assert_eq!(g.rollup_sources(), [at("notes"), at("reqs")]);
+        // The key replaces the default, and an empty list means no source.
+        let g = graph_of(
+            "[layers.reqs]\ntypes = [\"requirements\"]\n[layers.sums]\ntypes = [\"summary\"]\nrolls-up = []\n",
+        )
+        .unwrap();
+        assert!(g.rollup_sources().is_empty());
+    }
+
+    #[test]
+    fn the_key_rolls_up_is_checked_and_written_back() {
+        let text = "[layers.reqs]\ntypes = [\"requirements\"]\n[layers.mixed]\ntypes = [\"procedure\", \"rule\"]\n[layers.sums]\ntypes = [\"summary\"]\nrolls-up = [\"reqs\", \"mixed\"]\n";
+        let g = graph_of(text).unwrap();
+        // A layer with one source type among others is a source layer.
+        assert_eq!(g.rollup_sources().len(), 2);
+        let written = render_graph(&g);
+        assert!(
+            written.contains("rolls-up = [\"reqs\", \"mixed\"]\n"),
+            "{written}"
+        );
+        assert_eq!(graph_of(&written).unwrap(), g);
+        // A layer with no key writes no line.
+        assert!(!render_graph(&Graph::default_graph()).contains("rolls-up"));
+        let e =
+            graph_of("[layers.sums]\ntypes = [\"summary\"]\nrolls-up = [\"sums\"]\n").unwrap_err();
+        assert!(
+            e.contains("layers.sums.rolls-up") && e.contains("`sums`"),
+            "{e}"
+        );
+        let e = graph_of("[layers.reqs]\ntypes = [\"requirements\"]\nrolls-up = []\n").unwrap_err();
+        assert!(
+            e.contains("layers.reqs.rolls-up") && e.contains("`summary`"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn a_source_folder_inside_another_is_found_by_its_segments() {
+        let ok = "[layers.reqs]\ntypes = [\"requirements\"]\n[layers.api]\ntypes = [\"interface\"]\ndir = \"reqs-api\"\n[layers.sums]\ntypes = [\"summary\"]\nrolls-up = [\"reqs\", \"api\"]\n";
+        assert!(graph_of(ok).is_ok());
+        let bad = ok.replace("reqs-api", "reqs/api");
+        let e = graph_of(&bad).unwrap_err();
+        assert!(
+            e.contains("`reqs/api`") && e.contains("inside") && e.contains("`reqs`"),
+            "{e}"
+        );
+        // The order of the names does not matter.
+        let e = graph_of(&bad.replace("[\"reqs\", \"api\"]", "[\"api\", \"reqs\"]")).unwrap_err();
+        assert!(e.contains("inside"), "{e}");
+    }
 
     fn order_of(text: &str) -> Vec<String> {
         let table: Table = text.parse().unwrap();

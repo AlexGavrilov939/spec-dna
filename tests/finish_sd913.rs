@@ -195,7 +195,9 @@ fn next_says_that_the_items_of_files_are_not_paths() {
     r.commit("work");
     let (code, out, err) = r.run(&["next", "dose"]);
     assert_eq!(code, 0, "{out}{err}");
-    let last = out.lines().last().unwrap();
+    // The plan of 0.7.1 gets the note of an old plan after the checklist
+    // (design 0.8.1, D86), so the last item is the last line before it.
+    let last = out.lines().rfind(|l| !l.starts_with("note: ")).unwrap();
     assert!(
         last.contains("not paths") && last.contains("the dose code and its test"),
         "{out}"

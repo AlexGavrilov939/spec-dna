@@ -265,11 +265,12 @@ the move changed.",
         "refresh <id>... [--holds] [--base <rev>] [--dry-run] [--json]\nrefresh --all [--base <rev>] [--dry-run] [--json]",
         "Writes the pins of roll-up documents: a summary, and a system or product
 document with the field rests-on. For each document it writes rests-on as the
-frontier (each active requirement of the area, or the summary of a sub-area
-that stands for it), with the current hashes and the canonical ids, sorted. It
-changes the front matter only. The guard: a document that has a stale pin
-(SD641) or a missing pin (SD642), and whose text is the text of the base, is
-refused (exit code 1) and the command names the stale pins. The base is the
+frontier (each active requirement of the area, each accepted decision and each
+research document of a source layer, or the summary of a sub-area that stands
+for it), with the current hashes and the canonical ids, sorted. It changes the
+front matter only. The guard: a document that has a stale pin (SD641), a
+missing pin (SD642) or a changed note (SD647), and whose text is the text of
+the base, is refused (exit code 1) and the command names the stale pins. The base is the
 base of the change checks, or HEAD. A document that the base does not have has
 no guard. --holds writes the pins of a refused document: the claim that the
 text still holds, which the diff and SD645 show. --all takes each roll-up
@@ -2695,8 +2696,8 @@ fn new_doc(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         return Err(Fatal::Usage(format!("`{path}` exists")));
     }
     // A summary has the pins of its area (design 0.8.0, D50). The area must
-    // be a folder of the layer `requirements`, so the check comes before any
-    // write.
+    // be a folder of a source layer of the roll-up, so the check comes before
+    // any write.
     let pins = if ty == DocType::Summary {
         let area = rollup::parse_area(need_id()?).map_err(Fatal::Usage)?;
         let (_, c) = load_head(repo, a)?;

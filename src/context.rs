@@ -25,9 +25,12 @@
 //!
 //! The summary tier holds the chain of the request: `product` and `system`
 //! documents that have `rests-on`, and the summaries of the area of each
-//! requirements document that the plan serves, with the summaries of its
-//! ancestor areas. A requirements document counts if it is active and in the
-//! plan, and a document that is only linked does not. The order is top down:
+//! document of a source layer that the plan serves, with the summaries of its
+//! ancestor areas. The source layers are the layer `requirements` or the layers
+//! that `rolls-up` names (design 0.8.1, D84): a requirements, interface or rule
+//! document counts if it is active and in the plan, a decision if it is
+//! accepted, and a research document if a target names it. A document that is
+//! only linked does not count. The order is top down:
 //! `product`, `system`, then the summaries from the shallow folder to the deep
 //! one, with the title section of each document first. The tier, in full text
 //! and in stubs together, uses at most a half of the budget, and never the
@@ -188,8 +191,9 @@ pub struct Places {
     ///
     /// For a roll-up document: its level, and true if it is stale.
     roll: Vec<Option<(Level, bool)>>,
-    /// For a document of the layer `requirements`: the folders of its area,
-    /// from the folder of the layer down. The root area has none.
+    /// For a document of a source layer of the roll-up (the layer
+    /// `requirements`, or a layer that `rolls-up` names): the folders of its
+    /// area, from the folder of the layer down. The root area has none.
     area: Vec<Option<Vec<String>>>,
 }
 
@@ -237,15 +241,16 @@ impl Places {
     }
 
     /// Reads the roll-up of the tree: the level and the stale state of each
-    /// roll-up document, and the area of each requirements document. A tree
+    /// roll-up document, and the area of each document of a source layer. A tree
     /// with no roll-up document keeps both vectors empty and pays nothing.
     fn add_rollup(&mut self, c: &Corpus, cfg: &Config) {
         if !c.docs.iter().any(rollup::is_rollup) {
             return;
         }
         let roll = Rollup::build(cfg, c);
-        let layer = cfg.layers.layer_of_type(DocType::Requirements);
-        let dir = layer.and_then(|i| cfg.layers.layers()[i].dir());
+        // The source layers of the roll-up (design 0.8.1, D84): the layers
+        // that `rolls-up` names, or the layer `requirements`.
+        let sources = cfg.layers.rollup_sources();
         for (i, d) in c.docs.iter().enumerate() {
             // A file of the type `summary` in a project with no layer for it
             // has no valid type, so it is no roll-up document: in `lite`, the
@@ -255,8 +260,16 @@ impl Places {
             } else {
                 None
             };
+            let layer = crate::check::doc_layer(cfg, d).filter(|l| sources.contains(l));
+            // With the key `rolls-up`, a decision reaches its area only when it
+            // is accepted (design 0.8.1, D84, item 8), as it is an item of the
+            // frontier only then. With no key, the rule of 0.8.0 holds.
+            let proposed = cfg.layers.rollup_keyed()
+                && d.ty == DocType::Decision
+                && d.status_str() != "accepted";
             let area = match layer {
-                Some(l) if info.is_none() && crate::check::doc_layer(cfg, d) == Some(l) => {
+                Some(l) if info.is_none() && !proposed => {
+                    let dir = cfg.layers.layers()[l].dir();
                     let rel = cfg
                         .roots
                         .get(d.root)
@@ -265,7 +278,7 @@ impl Places {
                         })
                         .map_or(d.path.as_str(), |r| r.rel(&d.path));
                     // A document of the layer outside its folder is in the
-                    // root area. The same rule as `rollup::requirement_area`.
+                    // root area. The same rule as `rollup::source_area`.
                     let under = dir.and_then(|dir| rel.strip_prefix(dir)?.strip_prefix('/'));
                     let mut parts: Vec<String> =
                         under.unwrap_or("").split('/').map(str::to_string).collect();
@@ -1066,7 +1079,7 @@ pub fn assemble(
 /// The documents of the tier `summary` for a plan (D56), in the order of the
 /// tier: `product` documents, `system` documents, then the summaries from the
 /// shallow folder to the deep one, and by id in one depth. The chain is empty
-/// if the plan has no active document of the layer `requirements`. A document
+/// if the plan has no active document of a source layer of the roll-up. A document
 /// that a target names is an entry, and a document that `hold` holds back is
 /// counted there, so neither is in the chain.
 fn summary_chain(

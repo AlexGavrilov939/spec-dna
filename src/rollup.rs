@@ -97,10 +97,12 @@ impl Item {
     }
 
     /// The current hash of the item as a pin writes it: the hash that `show`
-    /// prints for a requirement, and the `frozen_hash` of a document.
+    /// prints for a requirement, the hash of the text in force of a decision or
+    /// a research document (design 0.8.1, D84), and the `frozen_hash` of any
+    /// other document.
     pub fn hash(self, c: &Corpus) -> String {
         match self {
-            Item::Doc(d) => hex(&c.docs[d as usize].frozen_hash),
+            Item::Doc(d) => hex(&doc_hash(&c.docs[d as usize])),
             Item::Req(d, r) => hex(&c.docs[d as usize].parsed.reqs[r].hash),
         }
     }
@@ -124,9 +126,20 @@ impl Item {
     /// True if the pin hash names the current text of the item.
     pub fn matches(self, c: &Corpus, hash: &str) -> bool {
         match self {
-            Item::Doc(d) => hash.eq_ignore_ascii_case(&hex(&c.docs[d as usize].frozen_hash)),
+            Item::Doc(d) => hash.eq_ignore_ascii_case(&hex(&doc_hash(&c.docs[d as usize]))),
             Item::Req(d, r) => hash_matches(&c.docs[d as usize].parsed.reqs[r], hash),
         }
+    }
+}
+
+/// The hash of a pin to a whole document: the hash of the text in force for a
+/// decision and a research document, so that an amendment makes the pin
+/// stale, and the `frozen_hash` for a summary, a `system` and a `product`
+/// document.
+fn doc_hash(d: &Doc) -> crate::hash::Hash {
+    match d.ty {
+        DocType::Decision | DocType::Research => d.force_hash,
+        _ => d.frozen_hash,
     }
 }
 
@@ -141,7 +154,7 @@ pub enum Level {
 }
 
 /// What a check found. The profile and the rules give the severity of the
-/// codes SD641 to SD644 that `check` maps from these.
+/// codes SD641 to SD644, SD646 and SD647 that `check` maps from these.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     /// SD641: a pin no longer holds.
@@ -151,8 +164,16 @@ pub enum Kind {
     /// SD643: a pin has a bad form, is ambiguous, names an item of the same or
     /// a higher level, or sits in a type that has no pins.
     Invalid,
-    /// SD644: a summary names no folder of the layer `requirements`.
+    /// SD644: a summary names no folder of a source layer.
     NoArea,
+    /// SD647: a pin to a research document no longer holds (the note changed,
+    /// was removed or left the frontier), or a research document of the
+    /// frontier has no pin. It is no "stale" finding: a changed note does not
+    /// make a normative text wrong.
+    Note,
+    /// SD646: a roll-up document has no pin and an empty frontier, and another
+    /// roll-up document pins it. The target is the id of the pinning document.
+    RestsOnNothing,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -171,6 +192,14 @@ impl Finding {
     pub fn is_stale(&self) -> bool {
         matches!(self.kind, Kind::Stale | Kind::Incomplete)
     }
+
+    /// True for a finding that the guard of `refresh` reads: a stale finding,
+    /// and SD647 (design 0.8.1, D84, item 9). A refresh with no edit after a
+    /// changed note is then a named claim. SD647 is no "stale" finding for
+    /// `check` and `finish`.
+    pub fn guards(&self) -> bool {
+        self.is_stale() || self.kind == Kind::Note
+    }
 }
 
 /// The folders of a path, without the file: `a/b/c.md` gives `a`, `b`.
@@ -183,6 +212,27 @@ fn folders(rel: &str) -> Vec<String> {
 /// True if `inner` is `outer` or a deeper folder of it.
 fn within(inner: &[String], outer: &[String]) -> bool {
     inner.starts_with(outer)
+}
+
+/// True for a document that has items by its type and its status (design
+/// 0.8.1, D84, item 3): an active document of the types `requirements`,
+/// `interface` and `rule`, an `accepted` decision, and a research document.
+fn is_item_doc(config: &Config, d: &Doc) -> bool {
+    crate::evidence::needs_evidence(d)
+        || (d.ty == DocType::Decision && d.status_str() == "accepted" && in_typed_layer(config, d))
+        || (d.ty == DocType::Research && in_typed_layer(config, d))
+}
+
+/// True if the document is a source of a whole document: the layer of the
+/// summaries has the key `rolls-up`, and the layer of the document holds the
+/// type of the document. With no key, a decision and a research document are no
+/// item, also in a layer that has their type: the roll-up is the roll-up of
+/// 0.8.0. A glob of `paths` can put a document in a layer of another type, and
+/// that is no source of a whole document.
+fn in_typed_layer(config: &Config, d: &Doc) -> bool {
+    config.layers.rollup_keyed()
+        && crate::check::doc_layer(config, d)
+            .is_some_and(|l| config.layers.layers()[l].types.contains(&d.ty))
 }
 
 /// True for a document that holds roll-up pins by its type: a summary, or a
@@ -198,14 +248,43 @@ pub fn is_rollup(d: &Doc) -> bool {
         }
 }
 
-/// The index of the layer that has the type `requirements`.
-fn requirements_layer(config: &Config) -> Option<usize> {
-    config.layers.layer_of_type(DocType::Requirements)
+/// The folders of the source layers of the roll-up (design 0.8.1, D84). The
+/// key `rolls-up` of the layer of the summaries names them. With no key, the
+/// source layer is the layer of the type `requirements`. A layer with no folder
+/// (`files`) has no area.
+fn source_dirs(config: &Config) -> Vec<&str> {
+    let layers = config.layers.layers();
+    config
+        .layers
+        .rollup_sources()
+        .into_iter()
+        .filter_map(|i| layers[i].dir())
+        .collect()
 }
 
-/// The folder of the layer `requirements`, if the layer has one.
-fn requirements_dir(config: &Config) -> Option<&str> {
-    requirements_layer(config).and_then(|i| config.layers.layers()[i].dir())
+/// True if the only source layer is a layer that has the type `requirements`.
+/// The messages then keep the words of 0.8.0.
+fn only_requirements(config: &Config) -> bool {
+    match config.layers.rollup_sources().as_slice() {
+        [i] => config.layers.layers()[*i]
+            .types
+            .contains(&DocType::Requirements),
+        // No source layer: the words of 0.8.0 stay while the key is absent.
+        [] => config
+            .layers
+            .layer_of_type(DocType::Summary)
+            .is_none_or(|i| config.layers.layers()[i].rolls_up.is_none()),
+        _ => false,
+    }
+}
+
+/// The words for the place of the items in a message.
+fn sources_text(config: &Config) -> &'static str {
+    if only_requirements(config) {
+        "the layer `requirements`"
+    } else {
+        "the source layers of the roll-up (`rolls-up`)"
+    }
 }
 
 /// The path of a document inside its root.
@@ -231,46 +310,48 @@ pub fn summary_area(config: &Config, d: &Doc) -> Option<Vec<String>> {
     Some(stem.split('/').map(str::to_string).collect())
 }
 
-/// The folders of a requirement document under the folder of the layer
-/// `requirements`, or `None` if the document is not in that layer. A document
-/// that a `paths` glob puts in the layer but that is not under the folder is in
-/// the root area.
-fn requirement_area(config: &Config, d: &Doc) -> Option<Vec<String>> {
-    let layer = requirements_layer(config)?;
-    if crate::check::doc_layer(config, d) != Some(layer) {
+/// The folders of a document of a source layer under the folder of that layer,
+/// or `None` if the document is in no source layer. A document that a `paths`
+/// glob puts in the layer but that is not under the folder is in the root area.
+fn source_area(config: &Config, d: &Doc) -> Option<Vec<String>> {
+    let layer = crate::check::doc_layer(config, d)?;
+    if !config.layers.rollup_sources().contains(&layer) {
         return None;
     }
     let rel = rel_path(config, d);
-    match requirements_dir(config).and_then(|dir| rel.strip_prefix(dir)?.strip_prefix('/')) {
+    match config.layers.layers()[layer]
+        .dir()
+        .and_then(|dir| rel.strip_prefix(dir)?.strip_prefix('/'))
+    {
         Some(rest) => Some(folders(rest)),
         None => Some(Vec::new()),
     }
 }
 
-/// True if the tree has the folder of an area under the folder of the layer
-/// `requirements`. The root area always has one.
+/// True if the tree has the folder of an area under the folder of a source
+/// layer. The root area always has one.
 pub fn area_exists(config: &Config, c: &Corpus, area: &[String]) -> bool {
     if area.is_empty() {
         return true;
     }
-    let Some(dir) = requirements_dir(config) else {
-        return false;
-    };
+    let dirs = source_dirs(config);
     config.roots.iter().any(|r| {
-        let mut path = String::new();
-        for part in [r.path.as_str(), dir]
-            .into_iter()
-            .chain(area.iter().map(String::as_str))
-        {
-            if part.is_empty() {
-                continue;
+        dirs.iter().copied().any(|dir| {
+            let mut path = String::new();
+            for part in [r.path.as_str(), dir]
+                .into_iter()
+                .chain(area.iter().map(String::as_str))
+            {
+                if part.is_empty() {
+                    continue;
+                }
+                if !path.is_empty() {
+                    path.push('/');
+                }
+                path.push_str(part);
             }
-            if !path.is_empty() {
-                path.push('/');
-            }
-            path.push_str(part);
-        }
-        c.dirs.contains(&path)
+            c.dirs.contains(&path)
+        })
     })
 }
 
@@ -324,16 +405,18 @@ pub fn resolve(c: &Corpus, pin: &Pin) -> Resolved {
 pub struct Rollup<'a> {
     config: &'a Config,
     c: &'a Corpus,
-    /// The active requirement documents of the layer `requirements`, with the
-    /// folders of each one.
-    reqs: Vec<(u32, Vec<String>)>,
+    /// The documents of the source layers that have items (design 0.8.1,
+    /// D84), with the folders of each one: the active documents of the types
+    /// `requirements`, `interface` and `rule`, the accepted decisions and the
+    /// research documents.
+    sources: Vec<(u32, Vec<String>)>,
     /// The summaries that have an area with a folder: the document and its area.
     summaries: Vec<(u32, Vec<String>)>,
 }
 
 impl<'a> Rollup<'a> {
     /// The roll-up of a tree. A tree with no roll-up document and no field
-    /// `rests-on` has nothing to read, so the scan of the requirements is
+    /// `rests-on` has nothing to read, so the scan of the source documents is
     /// skipped (a project with no summary pays nothing).
     pub fn build(config: &'a Config, c: &'a Corpus) -> Rollup<'a> {
         if c.docs.iter().any(|d| d.rests_on.is_some() || is_rollup(d)) {
@@ -342,16 +425,16 @@ impl<'a> Rollup<'a> {
             Rollup {
                 config,
                 c,
-                reqs: Vec::new(),
+                sources: Vec::new(),
                 summaries: Vec::new(),
             }
         }
     }
 
-    /// The roll-up of a tree with the requirements read. `new summary` uses it
-    /// for a tree that has no summary yet.
+    /// The roll-up of a tree with the source documents read. `new summary` uses
+    /// it for a tree that has no summary yet.
     pub fn full(config: &'a Config, c: &'a Corpus) -> Rollup<'a> {
-        let mut reqs = Vec::new();
+        let mut sources = Vec::new();
         let mut summaries = Vec::new();
         for (i, d) in c.docs.iter().enumerate() {
             let i = i as u32;
@@ -364,18 +447,66 @@ impl<'a> Rollup<'a> {
                 {
                     summaries.push((i, a));
                 }
-            } else if crate::evidence::needs_evidence(d)
-                && let Some(a) = requirement_area(config, d)
+            } else if is_item_doc(config, d)
+                && let Some(a) = source_area(config, d)
             {
-                reqs.push((i, a));
+                sources.push((i, a));
             }
         }
         Rollup {
             config,
             c,
-            reqs,
+            sources,
             summaries,
         }
+    }
+
+    /// The items of a source document (design 0.8.1, D84, item 3): each
+    /// requirement of an active document of the types `requirements`,
+    /// `interface` and `rule`, and the whole document for a decision and a
+    /// research document.
+    fn items_of(&self, di: u32) -> Vec<Item> {
+        let doc = &self.c.docs[di as usize];
+        if doc.ty.has_requirements() {
+            doc.reqs.iter().map(|&r| Item::Req(di, r)).collect()
+        } else {
+            vec![Item::Doc(di)]
+        }
+    }
+
+    /// True if the item is a research document: its findings are SD647.
+    fn is_note(&self, item: Item) -> bool {
+        matches!(item, Item::Doc(d) if self.c.docs[d as usize].ty == DocType::Research)
+    }
+
+    /// True if a pin id that names no document names a research document by
+    /// its place: the id is in the folder of a source layer that has only the
+    /// type `research`. The target was removed, and its type is gone with it.
+    fn names_a_removed_note(&self, id: &str) -> bool {
+        let layers = self.config.layers.layers();
+        self.config.layers.rollup_sources().into_iter().any(|i| {
+            layers[i].types == [DocType::Research]
+                && layers[i]
+                    .dir()
+                    .is_some_and(|dir| id.strip_prefix(dir).is_some_and(|r| r.starts_with('/')))
+        })
+    }
+
+    /// The decision that supersedes the decision `di`: an accepted decision
+    /// whose field `supersedes` resolves to it. `None` if there is none.
+    fn successor(&self, di: u32) -> Option<String> {
+        self.c
+            .docs
+            .iter()
+            .filter(|d| {
+                d.ty == DocType::Decision && d.status_str() == "accepted" && d.moved_to.is_none()
+            })
+            .find(|d| {
+                d.supersedes
+                    .iter()
+                    .any(|(id, _)| matches!(self.c.resolve(id), Res::Found(t, None, _) if t == di))
+            })
+            .map(|d| d.id.clone())
     }
 
     /// The level of a roll-up document, or `None` for a summary that has no
@@ -428,10 +559,9 @@ impl<'a> Rollup<'a> {
             .filter(|(_, b)| !below.iter().any(|(_, x)| x.len() < b.len() && within(b, x)))
             .map(|(d, _)| Item::Doc(*d))
             .collect();
-        for (d, a) in &self.reqs {
+        for (d, a) in &self.sources {
             if within(a, area) && !below.iter().any(|(_, x)| within(a, x)) {
-                let doc = &self.c.docs[*d as usize];
-                items.extend(doc.reqs.iter().map(|&r| Item::Req(*d, r)));
+                items.extend(self.items_of(*d));
             }
         }
         items
@@ -439,7 +569,7 @@ impl<'a> Rollup<'a> {
 
     /// Why no frontier of a document of `level` can ever hold the item, or
     /// `None` if a frontier could hold it (design 0.8.0, D52). A frontier holds
-    /// a requirement of a document of the layer `requirements`, a summary
+    /// a requirement of a document of a source layer, a summary
     /// below the document (a `summary` pins a summary of a deeper area, a
     /// `system` document a summary, and a `product` document a summary or a
     /// `system` document). Any other target gives SD643. A target that a
@@ -452,16 +582,30 @@ impl<'a> Rollup<'a> {
         }];
         match item {
             Item::Req(..) => {
-                if doc.ty.has_requirements() && requirement_area(self.config, doc).is_some() {
+                if doc.ty.has_requirements() && source_area(self.config, doc).is_some() {
                     None
                 } else {
                     Some(format!(
-                        "a requirement of a `{}` document outside the layer `requirements`, which no frontier holds",
-                        doc.ty.name()
+                        "a requirement of a `{}` document outside {}, which no frontier holds",
+                        doc.ty.name(),
+                        sources_text(self.config)
                     ))
                 }
             }
             Item::Doc(_) => match doc.ty {
+                DocType::Decision | DocType::Research
+                    if source_area(self.config, doc).is_some()
+                        && in_typed_layer(self.config, doc) =>
+                {
+                    None
+                }
+                DocType::Decision | DocType::Research if !only_requirements(self.config) => {
+                    Some(format!(
+                        "a `{}` document outside {}, which no frontier holds",
+                        doc.ty.name(),
+                        sources_text(self.config)
+                    ))
+                }
                 DocType::Summary => match level {
                     Level::Summary(a) => (!summary_area(self.config, doc)
                         .is_some_and(|b| b.len() > a.len() && within(&b, a)))
@@ -534,6 +678,16 @@ impl<'a> Rollup<'a> {
                     ));
                     continue;
                 }
+                Resolved::Missing if pin.key.is_none() && self.names_a_removed_note(&pin.id) => {
+                    out.push(finding(
+                        Kind::Note,
+                        &target,
+                        format!(
+                            "the pin `{target}` is stale: the note was removed; edit the summary, then run `{fix}`"
+                        ),
+                    ));
+                    continue;
+                }
                 Resolved::Missing => {
                     out.push(finding(
                         Kind::Stale,
@@ -569,9 +723,33 @@ impl<'a> Rollup<'a> {
                 ));
                 continue;
             }
-            if !frontier.contains(&item) {
+            if let Item::Doc(t) = item
+                && self.c.docs[t as usize].ty == DocType::Decision
+                && self.c.docs[t as usize].status_str() != "accepted"
+            {
+                let status = self.c.docs[t as usize].status_str();
+                let status = if status.is_empty() {
+                    "not accepted"
+                } else {
+                    status
+                };
+                let successor = self
+                    .successor(t)
+                    .map(|s| format!(" (successor: `{s}`)"))
+                    .unwrap_or_default();
                 out.push(finding(
                     Kind::Stale,
+                    &id,
+                    format!(
+                        "the pin `{id}` is stale: the decision is `{status}`{successor}; describe the decision in force, then run `{fix}`"
+                    ),
+                ));
+                continue;
+            }
+            let note = self.is_note(item);
+            if !frontier.contains(&item) {
+                out.push(finding(
+                    if note { Kind::Note } else { Kind::Stale },
                     &id,
                     format!(
                         "the pin `{id}` is stale: it is no longer in the frontier of this document (it moved to another area, or a summary of a sub-area now stands for it); edit the summary, then run `{fix}`"
@@ -581,12 +759,22 @@ impl<'a> Rollup<'a> {
             }
             covered.insert(item);
             if !item.matches(self.c, &pin.hash) {
-                out.push(finding(
-                    Kind::Stale,
-                    &id,
+                let (kind, why) = match item {
+                    Item::Req(..) => (Kind::Stale, "its text changed"),
+                    Item::Doc(_) if note => (Kind::Note, "the note changed"),
+                    Item::Doc(_) => (Kind::Stale, "its text in force changed"),
+                };
+                let tail = if note {
                     format!(
-                        "the pin `{id}` is stale: its text changed; read it, edit the summary, then run `{fix}`"
-                    ),
+                        "read it, then edit the summary and run `{fix}`, or run `{fix} --holds`"
+                    )
+                } else {
+                    format!("read it, edit the summary, then run `{fix}`")
+                };
+                out.push(finding(
+                    kind,
+                    &id,
+                    format!("the pin `{id}` is stale: {why}; {tail}"),
                 ));
             }
         }
@@ -594,7 +782,11 @@ impl<'a> Rollup<'a> {
             if !covered.contains(&item) {
                 let id = item.id(self.c);
                 out.push(Finding {
-                    kind: Kind::Incomplete,
+                    kind: if self.is_note(item) {
+                        Kind::Note
+                    } else {
+                        Kind::Incomplete
+                    },
                     line,
                     target: id.clone(),
                     message: format!(
@@ -607,20 +799,36 @@ impl<'a> Rollup<'a> {
     }
 
     fn no_area(&self, d: &Doc) -> Finding {
-        let dir = requirements_dir(self.config);
-        let message = match (summary_area(self.config, d), dir) {
-            (Some(a), Some(dir)) => format!(
-                "the summary names the area `{0}`, and the layer `requirements` has no folder `{dir}/{0}`; move the summary to the path of an existing area",
-                a.join("/")
-            ),
+        let dirs = source_dirs(self.config);
+        let only = only_requirements(self.config);
+        let message = match (summary_area(self.config, d), dirs.first()) {
             (None, _) => {
                 "the summary is not a file under the folder of its layer, so it names no area"
                     .to_string()
             }
-            (Some(a), None) => format!(
+            (Some(a), Some(dir)) if only => format!(
+                "the summary names the area `{0}`, and the layer `requirements` has no folder `{dir}/{0}`; move the summary to the path of an existing area",
+                a.join("/")
+            ),
+            (Some(a), None) if only => format!(
                 "the summary names the area `{}`, and no layer `requirements` with a folder exists",
                 a.join("/")
             ),
+            (Some(a), None) => format!(
+                "the summary names the area `{}`, and no source layer of the roll-up has a folder; add a layer with a folder to `rolls-up`",
+                a.join("/")
+            ),
+            (Some(a), Some(_)) => {
+                let folders: Vec<String> = dirs
+                    .iter()
+                    .map(|dir| format!("`{dir}/{}`", a.join("/")))
+                    .collect();
+                format!(
+                    "the summary names the area `{}`, and no source layer of the roll-up has the folder {}; move the summary to the path of an existing area",
+                    a.join("/"),
+                    folders.join(" or ")
+                )
+            }
         };
         Finding {
             kind: Kind::NoArea,
@@ -628,6 +836,63 @@ impl<'a> Rollup<'a> {
             target: String::new(),
             message,
         }
+    }
+
+    /// SD646 (design 0.8.1, D84, item 7): a roll-up document that has no pin and
+    /// an empty frontier, and that another roll-up document pins. `found` has
+    /// the other findings of the tree. A pin that has SD641, SD642 or SD643
+    /// is reported by that code only, so SD646 is silent there. Each pinning
+    /// document gives one finding on the document that has no pin, with the id
+    /// of the pinning document as its target.
+    fn rests_on_nothing(&self, found: &[(u32, Finding)]) -> Vec<(u32, Finding)> {
+        let mut out = Vec::new();
+        for (di, d) in self.c.docs.iter().enumerate() {
+            let di = di as u32;
+            if !is_rollup(d) || d.rests_on.as_ref().is_some_and(|p| !p.is_empty()) {
+                continue;
+            }
+            let Some(level) = self.level(d) else { continue };
+            if let Level::Summary(a) = &level
+                && !area_exists(self.config, self.c, a)
+            {
+                continue;
+            }
+            if !self.frontier(&level).is_empty() {
+                continue;
+            }
+            for (pi, p) in self.c.docs.iter().enumerate() {
+                let pi = pi as u32;
+                if pi == di || !is_rollup(p) {
+                    continue;
+                }
+                let pins_it = p.rests_on.iter().flatten().any(|(text, _)| {
+                    parse_pin(text).is_ok_and(|pin| {
+                        pin.key.is_none() && resolve(self.c, &pin) == Resolved::Item(Item::Doc(di))
+                    })
+                });
+                // The pin of the pinning document has another code.
+                let spoken = found.iter().any(|(i, f)| {
+                    *i == pi
+                        && f.target == d.id
+                        && matches!(f.kind, Kind::Stale | Kind::Incomplete | Kind::Invalid)
+                });
+                if pins_it && !spoken {
+                    out.push((
+                        di,
+                        Finding {
+                            kind: Kind::RestsOnNothing,
+                            line: 1,
+                            target: p.id.clone(),
+                            message: format!(
+                                "`{}` rests on nothing: it has no pin and no item of a source layer is in its area, and `{}` pins it; add the layer of its sources to `rolls-up`, or remove `{}` and the pin that names it",
+                                d.id, p.id, d.id
+                            ),
+                        },
+                    ));
+                }
+            }
+        }
+        out
     }
 
     /// The findings of each roll-up document, and of each document that has the
@@ -679,6 +944,8 @@ impl<'a> Rollup<'a> {
                 }
             }
         }
+        let nothing = self.rests_on_nothing(&out);
+        out.extend(nothing);
         out
     }
 
@@ -692,24 +959,31 @@ impl<'a> Rollup<'a> {
     }
 
     /// The area of the document that a delta line names, or `None` if the
-    /// requirements of the document are in no frontier. An active requirements
-    /// document of the layer `requirements` has the area of its folders. An id
-    /// that names no document is a new document (an `ADD` line): its area is
-    /// the folders of the id under the folder of the layer.
+    /// requirements of the document are in no frontier. An active document of
+    /// the types `requirements`, `interface` and `rule` in a source layer has
+    /// the area of its folders. An id that names no document is a new document
+    /// (an `ADD` line): its area is the folders of the id under the folder of a
+    /// source layer that holds one of these types.
     fn target_area(&self, id: &str) -> Option<Vec<String>> {
         match self.c.resolve(id) {
             Res::Found(d, None, _) => self
-                .reqs
+                .sources
                 .iter()
-                .find(|(i, _)| *i == d)
+                .find(|(i, _)| *i == d && self.c.docs[d as usize].ty.has_requirements())
                 .map(|(_, a)| a.clone()),
             Res::Missing => {
-                let dir: Vec<String> = requirements_dir(self.config)?
-                    .split('/')
-                    .map(str::to_string)
-                    .collect();
-                let mut parts = folders(id);
-                parts.starts_with(&dir).then(|| parts.split_off(dir.len()))
+                let layers = self.config.layers.layers();
+                let parts = folders(id);
+                self.config
+                    .layers
+                    .rollup_sources()
+                    .into_iter()
+                    .filter(|&i| layers[i].types.iter().any(|t| t.has_requirements()))
+                    .filter_map(|i| layers[i].dir())
+                    .find_map(|dir| {
+                        let dir: Vec<String> = dir.split('/').map(str::to_string).collect();
+                        parts.starts_with(&dir).then(|| parts[dir.len()..].to_vec())
+                    })
             }
             _ => None,
         }
@@ -770,6 +1044,40 @@ impl<'a> Rollup<'a> {
             .collect()
     }
 }
+
+/// True if `f` says that a pin target was removed, and `base` has a research
+/// document at that id, in a layer that the key `rolls-up` names. The tree of
+/// the head has no type for a removed document, so the base tells it (design
+/// 0.8.1, D84, item 3): the finding is then SD647, as for a note that left the
+/// frontier. With no key, or with a key that does not name the layer of the
+/// note, the finding stays SD641, as in 0.8.0. With no base, only the place of
+/// the id tells it ([`Rollup::findings`]).
+pub fn removed_note_in(config: &Config, base: &Corpus, f: &Finding) -> bool {
+    if f.kind != Kind::Stale
+        || !f.message.contains(REMOVED)
+        || f.target.contains('#')
+        || !config.layers.rollup_keyed()
+    {
+        return false;
+    }
+    let pin = Pin {
+        id: f.target.clone(),
+        key: None,
+        hash: String::new(),
+    };
+    let Resolved::Item(Item::Doc(d)) = resolve(base, &pin) else {
+        return false;
+    };
+    let doc = &base.docs[d as usize];
+    doc.ty == DocType::Research
+        && crate::check::doc_layer(config, doc).is_some_and(|l| {
+            config.layers.rollup_sources().contains(&l)
+                && config.layers.layers()[l].types.contains(&DocType::Research)
+        })
+}
+
+/// The words of the message of a pin whose target was removed.
+const REMOVED: &str = "the target was removed";
 
 /// The key of a pin for the compare of 2 trees (SD645): the target as the
 /// older tree names it, and the hash.
@@ -872,12 +1180,24 @@ pub fn new_summary_pins(
     area: &[String],
 ) -> Result<Vec<String>, String> {
     if !area_exists(config, c, area) {
-        return Err(match requirements_dir(config) {
-            Some(dir) => format!(
+        let dirs = source_dirs(config);
+        return Err(match dirs.first() {
+            Some(dir) if only_requirements(config) => format!(
                 "the layer `requirements` has no folder `{dir}/{}`; an area is a folder of that layer",
                 area.join("/")
             ),
-            None => "no layer with the type `requirements` has a folder, so there is no area; run `spec-dna layer add requirements --types requirements`".to_string(),
+            Some(_) => {
+                let folders: Vec<String> = dirs
+                    .iter()
+                    .map(|dir| format!("`{dir}/{}`", area.join("/")))
+                    .collect();
+                format!(
+                    "no source layer of the roll-up has the folder {}; an area is a folder of a source layer",
+                    folders.join(" or ")
+                )
+            }
+            None if only_requirements(config) => "no layer with the type `requirements` has a folder, so there is no area; run `spec-dna layer add requirements --types requirements`".to_string(),
+            None => "no source layer of the roll-up has a folder, so there is no area; name a layer with a folder in `rolls-up`".to_string(),
         });
     }
     let r = Rollup::full(config, c);
@@ -1019,8 +1339,21 @@ pub fn select(config: &Config, c: &Corpus, ids: &[String]) -> Result<Vec<u32>, S
             )));
         }
         if !has_area(config, c, &c.docs[d as usize]) {
+            let folders = if only_requirements(config) {
+                "the layer `requirements`".to_string()
+            } else {
+                let dirs: Vec<String> = source_dirs(config)
+                    .iter()
+                    .map(|d| format!("`{d}`"))
+                    .collect();
+                if dirs.is_empty() {
+                    "a source layer of the roll-up (none has a folder)".to_string()
+                } else {
+                    format!("a source layer of the roll-up ({})", dirs.join(", "))
+                }
+            };
             return Err(SelectError::Usage(format!(
-                "`{}` names no area: a summary is the file `<summaries folder>/<area>.md` of a folder of the layer `requirements` (SD644), and no pin can fix its path",
+                "`{}` names no area: a summary is the file `<summaries folder>/<area>.md` of a folder of {folders} (SD644), and no pin can fix its path",
                 c.docs[d as usize].id
             )));
         }
@@ -1078,13 +1411,19 @@ pub struct Planned {
 /// hashes and the canonical ids, sorted. It changes the front matter only.
 ///
 /// The guard: a document that has a stale pin (the shared rule `Finding::
-/// is_stale`) and has the `frozen_hash` of the base is not refreshed, unless
+/// is_stale`) or a changed note (SD647), and has the `frozen_hash` of the base
+/// is not refreshed, unless
 /// `holds` is true. A document that the base does not have, or has as a
 /// document that is no roll-up document, has no guard.
 pub fn plan(roll: &Rollup, base: Option<&Corpus>, di: u32, holds: bool, text: &str) -> Planned {
     let c = roll.c;
     let d = &c.docs[di as usize];
-    let stale: Vec<String> = roll.stale(di).into_iter().map(|f| f.target).collect();
+    let stale: Vec<String> = roll
+        .findings(di)
+        .into_iter()
+        .filter(Finding::guards)
+        .map(|f| f.target)
+        .collect();
     let in_base = base.and_then(|b| crate::check::head_to_base(b, d));
     // The base copy must be a roll-up document too. A `system` or `product`
     // document that gets its first `rests-on` has no pins in the base, so its
@@ -1730,6 +2069,142 @@ mod tests {
             ["summaries/valves"]
         );
         assert_eq!(due_ids(&c, &cfg, &["requirements/pumps/seal"]), ["system"]);
+    }
+
+    /// The default graph with the key `rolls-up` on the layer of the summaries.
+    fn keyed_config(rolls_up: &str) -> Config {
+        let graph = render_graph(&Graph::default_graph());
+        let at = "[layers.summaries]\ntypes = [\"summary\"]\n";
+        assert!(graph.contains(at), "{graph}");
+        Config::parse(&format!(
+            "spec-dna = \"0.1.0\"\n\n{}\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n",
+            graph.replace(at, &format!("{at}rolls-up = {rolls_up}\n"))
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn the_keys_of_an_interface_and_a_rule_are_items_of_the_frontier_with_the_key() {
+        let docs = [
+            ("docs/requirements/valves/closing.md", req("close")),
+            ("docs/interfaces/valves/api.md", req("open-close")),
+            ("docs/rules/valves/limits.md", req("max-pressure")),
+            // A draft interface document has no item.
+            (
+                "docs/interfaces/valves/draft.md",
+                req("later").replace("active", "draft"),
+            ),
+        ];
+        let v: Vec<(&str, &str)> = docs.iter().map(|(p, t)| (*p, t.as_str())).collect();
+        let area = || Level::Summary(vec!["valves".to_string()]);
+        // With no key, only the layer `requirements` is a source.
+        let cfg = config();
+        let c = corpus(&cfg, &v);
+        assert_eq!(
+            ids(&c, &cfg, &area()),
+            ["requirements/valves/closing#close"]
+        );
+        // The key replaces the default.
+        let cfg = keyed_config("[\"requirements\", \"interfaces\", \"rules\"]");
+        let c = corpus(&cfg, &v);
+        assert_eq!(
+            ids(&c, &cfg, &area()),
+            [
+                "interfaces/valves/api#open-close",
+                "requirements/valves/closing#close",
+                "rules/valves/limits#max-pressure"
+            ]
+        );
+        let cfg = keyed_config("[\"interfaces\"]");
+        let c = corpus(&cfg, &v);
+        assert_eq!(ids(&c, &cfg, &area()), ["interfaces/valves/api#open-close"]);
+        // The root area holds the items of each source layer.
+        assert_eq!(
+            ids(&c, &cfg, &Level::System),
+            ["interfaces/valves/api#open-close"]
+        );
+    }
+
+    #[test]
+    fn the_delta_of_an_interface_or_a_rule_makes_a_summary_due_only_with_the_key() {
+        let pinned = "---\nrests-on: []\n---\n# S\n\nText.\n";
+        let docs = [
+            ("docs/requirements/valves/closing.md", req("close")),
+            ("docs/interfaces/valves/api.md", req("open-close")),
+            ("docs/rules/valves/limits.md", req("max-pressure")),
+            ("docs/summaries/valves.md", pinned.to_string()),
+        ];
+        let v: Vec<(&str, &str)> = docs.iter().map(|(p, t)| (*p, t.as_str())).collect();
+        let cfg = config();
+        let c = corpus(&cfg, &v);
+        assert!(due_ids(&c, &cfg, &["interfaces/valves/api"]).is_empty());
+        assert!(due_ids(&c, &cfg, &["interfaces/valves/new"]).is_empty());
+        let cfg = keyed_config("[\"interfaces\", \"rules\"]");
+        let c = corpus(&cfg, &v);
+        assert_eq!(
+            due_ids(&c, &cfg, &["interfaces/valves/api"]),
+            ["summaries/valves"]
+        );
+        assert_eq!(
+            due_ids(&c, &cfg, &["rules/valves/limits"]),
+            ["summaries/valves"]
+        );
+        // A new document of a source layer (an `ADD` line), and a requirement
+        // that no source layer holds.
+        assert_eq!(
+            due_ids(&c, &cfg, &["interfaces/valves/new"]),
+            ["summaries/valves"]
+        );
+        assert!(due_ids(&c, &cfg, &["requirements/valves/closing"]).is_empty());
+    }
+
+    #[test]
+    fn a_decision_and_a_note_are_whole_items_with_the_hash_in_force() {
+        let decision = "---\nstatus: accepted\n---\n# D\n\n## Context and Problem Statement\n\nA.\n\n## Decision Outcome\n\nUse X.\n";
+        let amended = format!("{decision}\n## Amendments\n\nMore.\n");
+        let note = "# N\n\nText.\n";
+        let area = || Level::Summary(vec!["storage".to_string()]);
+        let cfg = keyed_config("[\"decisions\", \"research\"]");
+        let item_hashes = |decision_text: &str| {
+            let c = corpus(
+                &cfg,
+                &[
+                    ("docs/decisions/storage/use-x.md", decision_text),
+                    (
+                        "docs/decisions/storage/draft.md",
+                        &decision_text.replace("accepted", "proposed"),
+                    ),
+                    ("docs/research/storage/load.md", note),
+                    ("docs/requirements/storage/r.md", &req("r")),
+                ],
+            );
+            let roll = Rollup::full(&cfg, &c);
+            roll.frontier(&area())
+                .into_iter()
+                .map(|i| (i.id(&c), i.hash(&c)))
+                .collect::<Vec<_>>()
+        };
+        let before = item_hashes(decision);
+        // An accepted decision and a note are items. A proposed decision and a
+        // requirement of a layer outside the key are not.
+        assert_eq!(
+            before.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
+            ["decisions/storage/use-x", "research/storage/load"]
+        );
+        // An amendment changes the hash of the decision, and not the note.
+        let after = item_hashes(&amended);
+        assert_ne!(before[0].1, after[0].1);
+        assert_eq!(before[1].1, after[1].1);
+        // With no key, a decision and a note are no items.
+        let plain = config();
+        let c = corpus(
+            &plain,
+            &[
+                ("docs/decisions/storage/use-x.md", decision),
+                ("docs/research/storage/load.md", note),
+            ],
+        );
+        assert!(ids(&c, &plain, &area()).is_empty());
     }
 
     #[test]

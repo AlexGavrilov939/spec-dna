@@ -196,8 +196,8 @@ pub fn record_folder(path: &str, intent_dirs: &[String]) -> Option<(String, Stri
 /// What the rule "a change that needs a record" finds.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Need {
-    /// No record is needed. The text is the note that `finish` prints when the
-    /// plan is older than 0.8.0.
+    /// No record is needed. The text is the note that `next` and `finish` print
+    /// when the plan is older than 0.8.0 (design 0.8.1, D86).
     No(Option<String>),
     /// A record is needed. `shallow` is true if the clone is shallow and the
     /// history has no commit that added the plan. `branch_cut` is true if a
@@ -220,6 +220,9 @@ pub enum Need {
 ///   such commit exists (a shallow clone), or if the commit has no pin, the
 ///   result is the stricter one.
 ///
+/// The text of the note ends before the opt-in: [`need_for_change`] adds the
+/// prompt of the acceptor.
+///
 /// `plan_in_base` tells if the tree of `base_rev` has the plan at `plan_path`.
 fn plan_is_new(
     git: &Git,
@@ -239,7 +242,7 @@ fn plan_is_new(
             branch_cut: false,
         }),
         Some(pin) if pin.as_deref().is_some_and(is_before_0_8) => Ok(Need::No(Some(format!(
-            "`{plan_path}` was added when spec-dna.toml pinned {}, before 0.8.0, so `finish` needs no acceptance record; `finish` does not compare the brief of a record in the folder, and `check` does",
+            "`{plan_path}` was added when spec-dna.toml pinned {}, before 0.8.0, so the change needs no acceptance record",
             pin.unwrap_or_default()
         )))),
         Some(_) => Ok(Need::Yes {
@@ -696,6 +699,20 @@ pub fn decide(
     plan_in_base: bool,
     roles: &[String],
 ) -> Result<Decision, String> {
+    decide_with_record(i, plan_path, plan_in_base, roles, false)
+}
+
+/// [`decide`] for a folder that has a record or has none. A plan of a version
+/// before 0.8.0 needs no record, but a record in the folder ends that
+/// exemption: the change then needs its record as a change of 0.8.0 does
+/// (design 0.8.1, D86 item 3).
+pub fn decide_with_record(
+    i: &ClassInput,
+    plan_path: &str,
+    plan_in_base: bool,
+    roles: &[String],
+    record_in_folder: bool,
+) -> Result<Decision, String> {
     let rc = record_class(i)?;
     let class = rc.class;
     let nc = i.nc;
@@ -722,6 +739,10 @@ pub fn decide(
     let need = match plan_is_new(i.git, i.base_rev, plan_path, plan_in_base)? {
         Need::Yes { shallow, .. } => Need::Yes {
             shallow,
+            branch_cut: rc.shallow,
+        },
+        Need::No(Some(_)) if record_in_folder => Need::Yes {
+            shallow: false,
             branch_cut: rc.shallow,
         },
         other => other,
@@ -2809,7 +2830,11 @@ pub fn need_for_change(
     } else {
         Vec::new()
     };
-    decide(
+    // A record in the folder ends the exemption of an old plan (D86 item 3). A
+    // link or a file over the limit is a record too: `finish` names it.
+    let record_in_folder =
+        std::fs::symlink_metadata(repo.root.join(&ch.dir).join(record::FILE_NAME)).is_ok();
+    let mut decision = decide_with_record(
         &ClassInput {
             nc,
             git: &repo.git,
@@ -2821,9 +2846,18 @@ pub fn need_for_change(
         plan_path,
         base.by_path.contains_key(plan_path),
         &roles,
+        record_in_folder,
     )
-    .map(Some)
-    .map_err(Fatal::Io)
+    .map_err(Fatal::Io)?;
+    // The note of an old plan names the prompt of the acceptor (D86 item 2).
+    if let Need::No(Some(note)) = &mut decision.need {
+        note.push_str(&format!(
+            "; to opt in, start {} with the prompt `{}`: its record ends the exemption",
+            crate::stage::acceptor_phrase(cfg),
+            crate::stage::prompt_line(&repo.root, &ch.slug, false)
+        ));
+    }
+    Ok(Some(decision))
 }
 
 /// Computes the facts for the change `ch` of the folder. It returns `None` when

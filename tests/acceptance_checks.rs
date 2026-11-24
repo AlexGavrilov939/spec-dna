@@ -252,7 +252,11 @@ fn a_plan_added_at_a_pin_before_0_8_0_needs_no_record_and_finish_prints_the_note
     assert_eq!(code, 0, "{out}{err}");
     assert!(!r.dir.join(ARCHIVE).exists(), "no archive file");
     assert!(
-        err.contains("note: `docs/intent/valve-timeout/plan.md` was added when spec-dna.toml pinned 0.7.1, before 0.8.0, so `finish` needs no acceptance record"),
+        err.contains("note: `docs/intent/valve-timeout/plan.md` was added when spec-dna.toml pinned 0.7.1, before 0.8.0, so the change needs no acceptance record; to opt in, start one agent that did not build the change with the prompt `cd '"),
+        "{err}"
+    );
+    assert!(
+        err.contains("' && spec-dna accept valve-timeout --brief`: its record ends the exemption"),
         "{err}"
     );
 }
@@ -335,7 +339,8 @@ fn finish_archives_a_record_that_is_present_also_in_lite_and_for_an_old_pin() {
     assert!(!r.dir.join(FOLDER).exists());
     let staged = r.git_out(&["diff", "--cached", "--name-only"]);
     assert!(staged.lines().any(|l| l == ARCHIVE), "{staged}");
-    // A plan of an older pin: no step 5.2, but the record moves.
+    // A plan of an older pin: the record in the folder ends the exemption, so
+    // the record goes through step 5.2, and then it moves.
     let r = on_base("0.7.1", &config("standard", ""), INTENT_TEXT);
     let text = commit_record(&r, &["acceptor"], "accepted");
     let (code, out, err) = run(&r, &["finish", SLUG, "--json", "--dry-run"]);
@@ -345,7 +350,10 @@ fn finish_archives_a_record_that_is_present_also_in_lite_and_for_an_old_pin() {
     let (code, out, err) = run(&r, &["finish", SLUG]);
     assert_eq!(code, 0, "{out}{err}");
     assert_eq!(r.read(ARCHIVE), text);
-    assert!(err.contains("before 0.8.0"), "the note stays: {err}");
+    assert!(
+        !err.contains("before 0.8.0"),
+        "the record ends the exemption, so no note prints: {err}"
+    );
 }
 
 #[test]

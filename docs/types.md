@@ -115,11 +115,11 @@ Use it for large material that agents read only on request. `spec-dna history` m
 
 ## Summary
 
-A summary is the short text of one area of the requirements. The path gives the area: `summaries/<area>.md` is the summary of the folder `requirements/<area>/`. `summaries/valves.md` is the summary of `requirements/valves/`, and `summaries/valves/drives.md` is the summary of `requirements/valves/drives/`. A folder of any depth is an area. Thus a split area gets a deeper summary, and the number of levels follows the folders.
+A summary is the short text of one area. The path gives the area: `summaries/<area>.md` is the summary of the folder `<area>` under the folder of each source layer. With no key `rolls-up`, the only source layer is the layer `requirements`, so `summaries/valves.md` is the summary of `requirements/valves/`, and `summaries/valves/drives.md` is the summary of `requirements/valves/drives/`. A folder of any depth is an area. Thus a split area gets a deeper summary, and the number of levels follows the folders. [The source layers](#the-source-layers) says how the key `rolls-up` adds more layers.
 
 A summary has no status, no required section and no requirement key. It is not normative. Its budget is 3,000 and 6,000 characters, as for a `rule`. `[budgets.summary]` changes it.
 
-The layer `summaries` and the type are new in 0.8.0. A project with no `[layers]` table does not have the layer. `spec-dna layer add summaries` adds it ([config.md](config.md#default-graph)). `spec-dna new summary <area>` writes the file with the pins of the area. An area with no folder under `requirements/` gives exit code 2, and `check` gives SD644 for such a path.
+The layer `summaries` and the type are new in 0.8.0. A project with no `[layers]` table does not have the layer. `spec-dna layer add summaries` adds it ([config.md](config.md#default-graph)). `spec-dna new summary <area>` writes the file with the pins of the area. An area with no folder in a source layer gives exit code 2, and `check` gives SD644 for such a path.
 
 ### The field `rests-on` and its pins
 
@@ -138,19 +138,50 @@ rests-on:
 A valve closes 30 seconds after its sensor stops. It never opens more than 80 degrees. The drives of the valves have their own summary.
 ```
 
-A pin has the form `<doc-id>#<key>@<16 hex>` for a requirement, and `<doc-id>@<16 hex>` for a document. The hash is the hash that `spec-dna show` prints. For a document, it is the hash of its text without link destinations, without the front matter and without the amendment, history and live sections (the hash that SD405 compares). The front matter is not in the body. Thus a new pin never makes a summary stale, and a refresh never changes the hash that the level above pins.
+A pin has the form `<doc-id>#<key>@<16 hex>` for a requirement, and `<doc-id>@<16 hex>` for a document. For a requirement, the hash is the hash that `spec-dna show` prints. `show` prints the hash of a section and of a requirement, not the hash of a whole document, and no command prints that one. Thus a person never writes a pin by hand: `spec-dna refresh <id>` writes each pin with its hash. For a summary, a `system` document and a `product` document, it is the hash of the text without link destinations, without the front matter and without the amendment, history and live sections (the hash that SD405 compares). The front matter is not in the body. Thus a new pin never makes a summary stale, and a refresh never changes the hash that the level above pins. For a decision and a research document, the hash is the hash of the text in force ([The source layers](#the-source-layers)).
 
 A pin resolves as a reference does: through the alias of a moved document, the alias of a moved key, the alias of a split section and a legacy id. An alias that names more than one document is ambiguous, and SD643 reports it. `spec-dna refresh` writes the canonical id.
 
 The frontier of a document is the set of items that it must pin:
 
-- A summary of the area `a`: each active requirement under the folder of `a`. If the requirement is under a sub-area that has a summary, the item is the summary of the highest such sub-area, and not the requirement.
-- A `system` document with `rests-on`: the same rule over the whole layer `requirements`.
-- A `product` document with `rests-on`: each `system` document with `rests-on`. With none, the frontier of the layer.
+- A summary of the area `a`: each item of the source layers under the folder of `a` ([The source layers](#the-source-layers) lists the items). If an item is under a sub-area that has a summary, the item is the summary of the highest such sub-area, and not the item.
+- A `system` document with `rests-on`: the same rule over the whole of each source layer.
+- A `product` document with `rests-on`: each `system` document with `rests-on`. With none, the frontier of the source layers.
 
 An active requirement is a requirement of a document with the status `active`, as SD608 reads it. A pin must name an item of the frontier. The frontier holds only items below the document. Thus a pin to a document of the same or a higher level gives SD643, and no cycle can pass `check`.
 
-`check` compares the pins with the frontier and the current hashes ([SD641 to SD645](diagnostics.md#roll-up-sd641-to-sd645)). `spec-dna refresh` writes the pins ([commands.md](commands.md#refresh)). The gate checks the pins, never the meaning: a summary with a wrong text and current pins passes. A `system` or `product` document starts with `rests-on: []` in its front matter, and `spec-dna refresh system` writes the pins. A document with no `rests-on` is not a roll-up document, and a 0.7.1 tree has none.
+`check` compares the pins with the frontier and the current hashes ([SD641 to SD647](diagnostics.md#roll-up-sd641-to-sd647)). `spec-dna refresh` writes the pins ([commands.md](commands.md#refresh)). The gate checks the pins, never the meaning: a summary with a wrong text and current pins passes. A `system` or `product` document starts with `rests-on: []` in its front matter, and `spec-dna refresh system` writes the pins. A document with no `rests-on` is not a roll-up document, and a 0.7.1 tree has none.
+
+### The source layers
+
+The key `rolls-up` of the layer of the summaries names the source layers ([config.md](config.md#the-key-rolls-up)). The items of the frontier depend on the type of the source document:
+
+| Type of the source | Item | Pin | In the frontier when | A pin no longer holds |
+| --- | --- | --- | --- | --- |
+| `requirements`, `interface`, `rule` | each requirement | `<doc-id>#<key>@<hash>` | the document is `active` | SD641: its text changed, it was removed, it is not active, or it left the frontier |
+| `decision` | the whole document | `<doc-id>@<hash>` | the status is `accepted` | SD641: the text in force changed, or the decision is no longer `accepted`. The message names the successor of a `superseded` decision |
+| `research` | the whole document | `<doc-id>@<hash>` | always | SD647, a warning: the note changed, was removed or left the frontier |
+
+An interface document gives its requirement keys, not one hash of the whole document. Thus a pin has the same form and the same compare as a pin to a requirement, the message names the changed key, and an edit of a part with no key does not make the summary stale. An interface document with no key gives no item.
+
+The text in force of a decision or a research document is its text without link destinations, outside the history and live sections. It is the text that SD405 compares, plus the amendment sections. Thus a new amendment of an accepted decision makes its pin stale, and an edit of its live section `Status` does not.
+
+A decision and a research document are items only when the layer of the summaries has the key `rolls-up` and names their layer. With no key, the frontier is the frontier of 0.8.0, also in a layer that has the type `decision` or `research`. A research document is in the frontier with no pin. Then SD647 reports it, and SD642 does not: a note is no requirement. SD647 is a warning in `standard` and `strict`, and `refresh` refuses a document that has SD647 and the text of the base, as it does for SD641. A summary that has no pin and an empty frontier, and that another roll-up document pins, gets SD646: the chain rests on nothing. A pin to a research document whose target was removed gives SD647 when the key `rolls-up` names the layer of the note, and the base tree has a research document at that id (`check` with a base) or the layer of the id has only the type `research`. With no key, or with a key that does not name that layer, it gives SD641, as in 0.8.0. With no base, a removed note of a layer that has other types gives SD641.
+
+```md
+---
+rests-on:
+  - decisions/storage/use-sqlite@7c1e04b9a2d35f86
+  - decisions/storage/write-ahead-log@2b90d4e1c7a6f053
+  - research/storage/write-load@e5a3c9017b4d2f68
+---
+
+# Storage
+
+The service keeps its data in one SQLite file with a write-ahead log. The study of the write load found one writer at a time enough for 200 writes in a second.
+```
+
+The gate checks the pins, never the meaning. A summary of decisions with current pins can still describe a decision wrongly. A pin to a research note says that the author saw the note, not that the study holds. A decision and a research document never make a roll-up document due at `finish`: the delta names requirements only. Their findings show in `check` while the change is in work, because the edit of a decision or a note is in the diff of the branch.
 
 ## Intent, spec and plan
 
@@ -330,7 +361,7 @@ A section that states "nothing" gives no SD914 (`Interfaces`), no SD919 (`Concer
 | `procedure` (default) | `procedure` | `new procedure <slug>` | Purpose, Steps |
 | `product`, `system`, `terms`, `roadmap`, `questions` (default) | by name | `new <type>` | Writes `<root>/<type>.md`. `terms` has the table term, meaning and forbidden synonyms. The header cells `Term` and `Forbidden synonyms` (any order, any case) mark the table that SD904 reads. A cell of synonyms splits at `,` and `;`. The column `Meaning` is not read |
 | `requirements`, `rule`, `interface`, `research` (default) | by name | `new <type> <id>` | One form for each type |
-| `summary` (default) | `summary` | `new summary <area>` | The title and one placeholder. The front matter has `rests-on` with one pin for each item of the frontier of the area, sorted by id. A project template of the type gets the pins too. The area must be a folder under the folder of the layer `requirements` |
+| `summary` (default) | `summary` | `new summary <area>` | The title and one placeholder. The front matter has `rests-on` with one pin for each item of the frontier of the area, sorted by id. A project template of the type gets the pins too. The area must be a folder under the folder of a source layer |
 
 The `prd` and `rfc` templates satisfy the required section of an `intent`, because each has a `Problem` or a `Summary` heading. Each embedded template is under 700 bytes, and a test checks it.
 
