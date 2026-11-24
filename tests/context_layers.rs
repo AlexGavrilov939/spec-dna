@@ -1013,8 +1013,9 @@ fn a_summary_with_a_missing_pin_is_stale_too() {
 
 #[test]
 fn a_stale_summary_that_is_only_listed_keeps_its_marker() {
-    // The summary of `valves` has 3,200 characters: a stub.
-    let r = large_summary(200);
+    // The summary of `valves` has 4,800 characters. It is over a half of 8,000
+    // characters: a stub.
+    let r = large_summary(300);
     make_valves_stale(&r);
     let (code, out, err) = r.run(&["context", "requirements/valves/closing"]);
     assert_eq!(code, 0, "{out}{err}");
@@ -1036,28 +1037,33 @@ fn a_stale_summary_that_is_only_listed_keeps_its_marker() {
 }
 
 #[test]
-fn the_summary_tier_uses_at_most_a_quarter_of_the_budget() {
-    // The summary of `valves` has 3,200 characters. It does not fit in 2,000
-    // of 8,000 characters (the default): it is a stub, and the section of the
-    // entry stays in full.
+fn the_summary_tier_uses_at_most_a_half_of_the_budget() {
+    // The summary of `valves` has 3,200 characters. It fits in 4,000 of 8,000
+    // characters (the default), and the tier has at most 4,000 characters.
     let r = large_summary(200);
     let (code, out, err) = r.run(&["context", "requirements/valves/closing", "--budget", "8000"]);
     assert_eq!(code, 0, "{out}{err}");
-    assert!(tier_chars(&out, "summary") <= 2000, "{out}");
-    assert!(
-        out.lines()
-            .any(|l| l.starts_with("- `summaries/valves#valves`") && l.contains("(summary)")),
-        "the large section is a stub: {out}"
-    );
-    assert!(!out.contains("A valve closes. A valve"), "{out}");
-    // The other tiers keep their share: the entry is in full.
+    assert!(out.contains("A valve closes. A valve"), "{out}");
+    assert!(tier_chars(&out, "summary") <= 4000, "{out}");
+    // The other tiers keep their room: the entry is in full.
     assert!(
         full_ids(&out)
             .iter()
             .any(|i| i.starts_with("requirements/valves/closing")),
         "{out}"
     );
-    // The same summary fits in a quarter of 20,000 characters.
+    // A summary of 4,800 characters does not fit in 4,000: it is a stub, and
+    // the tier still has at most 4,000 characters.
+    let r = large_summary(300);
+    let (_, out, _) = r.run(&["context", "requirements/valves/closing", "--budget", "8000"]);
+    assert!(
+        out.lines()
+            .any(|l| l.starts_with("- `summaries/valves#valves`") && l.contains("(summary)")),
+        "the large section is a stub: {out}"
+    );
+    assert!(!out.contains("A valve closes. A valve"), "{out}");
+    assert!(tier_total(&out) <= 4000, "{out}");
+    // It fits in a half of 20,000 characters.
     let (_, out, _) = r.run(&[
         "context",
         "requirements/valves/closing",
@@ -1065,36 +1071,51 @@ fn the_summary_tier_uses_at_most_a_quarter_of_the_budget() {
         "20000",
     ]);
     assert!(out.contains("A valve closes. A valve"), "{out}");
-    assert!(tier_chars(&out, "summary") <= 5000, "{out}");
+    assert!(tier_chars(&out, "summary") <= 10000, "{out}");
 }
 
 #[test]
-fn the_share_is_a_quarter_of_the_budget_and_not_a_fixed_number() {
-    // The summary of `valves` has 1,600 characters. It fits in 2,000 (the
-    // quarter of 8,000) with the 2 top documents, and not in 1,000 (the
-    // quarter of 4,000).
+fn the_share_is_a_half_of_the_budget_and_not_a_fixed_number() {
+    // The summary of `valves` has 1,600 characters. It fits in 4,000 (the
+    // half of 8,000) with the 2 top documents, and not in 1,500 (the half of
+    // 3,000).
     let r = large_summary(100);
     let (_, out, _) = r.run(&["context", "requirements/valves/closing", "--budget", "8000"]);
     assert!(out.contains("A valve closes. A valve"), "{out}");
-    let (_, out, _) = r.run(&["context", "requirements/valves/closing", "--budget", "4000"]);
+    let (_, out, _) = r.run(&["context", "requirements/valves/closing", "--budget", "3000"]);
     assert!(!out.contains("A valve closes. A valve"), "{out}");
-    assert!(tier_chars(&out, "summary") <= 1000, "{out}");
+    assert!(tier_total(&out) <= 1500, "{out}");
 }
 
 #[test]
 fn once_a_section_of_the_tier_is_a_stub_each_later_one_is_a_stub() {
-    // The fill order is `drives`, `valves`, `system`, `product`. The big
-    // section of `valves` is a stub, so each later section of the fill order
-    // is a stub too, and only `drives` is in full. The output keeps its order
-    // from the top down.
-    let r = large_summary(200);
-    let (_, json, _) = r.run(&[
+    // The fill order is `drives`, `valves`, `system`, `product`. At 8,000
+    // characters, the summary of `valves` of 3,200 characters fits in the
+    // half of the budget, so each document is in full.
+    let args = [
         "context",
         "requirements/valves/drives/motor",
         "--budget",
         "8000",
         "--json",
-    ]);
+    ];
+    let r = large_summary(200);
+    let modes = tier_modes(&r.run(&args).1);
+    assert_eq!(
+        modes,
+        [
+            ("product".to_string(), true),
+            ("system".to_string(), true),
+            ("summaries/valves".to_string(), true),
+            ("summaries/valves/drives".to_string(), true)
+        ],
+        "{modes:?}"
+    );
+    // The summary of 4,800 characters is a stub, so each later section of the
+    // fill order is a stub too, and only `drives` is in full. The output keeps
+    // its order from the top down.
+    let r = large_summary(300);
+    let (_, json, _) = r.run(&args);
     let modes = tier_modes(&json);
     assert_eq!(
         modes,
@@ -1431,9 +1452,9 @@ fn the_tier_never_takes_the_room_of_the_entry_or_of_a_citing_section() {
                     "{a:?}: {out}"
                 );
             }
-            // The tier, in full and in stubs, has at most a quarter.
+            // The tier, in full and in stubs, has at most a half.
             assert!(
-                tier_total(&out) <= b / 4,
+                tier_total(&out) <= b / 2,
                 "{a:?} {budget}: {}",
                 tier_total(&out)
             );
@@ -1648,6 +1669,12 @@ impl Measured {
     fn is_full(&self, id: &str) -> bool {
         self.tier.iter().any(|(i, full)| i == id && *full)
     }
+
+    /// True if the output has the section of the tier with this id, in full
+    /// or as a stub.
+    fn has(&self, id: &str) -> bool {
+        self.tier.iter().any(|(i, _)| i == id)
+    }
 }
 
 fn measure(r: &Repo, target: &str, budget: u32) -> Measured {
@@ -1776,4 +1803,19 @@ fn the_title_sections_of_d83_come_before_the_other_sections_in_the_fill_order() 
             );
         }
     }
+}
+
+#[test]
+fn the_summary_of_3000_bytes_is_in_full_at_8000_and_a_listed_stub_at_4000() {
+    // The summary is over a quarter of 8,000 characters, so the new order
+    // alone does not serve it in full.
+    let r = d83(56);
+    let m = measure(&r, "src/motor.rs", 8_000);
+    let line = m.line(56, 8_000);
+    assert!(m.is_full("summaries/valves/drives#drives"), "{line}");
+    assert!(m.is_full("summaries/valves#valves"), "{line}");
+    let m = measure(&r, "src/motor.rs", 4_000);
+    let line = m.line(56, 4_000);
+    assert!(m.has("summaries/valves#valves"), "{line}");
+    assert!(!m.is_full("summaries/valves#valves"), "{line}");
 }

@@ -30,13 +30,18 @@
 //! plan, and a document that is only linked does not. The order is top down:
 //! `product`, `system`, then the summaries from the shallow folder to the deep
 //! one, with the title section of each document first. The tier, in full text
-//! and in stubs together, uses at most a quarter of the budget. It is filled
-//! in order: the first sections are in full, the next ones are stubs, and the
-//! last ones are cut. The packing order puts the tier after the sections of the
+//! and in stubs together, uses at most a half of the budget, and never the
+//! room that the entry and the citing sections need in full (design 0.8.1,
+//! D83). It is filled in its own order: the title section of each document
+//! first, from the deepest summary up to `product`, then the other sections in
+//! the same order of the documents. The first sections are in full, the next
+//! ones are stubs, and the last ones are cut. The output keeps the order from
+//! the top down. The packing order puts the tier after the sections of the
 //! entry and of the citing documents, so it never takes their room. A document
-//! of the tier is in no other tier, but a target or a convention can name it. A stale document (SD641 or SD642) has
-//! the word `stale` after the tier. A tree with no roll-up document has no
-//! tier, and the output is the output of 0.7.1.
+//! of the tier is in no other tier, but a target or a convention can name it.
+//! A stale document (SD641 or SD642) has the word `stale` after the tier. A
+//! tree with no roll-up document has no tier, and the output is the output of
+//! 0.7.1.
 //!
 //! The order of the layers is the order of the graph: by level from 0 up, and
 //! the order of the configuration inside one level (`Graph::context_order`).
@@ -505,9 +510,12 @@ fn successors(c: &Corpus, d: &Doc) -> Vec<u32> {
 const CITING_DOCS: usize = 8;
 const CITING_SUMMARIES: usize = 5;
 
-/// The full text of the tier `summary` uses at most `budget / SUMMARY_SHARE`
-/// characters (D56): a quarter, 2,000 of the 8,000 of the default.
-const SUMMARY_SHARE: u32 = 4;
+/// The tier `summary`, in full text and in stubs together, uses at most
+/// `budget / SUMMARY_SHARE` characters (D83): a half, 4,000 of the 8,000 of
+/// the default. A summary at its soft budget of 3,000 characters fits. The
+/// half is a cap: the tier also leaves the room that the sections before it
+/// need in full (`room_before_tier`).
+const SUMMARY_SHARE: u32 = 2;
 
 /// Plans and packs the sections for the targets and the code paths. `cited`
 /// contains the sections that cite the paths, best first (`cite::citing`).
@@ -924,8 +932,8 @@ pub fn assemble(
         .collect();
     let mut file_listed = vec![false; file_plan.len()];
     let mut listed = vec![false; plan.len()];
-    // The tier `summary` as a whole, in full and in stubs, has a quarter of
-    // the budget. It is filled in its fill order (`summary_fill_key`): the
+    // The tier `summary` as a whole, in full and in stubs, has a half of the
+    // budget. It is filled in its fill order (`summary_fill_key`): the
     // first sections are in full, the next ones are stubs, and the last ones
     // are cut. `(fulls, listed)` is the number of sections of each kind. The
     // output keeps the order of the plan.
@@ -934,9 +942,17 @@ pub fn assemble(
         .copied()
         .filter(|&i| plan[i].2 == Tier::Summary)
         .collect();
+    // The half is a cap, not a promise: the tier never takes the room that the
+    // sections before it need in full (the entry and the citing sections).
+    let before: Vec<usize> = order
+        .iter()
+        .copied()
+        .take_while(|&i| plan[i].2 != Tier::Summary)
+        .collect();
+    let reserve = room_before_tier(&before, &costs, &eligible, &file_costs, budget);
     let (tier_full, tier_listed) = tier_share(
         &tier.iter().map(|&i| costs[i]).collect::<Vec<_>>(),
-        budget / SUMMARY_SHARE,
+        (budget / SUMMARY_SHARE).min(budget.saturating_sub(reserve)),
     );
     let tier_pos = |i: usize| tier.iter().position(|&t| t == i);
     let mut tier_stop = false;
@@ -1139,6 +1155,53 @@ fn summary_fill_key(
         _ => (2, 0),
     };
     (heading != 0, class, shallow, doc.id.clone(), heading, at)
+}
+
+/// The characters that the packing gives to the convention files and to the
+/// sections before the tier `summary` in the packing order, without the tier:
+/// their stub lines (the map pass), then their full text, as far as it fits
+/// in the budget. The tier gets at most `budget - reserve`, so its stub lines
+/// never push a full section of the entry or of a citing document out.
+fn room_before_tier(
+    before: &[usize],
+    costs: &[(u32, u32)],
+    eligible: &[bool],
+    file_costs: &[(u32, u32)],
+    budget: u32,
+) -> u32 {
+    let mut used = 0u32;
+    let mut file_listed = vec![false; file_costs.len()];
+    for (k, &(_, stub)) in file_costs.iter().enumerate() {
+        if used + stub <= budget / 2 {
+            used += stub;
+            file_listed[k] = true;
+        }
+    }
+    let mut listed = vec![false; before.len()];
+    for (k, &i) in before.iter().enumerate() {
+        if used + costs[i].1 <= budget / 2 {
+            used += costs[i].1;
+            listed[k] = true;
+        }
+    }
+    for (k, &(f, stub)) in file_costs.iter().enumerate() {
+        let extra = if file_listed[k] {
+            f.saturating_sub(stub)
+        } else {
+            f
+        };
+        if used + extra <= budget {
+            used += extra;
+        }
+    }
+    for (k, &i) in before.iter().enumerate() {
+        let (f, stub) = costs[i];
+        let extra = if listed[k] { f.saturating_sub(stub) } else { f };
+        if eligible[i] && used + extra <= budget {
+            used += extra;
+        }
+    }
+    used
 }
 
 /// The share of the tier `summary`: how many of its sections, in the fill
