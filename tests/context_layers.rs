@@ -1013,8 +1013,9 @@ fn a_summary_with_a_missing_pin_is_stale_too() {
 
 #[test]
 fn a_stale_summary_that_is_only_listed_keeps_its_marker() {
-    // The summary of `valves` has 3,200 characters: a stub.
-    let r = large_summary(200);
+    // The summary of `valves` has 4,800 characters. It is over a half of 8,000
+    // characters: a stub.
+    let r = large_summary(300);
     make_valves_stale(&r);
     let (code, out, err) = r.run(&["context", "requirements/valves/closing"]);
     assert_eq!(code, 0, "{out}{err}");
@@ -1036,28 +1037,33 @@ fn a_stale_summary_that_is_only_listed_keeps_its_marker() {
 }
 
 #[test]
-fn the_summary_tier_uses_at_most_a_quarter_of_the_budget() {
-    // The summary of `valves` has 3,200 characters. It does not fit in 2,000
-    // of 8,000 characters (the default): it is a stub, and the section of the
-    // entry stays in full.
+fn the_summary_tier_uses_at_most_a_half_of_the_budget() {
+    // The summary of `valves` has 3,200 characters. It fits in 4,000 of 8,000
+    // characters (the default), and the tier has at most 4,000 characters.
     let r = large_summary(200);
     let (code, out, err) = r.run(&["context", "requirements/valves/closing", "--budget", "8000"]);
     assert_eq!(code, 0, "{out}{err}");
-    assert!(tier_chars(&out, "summary") <= 2000, "{out}");
-    assert!(
-        out.lines()
-            .any(|l| l.starts_with("- `summaries/valves#valves`") && l.contains("(summary)")),
-        "the large section is a stub: {out}"
-    );
-    assert!(!out.contains("A valve closes. A valve"), "{out}");
-    // The other tiers keep their share: the entry is in full.
+    assert!(out.contains("A valve closes. A valve"), "{out}");
+    assert!(tier_chars(&out, "summary") <= 4000, "{out}");
+    // The other tiers keep their room: the entry is in full.
     assert!(
         full_ids(&out)
             .iter()
             .any(|i| i.starts_with("requirements/valves/closing")),
         "{out}"
     );
-    // The same summary fits in a quarter of 20,000 characters.
+    // A summary of 4,800 characters does not fit in 4,000: it is a stub, and
+    // the tier still has at most 4,000 characters.
+    let r = large_summary(300);
+    let (_, out, _) = r.run(&["context", "requirements/valves/closing", "--budget", "8000"]);
+    assert!(
+        out.lines()
+            .any(|l| l.starts_with("- `summaries/valves#valves`") && l.contains("(summary)")),
+        "the large section is a stub: {out}"
+    );
+    assert!(!out.contains("A valve closes. A valve"), "{out}");
+    assert!(tier_total(&out) <= 4000, "{out}");
+    // It fits in a half of 20,000 characters.
     let (_, out, _) = r.run(&[
         "context",
         "requirements/valves/closing",
@@ -1065,47 +1071,64 @@ fn the_summary_tier_uses_at_most_a_quarter_of_the_budget() {
         "20000",
     ]);
     assert!(out.contains("A valve closes. A valve"), "{out}");
-    assert!(tier_chars(&out, "summary") <= 5000, "{out}");
+    assert!(tier_chars(&out, "summary") <= 10000, "{out}");
 }
 
 #[test]
-fn the_share_is_a_quarter_of_the_budget_and_not_a_fixed_number() {
-    // The summary of `valves` has 1,600 characters. It fits in 2,000 (the
-    // quarter of 8,000) with the 2 top documents, and not in 1,000 (the
-    // quarter of 4,000).
+fn the_share_is_a_half_of_the_budget_and_not_a_fixed_number() {
+    // The summary of `valves` has 1,600 characters. It fits in 4,000 (the
+    // half of 8,000) with the 2 top documents, and not in 1,500 (the half of
+    // 3,000).
     let r = large_summary(100);
     let (_, out, _) = r.run(&["context", "requirements/valves/closing", "--budget", "8000"]);
     assert!(out.contains("A valve closes. A valve"), "{out}");
-    let (_, out, _) = r.run(&["context", "requirements/valves/closing", "--budget", "4000"]);
+    let (_, out, _) = r.run(&["context", "requirements/valves/closing", "--budget", "3000"]);
     assert!(!out.contains("A valve closes. A valve"), "{out}");
-    assert!(tier_chars(&out, "summary") <= 1000, "{out}");
+    assert!(tier_total(&out) <= 1500, "{out}");
 }
 
 #[test]
 fn once_a_section_of_the_tier_is_a_stub_each_later_one_is_a_stub() {
-    // The big section of `valves` is a stub. The small summary of `drives`
-    // comes after it in the order, so it is a stub too: the tier is filled
-    // in order, and the last sections are the ones that it cuts.
-    let r = large_summary(200);
-    let (_, json, _) = r.run(&[
+    // The fill order is `drives`, `valves`, `system`, `product`. At 8,000
+    // characters, the summary of `valves` of 3,200 characters fits in the
+    // half of the budget, so each document is in full.
+    let args = [
         "context",
         "requirements/valves/drives/motor",
         "--budget",
         "8000",
         "--json",
-    ]);
-    let modes = tier_modes(&json);
+    ];
+    let r = large_summary(200);
+    let modes = tier_modes(&r.run(&args).1);
     assert_eq!(
         modes,
         [
             ("product".to_string(), true),
             ("system".to_string(), true),
+            ("summaries/valves".to_string(), true),
+            ("summaries/valves/drives".to_string(), true)
+        ],
+        "{modes:?}"
+    );
+    // The summary of 4,800 characters is a stub, so each later section of the
+    // fill order is a stub too, and only `drives` is in full. The output keeps
+    // its order from the top down.
+    let r = large_summary(300);
+    let (_, json, _) = r.run(&args);
+    let modes = tier_modes(&json);
+    assert_eq!(
+        modes,
+        [
+            ("product".to_string(), false),
+            ("system".to_string(), false),
             ("summaries/valves".to_string(), false),
-            ("summaries/valves/drives".to_string(), false)
+            ("summaries/valves/drives".to_string(), true)
         ],
         "{json}"
     );
-    // The same at a small budget: no full section after a stub.
+    // The same at a small budget: no full section after a stub in the fill
+    // order, which is the output order reversed (each document has 1 section).
     let r = rollup();
     for budget in ["400", "600", "1000", "2000"] {
         let (_, json, _) = r.run(&[
@@ -1115,7 +1138,8 @@ fn once_a_section_of_the_tier_is_a_stub_each_later_one_is_a_stub() {
             budget,
             "--json",
         ]);
-        let modes = tier_modes(&json);
+        let mut modes = tier_modes(&json);
+        modes.reverse();
         let first_stub = modes.iter().position(|m| !m.1).unwrap_or(modes.len());
         assert!(
             modes[first_stub..].iter().all(|m| !m.1),
@@ -1125,11 +1149,12 @@ fn once_a_section_of_the_tier_is_a_stub_each_later_one_is_a_stub() {
 }
 
 #[test]
-fn the_tier_is_a_prefix_of_its_order_at_each_budget() {
-    // The product has a long text, and the others are short. When the room
-    // is small, the product is a stub or is cut, and no later section is in
-    // full or listed before it: the sections that the output has are the
-    // first ones of the tier, and each full section comes before each stub.
+fn the_tier_is_a_prefix_of_its_fill_order_at_each_budget() {
+    // The product has a long text, and the others are short. The fill order
+    // is `drives`, `valves`, `system`, `product`. When the room is small, the
+    // last sections of the fill order are cut. Thus the sections that the
+    // output has are the first ones of the fill order, and in the fill order
+    // each full section comes before each stub.
     let r = rollup_bodies(
         "A valve closes after 30 seconds.",
         &"The product waters. ".repeat(30),
@@ -1158,6 +1183,7 @@ fn the_tier_is_a_prefix_of_its_order_at_each_budget() {
             "summaries/valves/drives"
         ]
     );
+    let fill: Vec<String> = all.iter().rev().cloned().collect();
     // A rule before the tier takes room, and its size moves the point where
     // the room is gone: each size and each budget is a case.
     for rule_chars in [0, 800, 1200, 1600, 2000, 2400] {
@@ -1169,11 +1195,12 @@ fn the_tier_is_a_prefix_of_its_order_at_each_budget() {
             ),
         );
         for budget in (600..4600).step_by(100) {
-            let modes = run(&budget.to_string());
+            let mut modes = run(&budget.to_string());
+            modes.reverse();
             let got: Vec<String> = modes.iter().map(|m| m.0.clone()).collect();
             assert_eq!(
                 got[..],
-                all[..got.len()],
+                fill[..got.len()],
                 "{rule_chars} {budget}: {modes:?}"
             );
             let first_stub = modes.iter().position(|m| !m.1).unwrap_or(modes.len());
@@ -1329,8 +1356,8 @@ fn a_planned_document_that_is_not_active_reaches_no_area() {
 fn under_a_query_the_tier_follows_the_entry_and_keeps_its_order() {
     // The rule `watering` has 1,500 characters and the words of the query.
     // The entry matches too. The tier never takes the room of the entry: the
-    // sections of the entry are in full, and the tier has at most a quarter
-    // of 4,000 characters.
+    // sections of the entry are in full, and the tier has at most a half of
+    // 4,000 characters.
     let r = rollup();
     let big = "The motor spin full speed rule. ".repeat(45);
     r.write(
@@ -1354,7 +1381,10 @@ fn under_a_query_the_tier_follows_the_entry_and_keeps_its_order() {
             .any(|i| i.starts_with("requirements/valves/drives/motor#requirements")),
         "{out}"
     );
-    assert!(tier_total(&out) <= 1000, "{out}");
+    // The tier has at most a half of the budget, and with the entry in full
+    // the whole output stays in the budget.
+    assert!(tier_total(&out) <= 2000, "{out}");
+    assert!(used_of(&out) <= 4000, "{out}");
     let docs = docs_of(&ids);
     let at = |d: &str| docs.iter().position(|x| x == d);
     assert!(at("product").is_some(), "{docs:?}");
@@ -1425,9 +1455,9 @@ fn the_tier_never_takes_the_room_of_the_entry_or_of_a_citing_section() {
                     "{a:?}: {out}"
                 );
             }
-            // The tier, in full and in stubs, has at most a quarter.
+            // The tier, in full and in stubs, has at most a half.
             assert!(
-                tier_total(&out) <= b / 4,
+                tier_total(&out) <= b / 2,
                 "{a:?} {budget}: {}",
                 tier_total(&out)
             );
@@ -1529,4 +1559,352 @@ fn an_on_request_layer_of_summaries_is_counted_and_not_served() {
         out.contains("on-request, not served: summaries 1;"),
         "{out}"
     );
+}
+
+/// The layers of the fixture of D83: no convention and no rule, so the output
+/// has the tier `summary` and the entry only.
+const D83_HEAD: &str = "[layers.foundation]\ntypes = [\"product\", \"system\", \"terms\"]\nfiles = [\"product.md\", \"system.md\", \"terms.md\"]\n\n[layers.rules]\ntypes = [\"rule\"]\n\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.summaries]\ntypes = [\"summary\"]\n\n";
+
+/// The fixture of D83 (design 0.8.1, part A): 6 areas, a real layer graph, and
+/// a `product` and a `system` document of about 4,100 bytes each. The summary
+/// of `valves` repeats one sentence `valves_repeat` times: 8 gives about 600
+/// bytes, and 56 gives about 3,000 bytes. `context src/motor.rs` reaches the
+/// chain `product`, `system`, `summaries/valves`, `summaries/valves/drives`.
+fn d83(valves_repeat: usize) -> Repo {
+    let r = Repo::with(D83_HEAD, ROLL_ROOTS);
+    r.write("src/valve.rs", "pub fn close_valve() {}\n");
+    r.write("src/motor.rs", "pub fn spin_up() {}\n");
+    r.write(
+        "docs/requirements/valves/drives/motor.md",
+        "---\nstatus: active\n---\n# Motor\n\n## Requirements\n\n- **spin-up**: The motor SHALL reach full speed in 2 seconds. See `src/motor.rs`.\n- **spin-down**: The motor SHALL stop in 1 second.\n",
+    );
+    r.write(
+        "docs/requirements/valves/closing.md",
+        "---\nstatus: active\n---\n# Closing\n\n## Requirements\n\n- **close-on-timeout**: The valve SHALL close after 30 seconds. See `src/valve.rs`.\n- **max-angle**: The valve SHALL open at most 80 degrees.\n",
+    );
+    for a in ["sensors", "pumps", "zones", "schedules"] {
+        r.write(
+            &format!("docs/requirements/{a}/main.md"),
+            &format!(
+                "---\nstatus: active\n---\n# {a}\n\n## Requirements\n\n- **first**: The {a} part SHALL start in 2 seconds.\n- **second**: The {a} part SHALL stop in 3 seconds.\n"
+            ),
+        );
+    }
+    for a in [
+        "valves/drives",
+        "valves",
+        "sensors",
+        "pumps",
+        "zones",
+        "schedules",
+    ] {
+        let body = if a == "valves" {
+            "A valve closes 30 seconds after its sensor stops. ".repeat(valves_repeat)
+        } else {
+            format!("The {a} part starts and stops on time. ").repeat(16)
+        };
+        summary(&r, a, &body);
+    }
+    for (path, id, title) in [
+        ("docs/system.md", "system", "Irrigation system"),
+        ("docs/product.md", "product", "Irrigation product"),
+    ] {
+        let mut body = format!("The {id} waters garden beds in zones. ").repeat(10);
+        for s in 1..=8 {
+            let text = format!("Part {s} of the {id} has its own text. ").repeat(11);
+            body.push_str(&format!("\n\n## Part {s}\n\n{text}"));
+        }
+        r.write(
+            path,
+            &format!("---\nrests-on: []\n---\n# {title}\n\n{body}\n"),
+        );
+    }
+    for id in ["system", "product"] {
+        let (code, out, err) = r.run(&["refresh", id, "--holds"]);
+        assert_eq!(code, 0, "{out}{err}");
+    }
+    let (code, out, err) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(format!("{out}{err}").contains(" 0 errors"), "{out}{err}");
+    r
+}
+
+/// What `context` gives for one target at one budget: the bytes of the
+/// output, the characters and the tokens of its head, and the units of the
+/// tier `summary` with true for a section in full.
+struct Measured {
+    bytes: usize,
+    used: usize,
+    tokens: usize,
+    tier: Vec<(String, bool)>,
+}
+
+impl Measured {
+    /// One line for the test log, as a row of the table of the plan.
+    fn line(&self, valves_repeat: usize, budget: u32) -> String {
+        let tier: Vec<String> = self
+            .tier
+            .iter()
+            .map(|(id, full)| format!("{id}:{}", if *full { "full" } else { "stub" }))
+            .collect();
+        format!(
+            "d83 valves_repeat={valves_repeat} budget={budget} bytes={} used={} tokens={} tier: {}",
+            self.bytes,
+            self.used,
+            self.tokens,
+            tier.join(" ")
+        )
+    }
+
+    /// The documents of the tier, in the order of the output, each once.
+    fn docs(&self) -> Vec<String> {
+        let mut docs: Vec<String> = Vec::new();
+        for (id, _) in &self.tier {
+            let d = id.split('#').next().unwrap().to_string();
+            if docs.last() != Some(&d) {
+                docs.push(d);
+            }
+        }
+        docs
+    }
+
+    /// True if the section of the tier with this id is in full.
+    fn is_full(&self, id: &str) -> bool {
+        self.tier.iter().any(|(i, full)| i == id && *full)
+    }
+
+    /// True if the output has the section of the tier with this id, in full
+    /// or as a stub.
+    fn has(&self, id: &str) -> bool {
+        self.tier.iter().any(|(i, _)| i == id)
+    }
+}
+
+fn measure(r: &Repo, target: &str, budget: u32) -> Measured {
+    let b = budget.to_string();
+    let (code, out, err) = r.run(&["context", target, "--budget", &b]);
+    assert_eq!(code, 0, "{out}{err}");
+    let (code, json, err) = r.run(&["context", target, "--budget", &b, "--json"]);
+    assert_eq!(code, 0, "{json}{err}");
+    let head = out.lines().next().unwrap();
+    let tokens = head
+        .split("about ")
+        .nth(1)
+        .and_then(|p| p.split(' ').next())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or_else(|| panic!("no tokens in the head: {head}"));
+    Measured {
+        bytes: out.trim_end_matches('\n').len() + 1,
+        used: used_of(&out),
+        tokens,
+        tier: parse_units(&json)
+            .into_iter()
+            .filter(|(_, tier, _)| tier == "summary")
+            .map(|(id, _, full)| (id, full))
+            .collect(),
+    }
+}
+
+/// The output order of the 4 documents of the chain of `src/motor.rs`.
+const D83_ORDER: [&str; 4] = [
+    "product",
+    "system",
+    "summaries/valves",
+    "summaries/valves/drives",
+];
+
+#[test]
+fn the_fixture_of_d83_keeps_the_output_order_at_each_budget_and_prints_its_sizes() {
+    for valves_repeat in [8, 56] {
+        let r = d83(valves_repeat);
+        // At a large budget the tier has all 4 documents, so the guard below
+        // is not empty.
+        let all = measure(&r, "src/motor.rs", 100_000);
+        assert_eq!(
+            all.docs(),
+            D83_ORDER,
+            "{}",
+            all.line(valves_repeat, 100_000)
+        );
+        for budget in [4_000, 8_000, 12_000, 20_000] {
+            let m = measure(&r, "src/motor.rs", budget);
+            // `cargo test -- --nocapture` shows the line of each budget.
+            println!("{}", m.line(valves_repeat, budget));
+            // The documents that the tier serves keep the order from the top
+            // down. A document that the budget cuts leaves a gap, not a
+            // change of order.
+            let line = m.line(valves_repeat, budget);
+            let ranks: Vec<usize> = m
+                .docs()
+                .iter()
+                .map(|d| {
+                    D83_ORDER
+                        .iter()
+                        .position(|x| x == d)
+                        .unwrap_or_else(|| panic!("{d}: {line}"))
+                })
+                .collect();
+            assert!(ranks.windows(2).all(|w| w[0] < w[1]), "{line}");
+            assert!(m.used <= budget as usize, "{line}");
+        }
+    }
+}
+
+#[test]
+fn the_summary_of_600_bytes_is_in_full_at_8000_with_a_real_layer_graph() {
+    // Before D83 the tier filled `product` first and its share ended inside
+    // `product`: no summary and no line of `system`.
+    let r = d83(8);
+    let m = measure(&r, "src/motor.rs", 8_000);
+    let line = m.line(8, 8_000);
+    assert!(m.is_full("summaries/valves/drives#drives"), "{line}");
+    assert!(m.is_full("summaries/valves#valves"), "{line}");
+}
+
+#[test]
+fn the_title_sections_of_d83_come_before_the_other_sections_in_the_fill_order() {
+    // The fill order of the fixture: the title of each document from the
+    // deepest summary up, then the other sections of `system`, then those of
+    // `product`. At each budget the served sections are a prefix of it, and
+    // in the fill order each full section comes before each stub.
+    let mut fill: Vec<String> = vec![
+        "summaries/valves/drives#drives".into(),
+        "summaries/valves#valves".into(),
+        "system#irrigation-system".into(),
+        "product#irrigation-product".into(),
+    ];
+    for doc in ["system", "product"] {
+        fill.extend((1..=8).map(|s| format!("{doc}#part-{s}")));
+    }
+    for valves_repeat in [8, 56] {
+        let r = d83(valves_repeat);
+        for budget in (600..=24_000).step_by(300) {
+            let b = budget.to_string();
+            let (code, json, err) = r.run(&["context", "src/motor.rs", "--budget", &b, "--json"]);
+            assert_eq!(code, 0, "{json}{err}");
+            let mut served: Vec<(usize, bool)> = parse_units(&json)
+                .into_iter()
+                .filter(|(_, tier, _)| tier == "summary")
+                .map(|(id, _, full)| {
+                    let at = fill.iter().position(|f| *f == id);
+                    (
+                        at.unwrap_or_else(|| panic!("{id} is not in the fill order")),
+                        full,
+                    )
+                })
+                .collect();
+            served.sort();
+            let case = format!("{valves_repeat} {budget}: {served:?}");
+            assert!(
+                served.iter().enumerate().all(|(n, s)| s.0 == n),
+                "not a prefix: {case}"
+            );
+            let first_stub = served.iter().position(|s| !s.1).unwrap_or(served.len());
+            assert!(
+                served[first_stub..].iter().all(|s| !s.1),
+                "a full section after a stub: {case}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_summary_of_3000_bytes_is_in_full_at_8000_and_a_listed_stub_at_4000() {
+    // The summary is over a quarter of 8,000 characters, the old share. The
+    // new order alone does not serve it in full, and the half share does.
+    let r = d83(56);
+    let m = measure(&r, "src/motor.rs", 8_000);
+    let line = m.line(56, 8_000);
+    assert!(m.is_full("summaries/valves/drives#drives"), "{line}");
+    assert!(m.is_full("summaries/valves#valves"), "{line}");
+    let m = measure(&r, "src/motor.rs", 4_000);
+    let line = m.line(56, 4_000);
+    assert!(m.has("summaries/valves#valves"), "{line}");
+    assert!(!m.is_full("summaries/valves#valves"), "{line}");
+}
+
+/// Gives the requirement `valves/drives/motor` a long section `Requirements`
+/// (about 5,900 characters) and a section `Links` with 10 links to new active
+/// requirement documents. The links give the plan 10 documents of the tiers
+/// after the summary tier, and each of them has a stub line in the map pass.
+fn crowd_motor(r: &Repo) {
+    let long = "The motor SHALL keep a steady speed. ".repeat(160);
+    let links: String = (1..=10)
+        .map(|n| format!("- [[requirements/links/l{n}]]\n"))
+        .collect();
+    r.write(
+        "docs/requirements/valves/drives/motor.md",
+        &format!(
+            "---\nstatus: active\n---\n# Motor\n\n## Requirements\n\n- **spin-up**: The motor SHALL reach full speed in 2 seconds. See `src/motor.rs`. {long}\n- **spin-down**: The motor SHALL stop in 1 second.\n\n## Links\n\n{links}"
+        ),
+    );
+    for n in 1..=10 {
+        r.write(
+            &format!("docs/requirements/links/l{n}.md"),
+            &requirements(
+                &format!("Link {n}"),
+                "only",
+                &format!("The link {n} part SHALL work."),
+            ),
+        );
+    }
+}
+
+/// The fixture of D83 with the crowded entry, and the same documents in a tree
+/// with no summary and no `rests-on`.
+fn d83_crowded() -> (Repo, Repo) {
+    let with = d83(8);
+    crowd_motor(&with);
+    for id in [
+        "summaries/valves/drives",
+        "summaries/valves",
+        "system",
+        "product",
+    ] {
+        let (code, out, err) = with.run(&["refresh", id, "--holds"]);
+        assert_eq!(code, 0, "{out}{err}");
+    }
+    let plain = Repo::with(
+        &D83_HEAD.replace("[layers.summaries]\ntypes = [\"summary\"]\n\n", ""),
+        ROLL_ROOTS,
+    );
+    plain.write("src/motor.rs", "pub fn spin_up() {}\n");
+    crowd_motor(&plain);
+    (with, plain)
+}
+
+#[test]
+fn the_tier_never_pushes_out_the_full_entry_that_a_tree_with_no_summary_serves() {
+    // The sections of the tiers `linked` and `more` come after the summary
+    // tier in the packing order, but their stub lines are in the map pass, and
+    // the map pass comes before the full text of the entry. The room of the
+    // tier must leave the room of these stub lines too.
+    let (with, plain) = d83_crowded();
+    let entry = "requirements/valves/drives/motor#requirements";
+    let full_entry = |r: &Repo, budget: u32| -> bool {
+        let b = budget.to_string();
+        let (code, json, err) = r.run(&[
+            "context",
+            "requirements/valves/drives/motor",
+            "--budget",
+            &b,
+            "--json",
+        ]);
+        assert_eq!(code, 0, "{json}{err}");
+        parse_units(&json)
+            .iter()
+            .any(|(id, _, full)| id == entry && *full)
+    };
+    let mut served_by_plain = 0;
+    for budget in (6_000..=10_000).step_by(50) {
+        if full_entry(&plain, budget) {
+            served_by_plain += 1;
+            assert!(
+                full_entry(&with, budget),
+                "the tree with no summary serves the entry in full at {budget}, the tree with the roll-up does not"
+            );
+        }
+    }
+    // The sweep is not empty: the entry is in full for some budgets.
+    assert!(served_by_plain > 10, "{served_by_plain}");
 }

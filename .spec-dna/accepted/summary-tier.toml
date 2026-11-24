@@ -1,0 +1,99 @@
+format = 2
+change = "summary-tier"
+scope = ["CHANGELOG.md", "bench/results/retrieval-synthetic-medium.json", "docs/adr/0028-roll-up-and-summaries.md", "docs/commands.md", "docs/design/0.8.1-a-evidence-and-context.md", "src/context.rs", "tests/context_layers.rs"]
+paths = ["src/context.rs", "tests/context_layers.rs"]
+tree = "466ca9fcc48751ff"
+result = "accepted"
+acknowledged-by = []
+
+[[acceptor]]
+roles = ["acceptor"]
+brief = "60c9a29df466f47a"
+session = "c51acbf1-5aed-497f-8ed7-0e87fb4f43ac"
+agent = "unknown"
+result = "accepted"
+model = "claude-opus-5-5"
+
+[[attempt]]
+acceptor = 1
+text = "Proof: `cargo test --test context_layers -- --nocapture` gives 44 passed. The 8 size lines of the D83 fixture: at 8,000 both sizes of `summaries/valves` (600 and 3,000 bytes) give `summaries/valves` and `summaries/valves/drives` in full (4,324 and 4,343 of 8,000). At 4,000 the 3,000-byte summary is a listed stub. `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `pre-commit run --all-files` pass. src/context.rs has no unit tests."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Before and after on my own D83 fixture: the installed 0.8.0 binary gives the title and 2 sections of `product` in full, 6 stubs and no summary, 2,277 of 8,000 characters (E15 reproduced). The tree binary gives both summaries of the area in full at 8,000."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Budget limits: 0, 1, 10, 50 and 100 exit 0 with 0 characters used and no panic. 4294967295 serves all 22 sections in full with no overflow in the debug build. 4294967296, -1 and abc give a usage error with exit 2."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Sweep of budgets 0 to 24,000 (step 100) of `context src/motor.rs --json` on 4 fixtures: summary of 600 bytes, of 3,000 bytes, summaries only for `valves`, and only for `valves/drives` and `sensors`. For each budget: the documents of the tier keep the top-down order, the served sections are a prefix of the D83 fill order, no section is in full after a stub in the fill order, used is at most the budget, and the tier (the tier_total count of the tests) is at most a half of the budget. 0 problems in 964 runs."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "2 source files in different areas (`src/motor.rs` and a new `src/sensor.rs` cited by `sensors`) with a stale `summaries/sensors`: fill order drives, sensors, valves (same depth, by id), system, product; output order product, system, sensors, valves, drives. A stale stub keeps `[stale]`. Sweeps without and with `--query` give 0 problems."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "A cited file in no area (`src/lone.rs`, cited by a requirements document at the root): the chain is `product` and `system` only, and the sweep gives 0 problems. At 8,000 the full sections use the share, so no stub of the tier is listed and the line of the sections that did not fit counts 10, as D83 item 5 says."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "A `product` with a title section of 12,324 characters: the title of `product` is a stub, the 2 summaries are in full, and a sweep to 30,000 gives 0 problems. A summary with 3 more sections, and a summary with no level-1 heading: the other sections come after all titles in the fill order, and sweeps with and without `--query` give 0 problems."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "The `--json` form: the top keys and the unit keys are the same for the 0.8.0 binary and the tree binary, and the units stay in the output order. A summary named as target is an entry and gets no tier."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "A tree with no roll-up (my fixture with no summaries and no `rests-on`): 64 cases (4 targets, 8 budgets from 300 to 20,000, `--json` and `--query`) are byte for byte the same for the installed 0.8.0 binary and the tree binary. The code agrees: with an empty tier, `tier_share` gives (0, 0) and `summary_after_entry` returns the order unchanged."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Room of the entry: an entry section of about 5,900 characters with 10 linked documents, in a tree with the roll-up and in the same tree with none. Budgets 2,000 to 14,000 (step 50), for `src/motor.rs`, `requirements/valves/drives/motor` and `--query 'motor speed'`: no entry section that the plain tree serves in full is lost with the roll-up (0 of 241 budgets each). For the document target, 14 budgets list fewer linked stub lines, as docs/commands.md states."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Numbers of docs/commands.md: a lone summary with a body of 2,961 characters is first in full at 6,100, below the default of 8,000. A body of 5,961 characters is first in full at 12,100, which matches about 12,200."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "The retrieval proof line read as a test: the reruns of the builder at 8,000 give 5271, 0.998 and 0.759 for the head and for the base (rows equal except latency). bench/results/retrieval-synthetic-medium.json has 5227, 0.995 and 0.756. The change does not cause the difference, but the 3 numbers are not the same as the plan says."
+outcome = "broke"
+
+[[attempt]]
+acceptor = 1
+text = "Scope: `spec-dna check --base 27eb114` gives 0 new errors and 1 new warning, SD913 for docs/concepts.md, which no `Files` item matches."
+outcome = "broke"
+
+[[attempt]]
+acceptor = 1
+text = "Rules that `spec-dna context` serves for src/context.rs and tests/context_layers.rs: sections of ADR 0033 and ADR 0024 only, and no rule on the packing of context. No text of a quarter share remains in docs/commands.md, docs/concepts.md or src. Security: the change adds no input, no file access and no secret. It only computes the packing in `assemble`."
+outcome = "held"
+
+[[finding]]
+acceptor = 1
+severity = "note"
+path = "docs/concepts.md"
+line = 141
+text = "The diff edits docs/concepts.md (a quarter to a half), but no `Files` item of the plan lists it. `spec-dna check --base 27eb114` gives SD913 outside-plan (a warning). The edit is correct and keeps the docs true. Add the path to `Files` of the plan, or move it to a change of its own."
+
+[[finding]]
+acceptor = 1
+severity = "note"
+path = "docs/intent/summary-tier/plan.md"
+line = 54
+text = "The Proof says that the rerun of t5 gives the same 3 numbers as bench/results/retrieval-synthetic-medium.json, and t5 says `the 3 numbers equal`. The rerun gives 5271, 0.998 and 0.759 against 5227, 0.995 and 0.756. The rerun of the base gives the same numbers as the head, so the change is not the cause, and the result file is stale against the base. Risks (line 29) says that the build stops and reports. The builder reported only in the body of commit acfa6d4 and ticked t5. The owner must decide on a new result file in another change."
