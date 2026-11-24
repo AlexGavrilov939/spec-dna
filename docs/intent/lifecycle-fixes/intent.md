@@ -1,5 +1,5 @@
 ---
-status: draft
+status: accepted
 class: higher-risk
 ---
 # Fixes of the change lifecycle: finish, scope, the acceptor, layers and small items
