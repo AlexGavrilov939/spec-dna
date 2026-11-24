@@ -203,6 +203,24 @@ impl Outcome {
     }
 }
 
+/// Why a plain run stopped: the spend is above the cap, or a folder is below
+/// the floor of free space (D100).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum StopBy {
+    Cap,
+    Disk,
+}
+
+impl StopBy {
+    /// The value of the key `stopped` of the result.
+    fn name(self) -> &'static str {
+        match self {
+            StopBy::Cap => "max-total-usd",
+            StopBy::Disk => "disk-space",
+        }
+    }
+}
+
 /// All values that the output needs.
 struct Report {
     claude_code: Option<String>,
@@ -212,8 +230,10 @@ struct Report {
     max_total_usd: f64,
     estimate: f64,
     outcomes: Vec<Outcome>,
-    /// The number of runs that did not start, after a stop by the cap.
+    /// The number of runs that did not start, after a stop.
     stopped: Option<u32>,
+    /// The reason of the stop.
+    stopped_by: StopBy,
     /// The harness of the copy of each run.
     harness: HarnessArm,
 }
@@ -319,6 +339,7 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
         estimate,
         outcomes: Vec::new(),
         stopped: None,
+        stopped_by: StopBy::Cap,
         harness: o.harness,
     };
     let mut ctx = Ctx {
@@ -334,6 +355,9 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
     let arm = o.harness;
     let named = o.named;
     let edit = |dir: &Path| crate::eval_ab::write_harness_arm(dir, arm, &[], named);
+    // The folder of the result file, if the command writes one (D100).
+    let result_folder = out_dir.as_ref().map(|d| (repo.root.join(d), d.to_string()));
+    let mut floor = Floor::new(table.min_free_mib, result_folder);
     let mut spend = 0.0;
     let mut started_runs = 0;
     'evals: for p in &plan {
@@ -345,6 +369,13 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
             results: Vec::new(),
         };
         for n in 1..=p.runs {
+            if let Some(low) = floor.low() {
+                eprintln!("{}", low.message(None));
+                report.stopped = Some(total_runs - started_runs);
+                report.stopped_by = StopBy::Disk;
+                report.outcomes.push(outcome);
+                break 'evals;
+            }
             eprintln!("eval run: {} run {n} of {}", p.eval.id, p.runs);
             let result = match one_attempt(&mut ctx, p, &edit, None) {
                 Ok(r) => r,
@@ -1117,6 +1148,113 @@ fn secs_var(name: &str, default: u64) -> Result<u64, Fatal> {
         })
 }
 
+/// The free space of a folder, in KiB, from the output of `df -Pk <folder>`
+/// (POSIX: a header, and one line of 6 fields). The value is the field before
+/// the first field of the second line that ends with `%` (the capacity), so a
+/// name of a file system with spaces does not move it. `None` if the output
+/// has no such field or the value is no integer.
+pub(crate) fn parse_df_available(output: &str) -> Option<u64> {
+    let line = output.lines().nth(1)?;
+    let fields: Vec<&str> = line.split_whitespace().collect();
+    let at = fields.iter().position(|f| f.ends_with('%'))?;
+    fields.get(at.checked_sub(1)?)?.parse().ok()
+}
+
+/// The free space of a folder in MiB, with `df -Pk` (D100). `None` if `df` is
+/// absent, fails, or gives output that does not parse. The program is found on
+/// `PATH`. A call of `statvfs` would need a dependency or `unsafe` code.
+fn free_mib(folder: &Path) -> Option<u64> {
+    let out = Command::new("df")
+        .arg("-Pk")
+        .arg(folder)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    parse_df_available(&String::from_utf8_lossy(&out.stdout)).map(|kib| kib / 1024)
+}
+
+/// A folder that is below the floor of free space.
+pub(crate) struct Low {
+    pub(crate) folder: String,
+    pub(crate) free_mib: u64,
+    pub(crate) min_mib: u64,
+}
+
+impl Low {
+    /// The message of the stop (D100). `resume` is the command that goes on:
+    /// a plain `eval run` has none, so its message ends with "run the command
+    /// again".
+    pub(crate) fn message(&self, resume: Option<&str>) -> String {
+        let again = match resume {
+            Some(file) => format!("run the command again with `--resume {file}`"),
+            None => "run the command again".to_string(),
+        };
+        format!(
+            "spec-dna eval run: stopped before a run: `{}` has {} MiB free, below `[evals] min-free-mib` ({}); free space, then {again}",
+            self.folder, self.free_mib, self.min_mib
+        )
+    }
+}
+
+/// The check of the free space before each run (D100). It reads the temporary
+/// folder, where the copy goes, and the folder of the result file. A floor of
+/// 0 turns the check off. If `df` gives no value, the command prints one
+/// warning and runs with no check.
+pub(crate) struct Floor {
+    min_mib: u64,
+    /// The folder, and the name that the messages use.
+    folders: Vec<(PathBuf, String)>,
+    off: bool,
+}
+
+impl Floor {
+    /// A check of the temporary folder, and of `result` (the folder of the
+    /// result file and its name) when there is one.
+    pub(crate) fn new(min_mib: u64, result: Option<(PathBuf, String)>) -> Floor {
+        let tmp = std::env::temp_dir();
+        let name = tmp.display().to_string();
+        let mut folders = vec![(tmp, name)];
+        folders.extend(result);
+        Floor {
+            min_mib,
+            folders,
+            off: false,
+        }
+    }
+
+    /// Reads the free space before a run. It returns the first folder that is
+    /// below the floor.
+    pub(crate) fn low(&mut self) -> Option<Low> {
+        if self.min_mib == 0 || self.off {
+            return None;
+        }
+        for (path, name) in &self.folders {
+            match free_mib(path) {
+                Some(n) if n < self.min_mib => {
+                    return Some(Low {
+                        folder: name.clone(),
+                        free_mib: n,
+                        min_mib: self.min_mib,
+                    });
+                }
+                Some(_) => {}
+                None => {
+                    eprintln!(
+                        "spec-dna: warning: cannot read the free space of `{name}` (`df -Pk`); the check of `[evals] min-free-mib` is off for this command"
+                    );
+                    self.off = true;
+                    return None;
+                }
+            }
+        }
+        None
+    }
+}
+
 /// The `PATH` of the agent and of the checks has the folder of the running
 /// binary first, so `spec-dna` in a copy is the binary under test, not the
 /// first one on the `PATH` of the person.
@@ -1753,11 +1891,14 @@ fn report_text(r: &Report) -> Vec<String> {
     }
     lines.push(format!("spend {:.2} USD", r.spend()));
     if let Some(n) = r.stopped {
-        lines.push(format!(
-            "stopped: the spend {:.2} USD is above max-total-usd {:.2} USD; {n} runs did not start",
-            r.spend(),
-            r.max_total_usd
-        ));
+        lines.push(match r.stopped_by {
+            StopBy::Cap => format!(
+                "stopped: the spend {:.2} USD is above max-total-usd {:.2} USD; {n} runs did not start",
+                r.spend(),
+                r.max_total_usd
+            ),
+            StopBy::Disk => format!("stopped: disk-space; {n} runs did not start"),
+        });
     }
     lines
 }
@@ -1814,7 +1955,7 @@ fn report_json(r: &Report) -> String {
         .num("max_total_usd", r6(r.max_total_usd))
         .num("estimate_usd", r6(r.estimate))
         .num("spend_usd", r6(r.spend()))
-        .opt_str("stopped", r.stopped.map(|_| "max-total-usd"));
+        .opt_str("stopped", r.stopped.map(|_| r.stopped_by.name()));
     obj = match r.pass_rate() {
         Some(rate) => obj.num("pass_rate", r6(rate)),
         None => obj.raw("pass_rate", "null"),
@@ -2030,6 +2171,67 @@ mod tests {
     }
 
     #[test]
+    fn the_free_space_is_the_field_before_the_capacity() {
+        let head = "Filesystem 1024-blocks Used Available Capacity Mounted on\n";
+        let value = |line: &str| parse_df_available(&format!("{head}{line}\n"));
+        assert_eq!(
+            value("/dev/disk3s5 971350180 123 456789 21% /System/Volumes/Data"),
+            Some(456_789)
+        );
+        // A name of a file system with spaces, and a mount point with spaces
+        // and a percent sign: the first field with a percent sign decides.
+        assert_eq!(
+            value("my disk name 1000 200 800 20% /Volumes/My Disk"),
+            Some(800)
+        );
+        assert_eq!(
+            value("/dev/x 1000 200 800 20% /Volumes/My 5% Disk"),
+            Some(800)
+        );
+        assert_eq!(value("/dev/x 1000 200 0 100% /"), Some(0));
+        assert_eq!(
+            value("/dev/x 99999999999 1 18446744073709551615 0% /"),
+            Some(u64::MAX)
+        );
+        // No capacity, a capacity with no value before it, a value that is no
+        // integer, and a short output: no value.
+        assert_eq!(value("/dev/x 1000 200 800 - /mnt"), None);
+        assert_eq!(value("20% /mnt"), None);
+        assert_eq!(value("/dev/x 1000 200 many 20% /mnt"), None);
+        assert_eq!(value("/dev/x 1000 200 -5 20% /mnt"), None);
+        assert_eq!(value(""), None);
+        assert_eq!(parse_df_available(""), None);
+        assert_eq!(parse_df_available("df: no such folder\n"), None);
+        assert_eq!(parse_df_available(head), None);
+    }
+
+    #[test]
+    fn the_message_of_the_stop_ends_with_the_command_that_goes_on() {
+        let low = Low {
+            folder: "evals/results".to_string(),
+            free_mib: 3,
+            min_mib: 2048,
+        };
+        assert_eq!(
+            low.message(None),
+            "spec-dna eval run: stopped before a run: `evals/results` has 3 MiB free, below `[evals] min-free-mib` (2048); free space, then run the command again"
+        );
+        assert!(
+            low.message(Some("evals/results/skills-1.json")).ends_with(
+                "then run the command again with `--resume evals/results/skills-1.json`"
+            )
+        );
+    }
+
+    #[test]
+    fn a_floor_of_0_never_calls_df() {
+        // A folder that does not exist would give a warning if `df` ran.
+        let mut floor = Floor::new(0, Some((PathBuf::from("/no/such/folder"), "x".into())));
+        assert!(floor.low().is_none());
+        assert!(!floor.off);
+    }
+
+    #[test]
     fn the_turns_are_the_sum_over_the_result_events() {
         let text = b"{\"type\":\"system\",\"num_turns\":50}\n{\"type\":\"result\",\"num_turns\":101}\n{\"type\":\"user\",\"x\":\"\\\"result\\\"\"}\n{\"type\":\"result\",\"num_turns\":8}\n{\"type\": \"result\", \"num_turns\": 0}\n";
         assert_eq!(result_turns(text), Some(109));
@@ -2153,6 +2355,7 @@ mod tests {
             estimate: 0.0,
             outcomes: passes.iter().map(|p| outcome(1, 1, &[*p])).collect(),
             stopped: None,
+            stopped_by: StopBy::Cap,
             harness: HarnessArm::Project,
         };
         assert!(mk(&[true, false], 0.5).passed());

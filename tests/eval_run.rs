@@ -70,6 +70,25 @@ fi
 exit "${STUB_EXIT:-0}"
 "#;
 
+/// A stub `df` for the check of the free space (D100). The tests never read the
+/// free space of the machine. The stub logs its arguments to `$STUB_DF_LOG`,
+/// and it prints the output of `df -Pk` with `$STUB_DF_KIB` free (default: much).
+/// `$STUB_DF_LOW_FOR` is a part of a folder name, and `$STUB_DF_LOW_KIB` is the
+/// free space of the folders that have it. `$STUB_DF_MODE` is `fail` (exit code
+/// 1 and no output) or `garbage` (no field that ends with a percent sign).
+const DF_STUB: &str = r#"#!/bin/sh
+echo "$*" >> "$STUB_DF_LOG"
+for a in "$@"; do last="$a"; done
+[ "$STUB_DF_MODE" = fail ] && exit 1
+if [ "$STUB_DF_MODE" = garbage ]; then echo "df: nothing useful"; exit 0; fi
+free="${STUB_DF_KIB:-90000000}"
+if [ -n "$STUB_DF_LOW_FOR" ]; then
+    case "$last" in *"$STUB_DF_LOW_FOR"*) free="${STUB_DF_LOW_KIB:-100}" ;; esac
+fi
+echo "Filesystem 1024-blocks Used Available Capacity Mounted on"
+echo "/dev/stub 100000000 1000 $free 1% /mnt/stub disk"
+"#;
+
 const CHECK_SH: &str = r#"file_has() {
     grep -q -F -- "$2" "$1"
 }
@@ -159,6 +178,7 @@ impl Fx {
         repo.commit("start");
         let stubs = Repo::empty();
         stub_bin(&stubs.dir.join("bin"), "claude", STUB);
+        stub_bin(&stubs.dir.join("bin"), "df", DF_STUB);
         fs::create_dir_all(stubs.dir.join("tmp")).unwrap();
         Fx { repo, stubs }
     }
@@ -185,8 +205,10 @@ impl Fx {
         let bin = path_with(&self.path("bin"));
         let strs = |n: &str| self.path(n).to_string_lossy().into_owned();
         let (log, files, env, tmp) = (strs("log"), strs("files"), strs("env"), strs("tmp"));
+        let df_log = strs("df-log");
         let mut set: Vec<(&str, &str)> = vec![
             ("PATH", &bin),
+            ("STUB_DF_LOG", &df_log),
             ("STUB_LOG", &log),
             ("STUB_FILES", &files),
             ("STUB_ENV", &env),
@@ -223,8 +245,24 @@ impl Fx {
         calls[1..].to_vec()
     }
 
+    /// The calls of the stub that run a task, of all the commands of a test:
+    /// each command also calls `claude --version` once.
+    fn task_calls(&self) -> Vec<Vec<String>> {
+        let version = vec!["--version".to_string()];
+        self.calls().into_iter().filter(|c| *c != version).collect()
+    }
+
     fn files(&self) -> String {
         fs::read_to_string(self.path("files")).unwrap()
+    }
+
+    /// The arguments of each call of the stub `df`.
+    fn df_calls(&self) -> Vec<String> {
+        fs::read_to_string(self.path("df-log"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
     }
 
     /// Asserts that the runner left no folder in the temporary folder.
@@ -385,6 +423,183 @@ fn a_compact_result_object_on_one_line_is_one_segment() {
         out.contains("\"turns\":7,\"segments\":1,\"seconds\":"),
         "{out}"
     );
+}
+
+// D100: a floor of free space before each run.
+
+#[test]
+fn a_disk_below_the_floor_stops_before_a_run() {
+    let fx = Fx::with(&[ev("example")]);
+    // The stub `df` gives 1,024 KiB (1 MiB), and the key is 2048 by default.
+    let (code, out, err) = fx.run_env(&["--json"], &[("STUB_DF_KIB", "1024")]);
+    assert_eq!(code, 3, "{out}{err}");
+    assert!(
+        fx.runs().is_empty(),
+        "the stub claude ran: {:?}",
+        fx.calls()
+    );
+    assert!(out.contains("\"stopped\":\"disk-space\""), "{out}");
+    assert!(out.contains("\"pass_rate\":null,\"passed\":false"), "{out}");
+    assert!(out.contains("\"results\":[]"), "{out}");
+    let tmp = fx.tmp().to_string_lossy().into_owned();
+    assert!(
+        err.contains(&format!(
+            "spec-dna eval run: stopped before a run: `{tmp}` has 1 MiB free, below `[evals] min-free-mib` (2048); free space, then run the command again\n"
+        )),
+        "{err}"
+    );
+    // The text form has the line of the stop, and the same exit code.
+    let (code, out, _) = fx.run_env(&[], &[("STUB_DF_KIB", "1024")]);
+    assert_eq!(code, 3, "{out}");
+    assert!(
+        out.contains("stopped: disk-space; 1 runs did not start\n"),
+        "{out}"
+    );
+    assert!(!out.contains("pass rate"), "{out}");
+    assert!(fx.task_calls().is_empty());
+    fx.assert_clean();
+}
+
+#[test]
+fn a_disk_above_the_floor_runs_and_the_key_sets_the_floor() {
+    let fx = Fx::new("[evals]\nmin-free-mib = 512\n", &[ev("example")]);
+    // 600 MiB is above a floor of 512 MiB, and 400 MiB is below it.
+    let (code, out, err) = fx.run_env(&[], &[("STUB_DF_KIB", "614400")]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(fx.task_calls().len(), 1);
+    let (code, out, err) = fx.run_env(&[], &[("STUB_DF_KIB", "409600")]);
+    assert_eq!(code, 3, "{out}{err}");
+    assert!(
+        err.contains("has 400 MiB free, below `[evals] min-free-mib` (512)"),
+        "{err}"
+    );
+    assert_eq!(
+        fx.task_calls().len(),
+        1,
+        "the second command started no run"
+    );
+}
+
+#[test]
+fn the_free_space_of_both_folders_is_read_before_each_run() {
+    let mut e = ev("example");
+    e.runs = 2;
+    let fx = Fx::with(&[e]);
+    let (code, out, err) = fx.run(&["--out", "evals/results"]);
+    assert_eq!(code, 0, "{out}{err}");
+    // Each attempt reads the temporary folder and the folder of the result.
+    let calls = fx.df_calls();
+    assert_eq!(calls.len(), 4, "{calls:?}");
+    let tmp = fx.tmp().to_string_lossy().into_owned();
+    for pair in calls.chunks(2) {
+        assert_eq!(pair[0], format!("-Pk {tmp}"), "{calls:?}");
+        assert!(
+            pair[1].starts_with("-Pk ") && pair[1].ends_with("/evals/results"),
+            "{calls:?}"
+        );
+    }
+    // With no `--out`, there is no result file and no folder of it.
+    let fx = Fx::with(&[ev("example")]);
+    let (code, out, err) = fx.run(&[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(fx.df_calls().len(), 1);
+    // A dry run starts no process, `df` also.
+    let fx = Fx::with(&[ev("example")]);
+    let (code, out, err) = fx.run(&["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(fx.df_calls().is_empty());
+}
+
+#[test]
+fn a_low_folder_of_the_result_stops_the_run_and_the_result_is_written() {
+    let mut e = ev("example");
+    e.runs = 2;
+    let fx = Fx::with(&[e]);
+    let (code, out, err) = fx.run_env(
+        &["--out", "evals/results", "--json"],
+        &[
+            ("STUB_DF_LOW_FOR", "evals/results"),
+            ("STUB_DF_LOW_KIB", "3072"),
+        ],
+    );
+    assert_eq!(code, 3, "{out}{err}");
+    assert!(fx.runs().is_empty());
+    assert!(
+        err.contains("stopped before a run: `evals/results` has 3 MiB free, below `[evals] min-free-mib` (2048)"),
+        "{err}"
+    );
+    assert!(out.contains("\"stopped\":\"disk-space\""), "{out}");
+    // The result file is in the folder, with the stop.
+    let dir = fx.repo.dir.join("evals/results");
+    let files: Vec<_> = fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    assert_eq!(files.len(), 1, "{files:?}");
+    let text: String = read(&files[0]).split_whitespace().collect();
+    assert!(text.contains("\"stopped\":\"disk-space\""), "{text}");
+    fx.assert_clean();
+}
+
+#[test]
+fn a_stop_after_the_first_run_keeps_its_result() {
+    // The first run passes, and the disk is low before the second one: the
+    // stub `df` is low from its second call on.
+    let mut e = ev("example");
+    e.runs = 2;
+    let fx = Fx::with(&[e]);
+    // The log is written first, so a count of 1 is the first call.
+    let script = DF_STUB.replacen(
+        "echo \"$*\" >> \"$STUB_DF_LOG\"\n",
+        "echo \"$*\" >> \"$STUB_DF_LOG\"\nn=$(wc -l < \"$STUB_DF_LOG\" | tr -d ' ')\n[ \"$n\" -gt 1 ] && STUB_DF_KIB=100\n",
+        1,
+    );
+    assert_ne!(script, DF_STUB);
+    stub_bin(&fx.path("bin"), "df", &script);
+    let (code, out, err) = fx.run_env(&["--json"], &[]);
+    assert_eq!(code, 3, "{out}{err}");
+    assert_eq!(
+        fx.runs().len(),
+        1,
+        "the first run started, the second did not"
+    );
+    assert!(out.contains("\"stopped\":\"disk-space\""), "{out}");
+    assert!(out.contains("\"passed_runs\":1"), "{out}");
+    assert!(out.contains("\"cost_usd\":0.1"), "{out}");
+}
+
+#[test]
+fn a_floor_of_0_turns_the_check_off() {
+    // Guard: the stub `df` is never called, and the run starts, before and after.
+    let fx = Fx::new("[evals]\nmin-free-mib = 0\n", &[ev("example")]);
+    let (code, out, err) = fx.run_env(&[], &[("STUB_DF_KIB", "1")]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(fx.runs().len(), 1);
+    assert!(fx.df_calls().is_empty(), "{:?}", fx.df_calls());
+}
+
+#[test]
+fn a_df_that_fails_gives_one_warning() {
+    for mode in ["fail", "garbage"] {
+        let mut e = ev("example");
+        e.runs = 2;
+        let fx = Fx::with(&[e]);
+        let (code, out, err) = fx.run_env(&["--out", "evals/results"], &[("STUB_DF_MODE", mode)]);
+        // The runs start with no check, and each of them passes.
+        assert_eq!(code, 0, "{mode}: {out}{err}");
+        assert_eq!(fx.runs().len(), 2, "{mode}");
+        let warnings = err.matches("cannot read the free space of").count();
+        assert_eq!(warnings, 1, "{mode}: {err}");
+        let tmp = fx.tmp().to_string_lossy().into_owned();
+        assert!(
+            err.contains(&format!(
+                "warning: cannot read the free space of `{tmp}` (`df -Pk`); the check of `[evals] min-free-mib` is off for this command"
+            )),
+            "{mode}: {err}"
+        );
+        // After the warning, the check is off: no more call of `df`.
+        assert_eq!(fx.df_calls().len(), 1, "{mode}");
+    }
 }
 
 #[test]
