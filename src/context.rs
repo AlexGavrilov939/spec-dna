@@ -97,7 +97,7 @@ use crate::model::{Corpus, Doc, DocType, LinkRes, Res};
 use crate::parse::{Chunk, RefKind};
 use crate::rollup::{self, Level, Rollup};
 use std::cell::RefCell;
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1698,6 +1698,61 @@ pub fn render(c: &Corpus, root: &Path, a: &Assembly, as_json: bool) -> String {
     format!("{head}{}\n", out.trim_end())
 }
 
+/// The evidence of a requirement for `show`: its key, its sources, its partial
+/// tags, and the bind of each full tag as (`<path>:<line>`, bind, proof).
+type ShownEvidence = (String, Vec<String>, Vec<String>, Vec<TagBind>);
+
+/// The bind of one full tag: with no report read, the proof is `None`.
+type TagBind = (
+    String,
+    crate::evidence::Bind,
+    Option<crate::evidence::Proof>,
+);
+
+/// The binds of the full tags of requirement `r` of document `d`, in the order
+/// of the tags. A tag that the reports bound keeps its bind. Else the bind is
+/// the scan of its test file: the test under the tag, or the reason why it has
+/// none (design 0.8.1, D82). `texts` caches the test files that it read.
+fn tag_binds(
+    c: &Corpus,
+    root: &Path,
+    texts: &mut HashMap<String, Option<String>>,
+    d: u32,
+    r: usize,
+) -> Vec<TagBind> {
+    let mut out = Vec::new();
+    for cv in c.covers.iter().filter(|cv| !cv.partial) {
+        let Res::Found(found, Some(key), true) = c.resolve(&cv.target) else {
+            continue;
+        };
+        if found != d || c.docs[d as usize].req(&key) != Some(r) {
+            continue;
+        }
+        let at = format!("{}:{}", cv.path, cv.line);
+        match &cv.bind {
+            Some(b) => out.push((at, b.clone(), cv.proof.clone())),
+            None => {
+                let text = texts.entry(cv.path.clone()).or_insert_with(|| {
+                    std::fs::read(root.join(&cv.path))
+                        .ok()
+                        .map(|b| String::from_utf8_lossy(&b).into_owned())
+                });
+                let lines: Vec<&str> = text
+                    .as_deref()
+                    .map(|t| t.lines().collect())
+                    .unwrap_or_default();
+                let tag = (cv.line as usize).saturating_sub(1);
+                out.push((
+                    at,
+                    crate::evidence::scan_bind(&lines, tag, cv.case.as_deref()),
+                    None,
+                ));
+            }
+        }
+    }
+    out
+}
+
 /// `spec-dna show` gives a document, a section with its subsections, or one
 /// requirement.
 pub fn show(c: &Corpus, root: &Path, d: u32, frag: Option<&str>, as_json: bool) -> String {
@@ -1766,14 +1821,17 @@ pub fn show(c: &Corpus, root: &Path, d: u32, frag: Option<&str>, as_json: bool) 
         "document" => doc.reqs.clone(),
         _ => Vec::new(),
     };
-    // The full evidence, and the partial `covers:` tags apart from it.
-    let evidence: Vec<(String, Vec<String>, Vec<String>)> = shown_reqs
+    // The full evidence, and the partial `covers:` tags apart from it. Each full
+    // tag has its bind: the test under it, and with a report, its result.
+    let mut texts: HashMap<String, Option<String>> = HashMap::new();
+    let evidence: Vec<ShownEvidence> = shown_reqs
         .iter()
         .map(|&r| {
             (
                 doc.parsed.reqs[r].key.clone(),
                 ev.of(d, doc, r),
                 ev.partial_of(d, r).to_vec(),
+                tag_binds(c, root, &mut texts, d, r),
             )
         })
         .collect();
@@ -1798,11 +1856,17 @@ pub fn show(c: &Corpus, root: &Path, d: u32, frag: Option<&str>, as_json: bool) 
                 .strs("requirements", &keys)
                 .raw(
                     "evidence",
-                    &json::array(evidence.iter().map(|(k, v, p)| {
+                    &json::array(evidence.iter().map(|(k, v, p, binds)| {
                         Obj::new()
                             .str("key", k)
                             .strs("sources", v)
                             .strs("partial", p)
+                            .raw(
+                                "binds",
+                                &json::array(binds.iter().map(|(at, b, proof)| {
+                                    crate::evidence::bind_object(Obj::new(), at, b, proof.as_ref())
+                                })),
+                            )
                             .end()
                     }),),
                 )
@@ -1832,11 +1896,18 @@ pub fn show(c: &Corpus, root: &Path, d: u32, frag: Option<&str>, as_json: bool) 
     }
     if !evidence.is_empty() {
         out.push_str("<!-- evidence -->\n");
-        for (k, v, p) in &evidence {
+        for (k, v, p, binds) in &evidence {
+            // A full tag has the bracket of its bind. A `verified-by` source has none.
+            let bracket = |source: &String| match binds.iter().find(|(at, ..)| at == source) {
+                Some((_, b, proof)) => {
+                    format!("{source} {}", crate::evidence::bracket(b, proof.as_ref()))
+                }
+                None => source.clone(),
+            };
             let mut v = if v.is_empty() {
                 "none".to_string()
             } else {
-                v.join(", ")
+                v.iter().map(bracket).collect::<Vec<_>>().join(", ")
             };
             if !p.is_empty() {
                 v.push_str(&format!("; partial: {}", p.join(", ")));

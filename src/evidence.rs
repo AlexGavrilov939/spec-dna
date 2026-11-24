@@ -76,12 +76,35 @@ pub enum Reason {
     NoReport,
 }
 
+impl Reason {
+    /// The name in `--json` output and in the docs.
+    pub fn key(self) -> &'static str {
+        match self {
+            Reason::NoTest => "no-test",
+            Reason::Group => "group",
+            Reason::Template => "template",
+            Reason::NoCase => "no-case",
+            Reason::OutsideTree => "outside-tree",
+            Reason::NoReport => "no-report",
+        }
+    }
+}
+
 /// What the tag names: the test under it, or the case that `case:` names.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum By {
     #[default]
     Definition,
     Case,
+}
+
+impl By {
+    pub fn key(self) -> &'static str {
+        match self {
+            By::Definition => "definition",
+            By::Case => "case",
+        }
+    }
 }
 
 /// The detail of the bind of one tag (design 0.8.1, D82). The messages of SD616
@@ -121,6 +144,16 @@ pub enum Fit {
     Classname,
     /// By the name only.
     Name,
+}
+
+impl Fit {
+    pub fn key(self) -> &'static str {
+        match self {
+            Fit::File => "file",
+            Fit::Classname => "classname",
+            Fit::Name => "name",
+        }
+    }
 }
 
 impl Bind {
@@ -1481,6 +1514,90 @@ pub fn bind_covers(root: &std::path::Path, covers: &mut [Cover], reads: &Reads) 
         cv.proof = Some(proof);
         cv.bind = Some(bind);
     }
+}
+
+/// The bind of a tag when no report is read: the test under the tag, or the
+/// reason why it has none (design 0.8.1, D82 items 1 to 3). `show` gives it.
+pub fn scan_bind(lines: &[&str], tag: usize, case: Option<&str>) -> Bind {
+    let mut bind = Bind::default();
+    if let Some(name) = case {
+        bind.by = By::Case;
+        bind.test = Some(name.to_string());
+        return bind;
+    }
+    let under = if tag < lines.len() {
+        under_tag(lines, tag)
+    } else {
+        Under::NoTest(None)
+    };
+    match under {
+        Under::Test(t) => bind.test = Some(t.name),
+        Under::Template(name) => {
+            bind.test = (!name.is_empty()).then_some(name);
+            bind.reason = Some(Reason::Template);
+        }
+        Under::Group => bind.reason = Some(Reason::Group),
+        Under::NoTest(line) => {
+            bind.line = line;
+            bind.reason = Some(Reason::NoTest);
+        }
+    }
+    bind
+}
+
+/// The result of a bind in `--json` output: `not-read` when no report is read.
+fn result_key(proof: Option<&Proof>) -> &'static str {
+    match proof {
+        None => "not-read",
+        Some(Proof::Passed(..)) => "passed",
+        Some(Proof::Failed(_)) => "failed",
+        Some(Proof::Skipped(_)) => "skipped",
+        Some(Proof::Unbound) => "unbound",
+    }
+}
+
+/// The bracket of a tag in the evidence line of `show` (design 0.8.1, D82,
+/// "Formats"). Without a report (`proof` is `None`) it gives the test under the
+/// tag, or its reason. With a report it gives the result and the case, or the
+/// reason why the tag binds no case.
+pub fn bracket(bind: &Bind, proof: Option<&Proof>) -> String {
+    let name = |n: &str| {
+        if bind.by_name {
+            format!("{n}, by name")
+        } else {
+            n.to_string()
+        }
+    };
+    match (proof, bind.reason) {
+        (None, Some(r)) => format!("[no test: {}]", r.key()),
+        (None, None) => format!("[test {}]", bind.test.as_deref().unwrap_or("")),
+        (Some(_), Some(r)) => format!("[unbound: {}]", r.key()),
+        (Some(Proof::Passed(n, _)), None) => format!("[passed {}]", name(n)),
+        (Some(Proof::Failed(n)), None) => format!("[failed {}]", name(n)),
+        (Some(Proof::Skipped(n)), None) => format!("[skipped {}]", name(n)),
+        (Some(Proof::Unbound), None) => "[unbound: no-case]".to_string(),
+    }
+}
+
+/// The object of one tag in the field `binds` of `show --json` and of
+/// `check --reports --json` (design 0.8.1, D82, "Formats"). `lead` holds the
+/// fields that come first.
+pub fn bind_object(
+    lead: crate::json::Obj,
+    tag: &str,
+    bind: &Bind,
+    proof: Option<&Proof>,
+) -> String {
+    lead.str("tag", tag)
+        .opt_str("test", bind.test.as_deref())
+        .str("by", bind.by.key())
+        .opt_str("case", bind.case.as_deref())
+        .num("cases", bind.cases)
+        .opt_str("fit", bind.fit.map(Fit::key))
+        .bool("shared", bind.shared)
+        .str("result", result_key(proof))
+        .opt_str("reason", bind.reason.map(Reason::key))
+        .end()
 }
 
 /// The text of the reason why a tag binds no case (design 0.8.1, D82, "Formats").

@@ -2460,7 +2460,7 @@ fn evidence_resolves_covers_tags_and_verified_by() {
     assert_eq!(code, 0);
     assert!(
         out.contains(
-            "<!-- evidence -->\n- loans#loan-period: tests/fines.test.ts:2, tests/test_loans.py:1"
+            "<!-- evidence -->\n- loans#loan-period: tests/fines.test.ts:2 [test x], tests/test_loans.py:1 [test test_period]"
         ),
         "{out}"
     );
@@ -2470,7 +2470,7 @@ fn evidence_resolves_covers_tags_and_verified_by() {
         "{out}"
     );
     assert!(
-        out.contains("- loans#fines: tests/fines.test.ts:1\n"),
+        out.contains("- loans#fines: tests/fines.test.ts:1 [test x]\n"),
         "{out}"
     );
     // The evidence check is base-relative: an old requirement without
@@ -2503,6 +2503,89 @@ fn partial_repo(tag: &str) -> Repo {
     );
     r.commit("partial");
     r
+}
+
+/// `profile_repo` with 3 more test files: a tag above no test, a tag above a
+/// group and a partial tag.
+fn tagged_repo() -> Repo {
+    let r = profile_repo("");
+    r.write("tests/test_import.py", "# covers: loans#fines\nimport os\n");
+    r.write(
+        "tests/valves.test.js",
+        "// covers: loans#renew-limit\ndescribe('Loans', () => {\n  it('renews', () => {});\n});\n",
+    );
+    r.write(
+        "tests/test_part.py",
+        "# covers: partial loans#loan-period\ndef test_part():\n    pass\n",
+    );
+    r.commit("tags");
+    r
+}
+
+#[test]
+fn show_gives_the_test_under_each_full_tag_and_its_reason_when_it_has_none() {
+    let r = tagged_repo();
+    // A full tag: the test under it. A partial tag gets no bracket.
+    let (code, out, _) = r.run(&["show", "loans#loan-period"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("- loans#loan-period: tests/test_loans.py:1 [test test_period]; partial: tests/test_part.py:1\n"),
+        "{out}"
+    );
+    // A tag above no test, and a tag above a group, show the reason. The
+    // `verified-by` source gets no bracket.
+    let (code, out, _) = r.run(&["show", "loans#fines"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("- loans#fines: tests/test_import.py:1 [no test: no-test]\n"),
+        "{out}"
+    );
+    let (code, out, _) = r.run(&["show", "loans#renew-limit"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains(
+            "- loans#renew-limit: tests/renew.py, tests/valves.test.js:1 [no test: group]\n"
+        ),
+        "{out}"
+    );
+    // The whole document lists one line for each requirement.
+    let (code, out, _) = r.run(&["show", "loans"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("[test test_period]"), "{out}");
+    assert!(out.contains("[no test: no-test]"), "{out}");
+}
+
+#[test]
+fn show_json_gives_the_field_binds_with_the_result_not_read() {
+    let r = tagged_repo();
+    let (code, out, _) = r.run(&["show", "loans#loan-period", "--json"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains(r#""evidence":[{"key":"loan-period","sources":["tests/test_loans.py:1"],"partial":["tests/test_part.py:1"],"binds":[{"tag":"tests/test_loans.py:1","test":"test_period","by":"definition","case":null,"cases":0,"fit":null,"shared":false,"result":"not-read","reason":null}]}]"#),
+        "{out}"
+    );
+    let (code, out, _) = r.run(&["show", "loans#fines", "--json"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains(r#""binds":[{"tag":"tests/test_import.py:1","test":null,"by":"definition","case":null,"cases":0,"fit":null,"shared":false,"result":"not-read","reason":"no-test"}]"#),
+        "{out}"
+    );
+    // A requirement with no full tag has an empty field.
+    let (code, out, _) = r.run(&["show", "loans#renew-limit", "--json"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains(r#""binds":[{"tag":"tests/valves.test.js:1","test":null,"by":"definition","case":null,"cases":0,"fit":null,"shared":false,"result":"not-read","reason":"group"}]"#), "{out}");
+    // `case:` names the test.
+    r.write(
+        "tests/test_named.py",
+        "# covers: loans#fines case:\"Fines are charged\"\nVALUE = 1\n",
+    );
+    r.commit("named");
+    let (code, out, _) = r.run(&["show", "loans#fines", "--json"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains(r#"{"tag":"tests/test_named.py:1","test":"Fines are charged","by":"case","case":null,"cases":0,"fit":null,"shared":false,"result":"not-read","reason":null}"#),
+        "{out}"
+    );
 }
 
 #[test]
@@ -2545,8 +2628,8 @@ fn a_full_tag_beside_a_partial_tag_is_evidence() {
     assert!(!out.contains("SD608"), "{out}");
     let (_, out, _) = r.run(&["show", "loans#fines"]);
     assert!(
-        out.contains("- loans#fines: tests/test_all.py:1\n")
-            || out.contains("- loans#fines: tests/test_all.py:1;"),
+        out.contains("- loans#fines: tests/test_all.py:1 [no test: no-test]\n")
+            || out.contains("- loans#fines: tests/test_all.py:1 [no test: no-test];"),
         "{out}"
     );
 }
@@ -2572,18 +2655,18 @@ fn show_gives_the_field_partial_apart_from_the_sources() {
     );
     let (_, out, _) = r.run(&["show", "loans#loan-period"]);
     assert!(
-        out.contains("- loans#loan-period: tests/test_loans.py:1; partial: tests/test_p.py:1"),
+        out.contains("- loans#loan-period: tests/test_loans.py:1 [test test_period]; partial: tests/test_p.py:1"),
         "{out}"
     );
     let (_, out, _) = r.run(&["show", "loans#fines", "--json"]);
     assert!(
-        out.contains("\"evidence\":[{\"key\":\"fines\",\"sources\":[],\"partial\":[\"tests/test_fines.py:1\"]}]"),
+        out.contains("\"evidence\":[{\"key\":\"fines\",\"sources\":[],\"partial\":[\"tests/test_fines.py:1\"],\"binds\":[]}]"),
         "{out}"
     );
     // The field is always there, also with no partial tag.
     let (_, out, _) = r.run(&["show", "loans#renew-limit", "--json"]);
     assert!(
-        out.contains("\"sources\":[\"tests/renew.py\"],\"partial\":[]"),
+        out.contains("\"sources\":[\"tests/renew.py\"],\"partial\":[],\"binds\":[]"),
         "{out}"
     );
 }
