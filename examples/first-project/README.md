@@ -108,7 +108,7 @@ spec-dna check: 2 documents; 0 new errors and 0 new warnings against b32abef70b9
 $ spec-dna show requirements/orders
 ...
 <!-- evidence -->
-- requirements/orders#cancel-window: tests/test_orders.py:1
+- requirements/orders#cancel-window: tests/test_orders.py:1 [test test_cancel_after_31_minutes_fails]
 ```
 
 ## If it fails
