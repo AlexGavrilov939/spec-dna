@@ -210,6 +210,34 @@ fn meter_counts_the_last_executor_iteration() {
 }
 
 #[test]
+fn meter_skips_a_synthetic_line() {
+    let dir = Dir::new();
+    let t = dir.0.join("s1.jsonl");
+    let ev = event(&t, "s1", None);
+    let args = ["context-meter", "--levels", "250000"];
+    write_transcript(&t, &[assistant(260_000, 5)]);
+    let (_, out, _) = hook(&dir, &args, &ev, &[]);
+    assert!(out.contains("about 260K tokens"), "{out}");
+    // A synthetic line with a usage of 0 must not reset the state.
+    let synthetic = r#"{"type":"assistant","message":{"role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"x"}],"usage":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0}}}"#;
+    write_transcript(&t, &[assistant(260_000, 5), synthetic.to_string()]);
+    let (_, out, _) = hook(&dir, &args, &ev, &[]);
+    assert_eq!(out, "");
+    assert_eq!(dir.state_files(), 1);
+    // The next real line of the same size is the same crossing: no new notice.
+    write_transcript(
+        &t,
+        &[
+            assistant(260_000, 5),
+            synthetic.to_string(),
+            assistant(262_000, 5),
+        ],
+    );
+    let (_, out, _) = hook(&dir, &args, &ev, &[]);
+    assert_eq!(out, "");
+}
+
+#[test]
 fn meter_is_silent_on_bad_input() {
     let dir = Dir::new();
     let args = ["context-meter", "--levels", "1"];

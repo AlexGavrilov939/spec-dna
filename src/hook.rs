@@ -295,13 +295,18 @@ fn contains(hay: &[u8], needle: &[u8]) -> bool {
 
 /// Returns the context size of a transcript line, or `None` if the line is not
 /// an assistant message with a usage object. The size is the sum of the 3 input
-/// token fields of the last iteration of type `message`, else of `usage`.
+/// token fields of the last iteration of type `message`, else of `usage`. A
+/// line of the model `<synthetic>` has no size.
 fn line_context(line: &[u8]) -> Option<u64> {
     if !contains(line, br#""type":"assistant""#) {
         return None;
     }
     let v = json::parse(std::str::from_utf8(line).ok()?).ok()?;
     if v.get("type").as_str() != Some("assistant") {
+        return None;
+    }
+    // A synthetic line has no request: its usage is 0.
+    if v.get("message").get("model").as_str() == Some("<synthetic>") {
         return None;
     }
     let usage = v.get("message").get("usage");
@@ -2955,6 +2960,17 @@ mod tests {
             r#""output_tokens":5,"iterations":7"#,
         );
         assert_eq!(line_context(line.as_bytes()), Some(6));
+    }
+
+    #[test]
+    fn line_context_skips_a_synthetic_line() {
+        let line = assistant(0, 0, 9).replace(
+            r#""role":"assistant""#,
+            r#""role":"assistant","model":"<synthetic>""#,
+        );
+        assert_eq!(line_context(line.as_bytes()), None);
+        let real = line.replace("<synthetic>", "some-model");
+        assert_eq!(line_context(real.as_bytes()), Some(9));
     }
 
     #[test]
