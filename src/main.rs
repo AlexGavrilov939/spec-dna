@@ -474,7 +474,7 @@ indicator. Exit codes: 2 usage, unknown group or no --sdlc, 3 configuration,
     ),
     (
         "eval",
-        "eval run [<id>...] [--runs <n>] [--min-pass-rate <r>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate] [--harness <arm>]\neval run --ab <skill|all|agents-line|accept> [--harness <arm>] [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate | --no-isolate] [--resume <result file>] [--json]\neval run --arms <arm>,<arm>[,<arm>] [<id>...] [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--resume <result file>] [--json]\neval pack\neval verdict [--release] [--json]\neval verdict --compare <treatment>,<control> <result file> [--json]\neval records <result file>",
+        "eval run [<id>...] [--runs <n>] [--min-pass-rate <r>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate] [--harness <arm>]\neval run --ab <skill|all|agents-line|accept> [--harness <arm>] [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate | --no-isolate] [--resume <result file>] [--json]\neval run --arms <arm>[,<arm>[,<arm>]] [<id>...] [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--resume <result file>] [--json]\neval pack\neval verdict [--release] [--json]\neval verdict --compare <treatment>,<control> <result file> [--json]\neval records <result file>",
         "Runs the evals of [evals] dir (<id>.json) with headless Claude Code. For
 each run, it copies the fixture and the harness files into a temporary git
 repository, starts `claude -p` in it, and runs the checks of the eval. It
@@ -518,15 +518,17 @@ A harness arm is `none`, `lean`, `lean-no-advisor`, `full` or `project`. `--harn
 project (`project` keeps them, as before). The runner passes `--model` and
 `--effort` of the orchestrator of `lean` to each arm, also `project`, and it
 isolates the runs, so --no-isolate with --harness or --arms is a usage error. `eval run --arms
-<arm>,<arm>[,<arm>]` runs the plain evals in 2 or 3 arms, in waves: wave r runs
-each eval once in each arm, and the order of the arms rotates. It writes
+<arm>[,<arm>[,<arm>]]` runs the plain evals in 1 to 3 arms, in waves: wave r runs
+each eval once in each arm, and the order of the arms rotates. With 1 arm, wave r
+runs each eval once in that arm, so the arms of one eval can run as separate
+commands at the same time. It writes
 <dir>/results/arms-<time>.json, with one side for each arm of each run, and it
 gives no pass rate, so it never exits with 1. A stop by the cap keeps the
 complete waves. --resume goes on with the same arms and the evals of its file;
-an id must be in the file. Each run has `turns` and
-`seconds`. An eval file can have the key `change`: a folder whose files the
+an id must be in the file. Each run has `turns` (the sum over its segments),
+`segments` and `seconds`. An eval file can have the key `change`: a folder whose files the
 runner commits on the branch of `branch`, so the copy has a diff against main.
-Exit codes of --arms and --harness: 2 usage, an unknown arm, 1 arm or more than
+Exit codes of --arms and --harness: 2 usage, an unknown arm, no arm or more than
 3, --arms with --ab, --no-isolate with them.
 
 `eval pack` writes the pack of 62 evals and their fixtures to <dir>/pack/. It
@@ -666,7 +668,7 @@ struct Args {
     no_isolate: bool,
     resume: Option<String>,
     release: bool,
-    /// `--arms <arm>,<arm>[,<arm>]` of `eval run` (D57).
+    /// `--arms <arm>[,<arm>[,<arm>]]` of `eval run` (D57, D100).
     arms: Option<String>,
     /// `--harness <arm>` of `eval run` (D57).
     harness: Option<String>,

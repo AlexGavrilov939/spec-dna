@@ -1744,16 +1744,16 @@ pub struct ArmsOpts {
     pub resume: Option<String>,
 }
 
-/// Reads the value of `--arms`: 2 or 3 different arm names. Another count, a
-/// name twice or an unknown name is a usage error.
+/// Reads the value of `--arms`: 1 to 3 different arm names (D100). Another
+/// count, a name twice or an unknown name is a usage error.
 pub fn parse_arms(list: &str) -> Result<Vec<HarnessArm>, Fatal> {
     let arms: Vec<HarnessArm> = list
         .split(',')
         .map(HarnessArm::parse)
         .collect::<Result<_, _>>()?;
-    if !(2..=3).contains(&arms.len()) {
+    if !(1..=3).contains(&arms.len()) {
         return Err(Fatal::Usage(format!(
-            "--arms takes 2 or 3 arms, got {}; use `--arms <arm>,<arm>[,<arm>]`",
+            "--arms takes 1 to 3 arms, got {}; use `--arms <arm>[,<arm>[,<arm>]]`",
             arms.len()
         )));
     }
@@ -1990,9 +1990,10 @@ fn read_arms_prior(v: &json::Value, plan: &[Planned], arms: &[HarnessArm]) -> (P
     (prior, runs)
 }
 
-/// `eval run --arms <arm>,<arm>[,<arm>] [<id>...]`: the plain evals of
-/// `[evals] dir` in 2 or 3 harness arms, in waves (D57). Wave `r` runs each
-/// eval once in each arm, and the order of the arms rotates (`rotation`). The
+/// `eval run --arms <arm>[,<arm>[,<arm>]] [<id>...]`: the plain evals of
+/// `[evals] dir` in 1 to 3 harness arms, in waves (D57, D100). Wave `r` runs
+/// each eval once in each arm, and the order of the arms rotates
+/// (`rotation`). With 1 arm, a wave runs each eval once in that arm. The
 /// result is `<dir>/results/arms-<time>.json`. A stop by the cap keeps the
 /// complete waves, and the analysis drops a partial wave. The command gives
 /// no pass rate, so it never exits with 1.

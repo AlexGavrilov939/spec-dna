@@ -2556,13 +2556,66 @@ fn the_result_of_arms_has_one_side_for_each_arm_with_the_turns_and_the_seconds()
 }
 
 #[test]
+fn arms_runs_one_arm_alone() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM);
+    let (code, out, err) = fx.arms("none", &["--max-total-usd", "100", "--json"], &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    // Wave 1 runs each eval once in the arm `none`, and the file has this arm only.
+    assert_eq!(fx.calls().len(), 2);
+    for part in [
+        "\"arms\":[\"none\"]",
+        "\"excluded\":{\"none\":0}",
+        "\"waves\":1",
+        "\"stopped\":null",
+        "\"results\":[{\"run\":1,\"arms\":{\"none\":{\"claude_exit\":0,",
+    ] {
+        assert!(out.contains(part), "`{part}` not in {out}");
+    }
+    assert!(!out.contains("\"lean\""), "{out}");
+    let names = fx.results();
+    assert_eq!(names.len(), 1, "{names:?}");
+    assert!(names[0].starts_with("arms-"), "{names:?}");
+}
+
+#[test]
+fn a_run_of_one_arm_goes_on_with_resume() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM);
+    // A wave is 2 evals x 1 arm = 2 runs of 1 USD. The cap of 3.5 USD stops
+    // before the 4th run: wave 1 is complete, and wave 2 has 1 run.
+    let (code, out, err) = fx.arms(
+        "none",
+        &["--runs", "2", "--max-total-usd", "3.5", "--json"],
+        &[("STUB_COST", "1")],
+    );
+    assert_eq!(code, 3, "{out}{err}");
+    assert_eq!(fx.calls().len(), 3);
+    assert!(out.contains("\"stopped\":\"max-total-usd\""), "{out}");
+    assert!(out.contains("\"waves\":1"), "{out}");
+    let file = format!("evals/results/{}", fx.results()[0]);
+    let (code, out, err) = fx.arms(
+        "none",
+        &["--resume", &file, "--max-total-usd", "100", "--json"],
+        &[("STUB_COST", "1")],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(fx.calls().len(), 4, "only the run that was left");
+    assert!(out.contains("\"waves\":2"), "{out}");
+    assert!(out.contains("\"stopped\":null"), "{out}");
+    assert_eq!(fx.results().len(), 1, "--resume writes the same file");
+    // The arms of the file and of the command must be the same.
+    let (code, _, err) = fx.arms("none,lean", &["--resume", &file], &[]);
+    assert_eq!(code, 2, "{err}");
+}
+
+#[test]
 fn the_usage_errors_of_arms_and_harness_start_no_process() {
     let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
     fx.add_plain(&TEAM[..1]);
-    let cases: [(&[&str], &str); 11] = [
+    let cases: [(&[&str], &str); 10] = [
         (&["--arms", "none,nonsense"], "no harness arm"),
-        (&["--arms", "none"], "2 or 3 arms"),
-        (&["--arms", "none,lean,full,project"], "2 or 3 arms"),
+        (&["--arms", "none,lean,full,project"], "1 to 3 arms"),
         (&["--arms", "none,none"], "twice"),
         (&["--arms", "none,lean", "--ab"], "exclude each other"),
         (&["--arms", "none,lean", "--no-isolate"], "--no-isolate"),
