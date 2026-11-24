@@ -238,6 +238,23 @@ fn meter_skips_a_synthetic_line() {
 }
 
 #[test]
+fn meter_ignores_an_iteration_with_no_token_fields() {
+    // A new shape of an iteration must not reset the meter: the top-level usage counts.
+    let dir = Dir::new();
+    let t = dir.0.join("s1.jsonl");
+    let ev = event(&t, "s1", None);
+    let args = ["context-meter", "--levels", "250000"];
+    write_transcript(&t, &[assistant(260_000, 5)]);
+    let (_, out, _) = hook(&dir, &args, &ev, &[]);
+    assert!(out.contains("about 260K tokens"), "{out}");
+    let odd = r#"{"type":"assistant","message":{"role":"assistant","usage":{"cache_read_input_tokens":260000,"iterations":[{"type":"message"}]}}}"#;
+    write_transcript(&t, &[assistant(260_000, 5), odd.to_string()]);
+    let (_, out, _) = hook(&dir, &args, &ev, &[]);
+    assert_eq!(out, "");
+    assert_eq!(dir.state_files(), 1);
+}
+
+#[test]
 fn meter_is_silent_on_bad_input() {
     let dir = Dir::new();
     let args = ["context-meter", "--levels", "1"];

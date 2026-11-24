@@ -295,8 +295,8 @@ fn contains(hay: &[u8], needle: &[u8]) -> bool {
 
 /// Returns the context size of a transcript line, or `None` if the line is not
 /// an assistant message with a usage object. The size is the sum of the 3 input
-/// token fields of the last iteration of type `message`, else of `usage`. A
-/// line of the model `<synthetic>` has no size.
+/// token fields of the last iteration of type `message` that has them, else of
+/// `usage`. A line of the model `<synthetic>` has no size.
 fn line_context(line: &[u8]) -> Option<u64> {
     if !contains(line, br#""type":"assistant""#) {
         return None;
@@ -320,8 +320,19 @@ fn line_context(line: &[u8]) -> Option<u64> {
         .as_arr()
         .iter()
         .rev()
-        .find(|i| i.get("type").as_str() == Some("message"));
+        .find(|i| i.get("type").as_str() == Some("message") && has_tokens(i));
     Some(token_sum(last.unwrap_or(usage)))
+}
+
+/// Returns true if a usage object has at least 1 of the 3 input token fields.
+fn has_tokens(usage: &Value) -> bool {
+    [
+        "input_tokens",
+        "cache_creation_input_tokens",
+        "cache_read_input_tokens",
+    ]
+    .iter()
+    .any(|k| !matches!(usage.get(k), Value::Null))
 }
 
 /// Returns the sum of the 3 input token fields of a usage object.
@@ -2953,6 +2964,17 @@ mod tests {
         assert_eq!(line_context(line.as_bytes()), Some(70_001));
         // No iterations, an empty list, or a value that is not a list (guard).
         assert_eq!(line_context(assistant(1, 2, 3).as_bytes()), Some(6));
+        // An iteration of type message with no token field is skipped.
+        let line = assistant(1, 2, 3).replace(
+            r#""output_tokens":5"#,
+            r#""output_tokens":5,"iterations":[{"type":"message","input_tokens":40},{"type":"message"}]"#,
+        );
+        assert_eq!(line_context(line.as_bytes()), Some(40));
+        let line = assistant(1, 2, 3).replace(
+            r#""output_tokens":5"#,
+            r#""output_tokens":5,"iterations":[{"type":"message"}]"#,
+        );
+        assert_eq!(line_context(line.as_bytes()), Some(6));
         let line = iterated(5_000, &[]);
         assert_eq!(line_context(line.as_bytes()), Some(5_001));
         let line = assistant(1, 2, 3).replace(
