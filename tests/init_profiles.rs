@@ -1219,3 +1219,40 @@ fn reconfigure_drops_an_entry_with_no_effect_that_holds_only_the_advisor() {
         r.read("spec-dna.toml")
     );
 }
+
+/// The warning of D97: the advisor is on, and no change has a class.
+const NO_CLASS_WARNING: &str = "warning: the advisor is on, and the policy `none` has no change of class `higher-risk`, so the model-team line asks for no consult; write advisor=none, or choose the policy three-class or two-class";
+
+#[test]
+fn the_advisor_with_the_policy_none_gives_a_warning() {
+    let r = repo();
+    let answers = "change-policy = \"none\"\nharness-models = [\"advisor=fable\"]\n";
+    let (code, out, err) = init_with(&r, answers, &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains(NO_CLASS_WARNING), "{out}");
+    let (code, out, err) = init_with(&r, answers, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains(NO_CLASS_WARNING), "{out}");
+    // A plain `init` on the configuration gives the warning too.
+    let (code, out, err) = run(&r, &["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains(NO_CLASS_WARNING), "{out}");
+}
+
+#[test]
+fn no_advisor_or_a_change_policy_gives_no_warning_of_the_advisor() {
+    for answers in [
+        "change-policy = \"three-class\"\nharness-models = [\"advisor=fable\"]\n",
+        "change-policy = \"two-class\"\nharness-models = [\"advisor=fable\"]\n",
+        "change-policy = \"none\"\nharness-models = [\"advisor=none\"]\n",
+        "change-policy = \"none\"\nharness = \"none\"\n",
+    ] {
+        let r = repo();
+        let (code, out, err) = init_with(&r, answers, &[]);
+        assert_eq!(code, 0, "{answers}: {out}{err}");
+        assert!(!out.contains("has no change of class"), "{answers}: {out}");
+        let (code, out, err) = run(&r, &["init"]);
+        assert_eq!(code, 0, "{answers}: {out}{err}");
+        assert!(!out.contains("has no change of class"), "{answers}: {out}");
+    }
+}

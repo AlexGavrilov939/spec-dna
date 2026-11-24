@@ -518,6 +518,10 @@ pub struct Harness {
     /// the list empty, and `toml_section` does not write it.
     #[allow(dead_code)] // The hook `protect-tests` (step 4, S4) reads it.
     pub tests: Vec<String>,
+    /// True: `[change] policy` is `none`, so no change has a class. Only `init`
+    /// sets it, for `warnings`. Each other reader has false, so `upgrade` gives
+    /// no warning of it. `toml_section` does not write it.
+    pub no_change_class: bool,
 }
 
 pub const DEFAULT_CONTEXT_METER: [u32; 2] = [300_000, 600_000];
@@ -602,6 +606,7 @@ impl Harness {
             protect_approvals: None,
             intent_dirs: Vec::new(),
             tests: Vec::new(),
+            no_change_class: false,
         }
     }
 
@@ -832,6 +837,10 @@ impl Harness {
             out.push(format!(
                 "the advisor ({a}) ranks below the main model ({o}); advice from a weaker model has little value"
             ));
+        }
+        // The line asks for a consult only in a `higher-risk` change (D97, item 6).
+        if self.on(Role::Advisor) && self.no_change_class {
+            out.push("the advisor is on, and the policy `none` has no change of class `higher-risk`, so the model-team line asks for no consult; write advisor=none, or choose the policy three-class or two-class".to_string());
         }
         if let Model::Id(o) = &orch.model
             && orch.effort != Effort::Inherit
@@ -3243,6 +3252,17 @@ opus = "xhigh"
             "{w:?}"
         );
         assert!(Harness::new(Level::None).warnings().is_empty());
+    }
+
+    #[test]
+    fn warns_when_the_advisor_is_on_and_no_change_has_a_class() {
+        let mut h = lean();
+        h.no_change_class = true;
+        let w = h.warnings();
+        assert_eq!(w.len(), 1, "{w:?}");
+        assert!(w[0].starts_with("the advisor is on"), "{w:?}");
+        h.cfg_mut(Role::Advisor).model = Model::None;
+        assert!(h.warnings().is_empty(), "{:?}", h.warnings());
     }
 
     #[test]

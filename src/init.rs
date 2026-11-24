@@ -3964,6 +3964,7 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     // The hook `protect-approvals` reads the folders of the `intent` layer, as
     // `check` reads them from this text.
     new_harness.intent_dirs = crate::lifecycle::intent_dirs(&parsed);
+    new_harness.no_change_class = parsed.change_policy == ChangePolicy::None;
     let mut changes = Vec::new();
     let old = std::fs::read_to_string(&cfg_path).ok();
     if old.as_deref() != Some(text.as_str()) {
@@ -4705,7 +4706,18 @@ pub(crate) fn adapters_of(
 fn adapters_only(repo: &Repo, o: &Opts, cfg: &Config) -> Result<u8, Fatal> {
     let (chosen, mut changes) = adapters_of(&disk(repo), cfg)?;
     let hrun = match &cfg.harness {
-        Some(h) => plan_harness(repo, h, Some(h), &[], harness::Mode::Upgrade, &mut changes)?,
+        Some(h) => {
+            let mut h = h.clone();
+            h.no_change_class = cfg.change_policy == ChangePolicy::None;
+            plan_harness(
+                repo,
+                &h,
+                Some(&h),
+                &[],
+                harness::Mode::Upgrade,
+                &mut changes,
+            )?
+        }
         None => None,
     };
     if o.dry_run {
