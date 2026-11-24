@@ -1,5 +1,5 @@
 ---
-status: draft
+status: accepted
 class: higher-risk
 ---
 # The eval runner counts each segment, runs one arm alone, and keeps a floor of free space
