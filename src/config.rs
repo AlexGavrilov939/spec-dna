@@ -4888,7 +4888,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             assert!(with("", &format!("[rules]\n{name} = \"off\"\n")).is_ok());
         }
 
-        // The keys of a layer: exactly the 12 keys of the design.
+        // The keys of a layer: exactly the 13 keys of the design.
         let layer = &schema.get("$defs").get("layer");
         let mut lkeys = keys(layer);
         lkeys.sort();
@@ -4905,6 +4905,7 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             "max-chars",
             "max-started",
             "stale-days",
+            "rolls-up",
         ]
         .map(String::from)
         .to_vec();

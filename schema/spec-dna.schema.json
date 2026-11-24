@@ -802,6 +802,13 @@
           "description": "The days without a commit before a change is stale. Default: no limit.",
           "type": "integer",
           "minimum": 0
+        },
+        "rolls-up": {
+          "description": "Only on the layer with the type `summary`: the source layers of the summaries. Each name is a layer of `[layers]` that has the type `requirements`, `interface`, `rule`, `decision` or `research`, and no source folder is inside another. Default: the layer with the type `requirements`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       }
     },
