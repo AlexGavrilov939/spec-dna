@@ -94,11 +94,31 @@ pub struct Bind {
     pub case: Option<String>,
     /// The number of bound cases.
     pub cases: usize,
+    /// How the bound cases fit the test file. `None` with no bound case.
+    pub fit: Option<Fit>,
+    /// True for a shared set: the tag proves only when each case passed.
+    pub shared: bool,
+    /// True when each bound case fits by its name only (SD621).
+    pub by_name: bool,
     /// The reason for no bound case. `None` with a bound case.
     pub reason: Option<Reason>,
     /// The line (from 1) of the first line below the tag that is code and no
     /// test: the line of the reason `no-test`.
     pub line: Option<usize>,
+    /// For `case:` with no bound case: the names of cases that end with the
+    /// value. The fix of a `case:` with a part of a name.
+    pub near: Vec<String>,
+}
+
+/// How the bound cases fit the test file of the tag (design 0.8.1, D82 item 6).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fit {
+    /// By the `file` of the case.
+    File,
+    /// By the `classname` of the case.
+    Classname,
+    /// By the name only.
+    Name,
 }
 
 impl Bind {
@@ -896,16 +916,6 @@ fn ends_in_segments(dotted_path: &str, key: &str) -> bool {
             .is_some_and(|p| p.ends_with('.'))
 }
 
-/// The classnames that name a test file: the `classname`, and its part before
-/// the last `.` (the form of pytest: module, then class).
-fn classname_keys(classname: &str) -> Vec<&str> {
-    let mut keys = vec![classname];
-    if let Some((module, _)) = classname.rsplit_once('.') {
-        keys.push(module);
-    }
-    keys
-}
-
 /// True if a file path of a case names the test file of a tag. `case_file` has
 /// forward slashes and no leading `./`. A runner that starts in a subfolder
 /// writes a shorter path, so the tag path can also end with `/` and the path of
@@ -977,6 +987,72 @@ fn belongs_elsewhere(case: &str, ours: &TestName, tests: &[TestName]) -> bool {
         .any(|t| name_end(case, t).is_some_and(|e| (e, t.name.len()) > rank))
 }
 
+/// The path of the folder of a file, or an empty text for a file in the root.
+fn folder_of(path: &str) -> &str {
+    path.rsplit_once('/').map_or("", |(f, _)| f)
+}
+
+/// The key of a test file for a binary id of cargo-nextest: the stem of the
+/// file, or the name of its folder when the stem is `main`.
+fn binary_key(path: &str) -> &str {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    let stem = name.rsplit_once('.').map_or(name, |(s, _)| s);
+    if stem == "main" {
+        folder_of(path).rsplit('/').next().unwrap_or("")
+    } else {
+        stem
+    }
+}
+
+/// The ends of a path at each `/`, the longest first: `a/b/c`, `b/c`, `c`.
+fn path_ends(path: &str) -> impl Iterator<Item = &str> {
+    std::iter::once(path).chain(path.match_indices('/').map(|(i, _)| &path[i + 1..]))
+}
+
+/// How a `classname` names a test file (design 0.8.1, D82 item 6). The first
+/// row that applies decides.
+enum Class {
+    /// The binary id of cargo-nextest, with `::`: the key after the last `::`
+    /// and its last `/`.
+    Binary(String),
+    /// A path with `/` whose last segment has a `.`: the rule of `file`.
+    Path(String),
+    /// A path with `/` and no extension: the longest folder of a test file that
+    /// ends it in whole segments.
+    Folder(Option<String>),
+    /// Another `classname`, with `$` read as `.`: the keys that the dotted path
+    /// of the test file can end with, and the `classname` when it has one
+    /// segment (it can also end the folder).
+    Dotted(Vec<String>, Option<String>),
+}
+
+/// The way a case fits a test file: by its file, by its `classname`, or by its
+/// name only.
+enum Kind {
+    File(String),
+    Class(Class, bool),
+    Name,
+}
+
+/// The test file of a tag, with what the rules of fit read.
+struct Place<'p> {
+    path: &'p str,
+    dotted: String,
+    key: &'p str,
+    folder: &'p str,
+}
+
+impl<'p> Place<'p> {
+    fn new(path: &'p str) -> Place<'p> {
+        Place {
+            path,
+            dotted: dotted(path),
+            key: binary_key(path),
+            folder: folder_of(path),
+        }
+    }
+}
+
 /// The index of the cases of the reports, for the bind of many tags. It holds,
 /// once for all tags, what a bind needs about a case: the cases by the names
 /// that they can have, and the test files that each `classname` names. The cost
@@ -990,62 +1066,44 @@ pub struct Binder<'a> {
     by_suffix: HashMap<&'a str, Vec<usize>>,
     /// A whole name, to the cases that have it.
     by_name: HashMap<&'a str, Vec<usize>>,
-    /// For each case with a `classname` and no file: the keys of the
-    /// `classname`, and true if a test file names it.
-    class: Vec<Option<(Vec<&'a str>, bool)>>,
-    /// For each case with a file: the path with forward slashes, with no `./`.
-    file: Vec<Option<String>>,
+    /// For each case, the way that it fits a test file.
+    kind: Vec<Kind>,
 }
 
 impl<'a> Binder<'a> {
     pub fn new(cases: &'a [Case], test_files: &[String]) -> Binder<'a> {
-        // The dotted path of each test file, and each end of it in whole
-        // segments.
-        let mut ends: HashSet<String> = HashSet::new();
-        for f in test_files {
-            let d = dotted(f);
-            let mut rest = d.as_str();
-            loop {
-                ends.insert(rest.to_string());
-                match rest.split_once('.') {
-                    Some((_, tail)) => rest = tail,
-                    None => break,
-                }
-            }
-        }
+        let names = Names::new(test_files);
         let mut by_segment: HashMap<&str, Vec<usize>> = HashMap::new();
         let mut by_suffix: HashMap<&str, Vec<usize>> = HashMap::new();
         let mut by_name: HashMap<&str, Vec<usize>> = HashMap::new();
-        let mut class = Vec::with_capacity(cases.len());
-        let mut file = Vec::with_capacity(cases.len());
+        let mut kind = Vec::with_capacity(cases.len());
         for (i, c) in cases.iter().enumerate() {
-            let mut keys: Vec<&str> = head_segments(&c.name).into_iter().map(|s| s.0).collect();
-            keys.sort_unstable();
-            keys.dedup();
-            for k in keys {
+            let mut segs: Vec<&str> = head_segments(&c.name).into_iter().map(|s| s.0).collect();
+            segs.sort_unstable();
+            segs.dedup();
+            for k in segs {
                 by_segment.entry(k).or_default().push(i);
             }
             let name = c.name.as_str();
-            let mut keys = vec![name];
-            keys.extend(name.match_indices(' ').map(|(p, _)| &name[p + 1..]));
-            keys.retain(|k| !k.is_empty());
-            keys.sort_unstable();
-            keys.dedup();
-            for k in keys {
+            let mut tails = vec![name];
+            tails.extend(name.match_indices(' ').map(|(p, _)| &name[p + 1..]));
+            tails.retain(|k| !k.is_empty());
+            tails.sort_unstable();
+            tails.dedup();
+            for k in tails {
                 by_suffix.entry(k).or_default().push(i);
             }
             by_name.entry(name).or_default().push(i);
-            file.push(c.file.as_ref().map(|f| {
-                let f = f.replace('\\', "/");
-                f.trim_start_matches("./").to_string()
-            }));
-            class.push(match (&c.file, &c.classname) {
-                (None, Some(cn)) => {
-                    let keys = classname_keys(cn);
-                    let named = keys.iter().any(|k| ends.contains(*k));
-                    Some((keys, named))
+            kind.push(match (&c.file, &c.classname) {
+                (Some(f), _) => {
+                    let f = f.replace('\\', "/");
+                    Kind::File(f.trim_start_matches("./").to_string())
                 }
-                _ => None,
+                (None, Some(cn)) => {
+                    let (class, named) = names.class(cn);
+                    Kind::Class(class, named)
+                }
+                (None, None) => Kind::Name,
             });
         }
         Binder {
@@ -1053,24 +1111,39 @@ impl<'a> Binder<'a> {
             by_segment,
             by_suffix,
             by_name,
-            class,
-            file,
+            kind,
         }
     }
 
-    /// True if case `i` can bind a tag of the test file `path`. `dotted_path`
-    /// is the dotted path of `path`. A case that has a file binds only a tag of
-    /// that file. A case with no file and a `classname` binds only a tag of a
-    /// test file whose dotted path ends with the `classname` or with its part
-    /// before the last `.`. When no test file has such a path, the case binds a
-    /// tag of any test file.
-    fn fits(&self, i: usize, path: &str, dotted_path: &str) -> bool {
-        if let Some(f) = &self.file[i] {
-            return same_file(f, path);
-        }
-        match &self.class[i] {
-            None => true,
-            Some((keys, named)) => !named || keys.iter().any(|k| ends_in_segments(dotted_path, k)),
+    /// How case `i` fits the test file `at`, or `None` when it does not fit
+    /// (design 0.8.1, D82 item 6). With `loose`, a case that has no `file` and
+    /// whose `classname` names another test file still fits by its name only:
+    /// the explicit name of `case:` (item 8).
+    fn fit(&self, i: usize, at: &Place, loose: bool) -> Option<Fit> {
+        match &self.kind[i] {
+            Kind::File(f) => same_file(f, at.path).then_some(Fit::File),
+            Kind::Name => Some(Fit::Name),
+            Kind::Class(class, named) => {
+                if !named {
+                    return Some(Fit::Name);
+                }
+                let fits = match class {
+                    Class::Binary(key) => key == at.key,
+                    Class::Path(p) => same_file(p, at.path),
+                    Class::Folder(f) => f.as_deref() == Some(at.folder),
+                    Class::Dotted(keys, one) => {
+                        keys.iter().any(|k| ends_in_segments(&at.dotted, k))
+                            || one.as_deref().is_some_and(|c| {
+                                path_ends(at.folder).any(|e| e == c) && !at.folder.is_empty()
+                            })
+                    }
+                };
+                if fits {
+                    Some(Fit::Classname)
+                } else {
+                    loose.then_some(Fit::Name)
+                }
+            }
         }
     }
 
@@ -1089,7 +1162,7 @@ impl<'a> Binder<'a> {
     /// the tag binds to the cases that have this name. Else it binds to the test
     /// under it (design 0.8.1, D82): the cases that name that test, and no case
     /// that belongs to another test of the file. It also gives the bind: the
-    /// test, the number of cases and the reason for no case.
+    /// test, the fit, the strength and the reason for no case.
     pub fn bind(
         &self,
         path: &str,
@@ -1097,15 +1170,19 @@ impl<'a> Binder<'a> {
         tag: usize,
         case: Option<&str>,
     ) -> (Proof, Bind) {
-        let d = dotted(path);
+        let at = Place::new(path);
         let mut bind = Bind::default();
         let mut cand: Vec<usize>;
+        let mut tests: Vec<TestName> = Vec::new();
         let mut ours: Option<TestName> = None;
         match case {
             Some(name) => {
                 bind.by = By::Case;
                 bind.test = Some(name.to_string());
                 cand = self.by_name.get(name).cloned().unwrap_or_default();
+                if cand.is_empty() {
+                    bind.near = self.near(name);
+                }
             }
             None => {
                 let under = if tag < lines.len() {
@@ -1134,36 +1211,186 @@ impl<'a> Binder<'a> {
         if let Some(t) = &ours
             && !cand.is_empty()
         {
-            let tests = tests_of(lines);
+            tests = tests_of(lines);
             cand.retain(|&i| !belongs_elsewhere(&self.cases[i].name, t, &tests));
         }
-        let bound: Vec<&Case> = cand
-            .into_iter()
-            .filter(|&i| self.fits(i, path, &d))
-            .map(|i| &self.cases[i])
+        let loose = ours.is_none();
+        let mut fits: Vec<(usize, Fit)> = cand
+            .iter()
+            .filter_map(|&i| self.fit(i, &at, loose).map(|f| (i, f)))
             .collect();
-        bind.cases = bound.len();
-        let named = |o: Outcome| {
-            bound
-                .iter()
-                .find(|c| c.outcome == o)
-                .map(|c| c.name.clone())
-        };
-        let proof = if let Some(n) = named(Outcome::Fail) {
-            Proof::Failed(n)
-        } else if let Some(n) = named(Outcome::Pass) {
-            let (name, runs) = least_passes(&bound).unwrap_or((n, 0));
-            Proof::Passed(name, runs)
-        } else if let Some(n) = named(Outcome::Skip) {
-            Proof::Skipped(n)
-        } else {
+        // A case that fits by its file or its `classname` hides the cases that
+        // fit by their name only (item 6).
+        if fits.iter().any(|(_, f)| *f != Fit::Name) {
+            fits.retain(|(_, f)| *f != Fit::Name);
+        }
+        let bound: Vec<&Case> = fits.iter().map(|(i, _)| &self.cases[*i]).collect();
+        if bound.is_empty() {
             return (Proof::Unbound, bind.unbound(Reason::NoCase));
-        };
+        }
+        bind.cases = bound.len();
+        let by_name = fits.iter().all(|(_, f)| *f == Fit::Name);
+        bind.fit = Some(if by_name {
+            Fit::Name
+        } else if fits.iter().any(|(_, f)| *f == Fit::File) {
+            Fit::File
+        } else {
+            Fit::Classname
+        });
+        let weak_one = one_case(&bound);
+        // A bind by name is a bind of the strength SD621 reports, unless `case:`
+        // names the one case of that name in the reports (item 9).
+        bind.by_name = by_name
+            && match case {
+                Some(name) => !one_case(
+                    &self
+                        .by_name
+                        .get(name)
+                        .map(|v| v.iter().map(|i| &self.cases[*i]).collect::<Vec<_>>())
+                        .unwrap_or_default(),
+                ),
+                None => true,
+            };
+        let twins = ours
+            .as_ref()
+            .is_some_and(|t| tests.iter().filter(|x| *x == t).count() > 1);
+        bind.shared = twins || (by_name && !weak_one);
+        let proof = decide(&bound, bind.shared);
         bind.case = match &proof {
             Proof::Passed(n, _) | Proof::Skipped(n) | Proof::Failed(n) => Some(n.clone()),
             Proof::Unbound => None,
         };
         (proof, bind)
+    }
+
+    /// The names of the cases whose name ends with `value` after a space: the
+    /// cases that a `case:` with a part of a name meant. At most 3.
+    fn near(&self, value: &str) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .by_suffix
+            .get(value)
+            .into_iter()
+            .flatten()
+            .map(|i| self.cases[*i].name.clone())
+            .collect();
+        names.sort();
+        names.dedup();
+        names.truncate(3);
+        names
+    }
+}
+
+/// What the test files name (design 0.8.1, D82 item 6): the ends of their
+/// dotted paths, the ends of their paths, their paths, their folders, the ends
+/// of their folders and the keys of their binary ids.
+struct Names<'t> {
+    ends: HashSet<String>,
+    paths: HashSet<&'t str>,
+    whole: HashSet<&'t str>,
+    folders: HashSet<&'t str>,
+    folder_ends: HashSet<&'t str>,
+    keys: HashSet<&'t str>,
+}
+
+impl<'t> Names<'t> {
+    fn new(test_files: &'t [String]) -> Names<'t> {
+        let mut n = Names {
+            ends: HashSet::new(),
+            paths: HashSet::new(),
+            whole: HashSet::new(),
+            folders: HashSet::new(),
+            folder_ends: HashSet::new(),
+            keys: HashSet::new(),
+        };
+        for f in test_files {
+            let mut rest = dotted(f);
+            loop {
+                n.ends.insert(rest.clone());
+                match rest.split_once('.') {
+                    Some((_, tail)) => rest = tail.to_string(),
+                    None => break,
+                }
+            }
+            n.paths.extend(path_ends(f));
+            n.whole.insert(f.as_str());
+            let folder = folder_of(f);
+            if !folder.is_empty() {
+                n.folders.insert(folder);
+                n.folder_ends.extend(path_ends(folder));
+            }
+            n.keys.insert(binary_key(f));
+        }
+        n
+    }
+
+    /// The class of a `classname`, and true if it names a test file.
+    fn class(&self, cn: &str) -> (Class, bool) {
+        if let Some((_, tail)) = cn.rsplit_once("::") {
+            let key = tail.rsplit('/').next().unwrap_or(tail);
+            return (Class::Binary(key.to_string()), self.keys.contains(key));
+        }
+        if cn.contains('/') {
+            let norm = cn.replace('\\', "/");
+            let norm = norm.trim_start_matches("./");
+            let last = norm.rsplit('/').next().unwrap_or(norm);
+            if last.contains('.') {
+                // The rule of `file`: one path ends the other, or they are equal.
+                let named =
+                    self.paths.contains(norm) || path_ends(norm).any(|e| self.whole.contains(e));
+                return (Class::Path(norm.to_string()), named);
+            }
+            let longest = path_ends(norm).find(|e| self.folders.contains(e));
+            return (
+                Class::Folder(longest.map(str::to_string)),
+                longest.is_some(),
+            );
+        }
+        let cn = cn.replace('$', ".");
+        let mut keys: Vec<String> = vec![cn.clone()];
+        if let Some((module, _)) = cn.rsplit_once('.') {
+            keys.push(module.to_string());
+        }
+        let one = (!cn.contains('.')).then(|| cn.clone());
+        let named = keys.iter().any(|k| self.ends.contains(k))
+            || one.as_deref().is_some_and(|c| self.folder_ends.contains(c));
+        (Class::Dotted(keys, one), named)
+    }
+}
+
+/// True if the cases are one case: one name, one `classname` and one file, and
+/// at most once in each report (design 0.8.1, D82 item 7).
+fn one_case(cases: &[&Case]) -> bool {
+    let Some(first) = cases.first() else {
+        return true;
+    };
+    let same = cases
+        .iter()
+        .all(|c| c.name == first.name && c.classname == first.classname && c.file == first.file);
+    let reports: HashSet<&str> = cases.iter().map(|c| c.report.as_str()).collect();
+    same && reports.len() == cases.len()
+}
+
+/// The proof of the bound cases. A requirement passed when a bound case passed
+/// and no bound case failed. A shared set needs a pass of each case: a skipped
+/// case is no pass, so a skipped twin never hides behind a passed twin.
+fn decide(bound: &[&Case], shared: bool) -> Proof {
+    let named = |o: Outcome| {
+        bound
+            .iter()
+            .find(|c| c.outcome == o)
+            .map(|c| c.name.clone())
+    };
+    if let Some(n) = named(Outcome::Fail) {
+        Proof::Failed(n)
+    } else if shared && let Some(n) = named(Outcome::Skip) {
+        Proof::Skipped(n)
+    } else if let Some(n) = named(Outcome::Pass) {
+        let (name, runs) = least_passes(bound).unwrap_or((n, 0));
+        Proof::Passed(name, runs)
+    } else if let Some(n) = named(Outcome::Skip) {
+        Proof::Skipped(n)
+    } else {
+        Proof::Unbound
     }
 }
 
@@ -1260,6 +1487,23 @@ fn unbound_text(at: &str, bind: &Bind) -> String {
         Some(Reason::Template) => format!(
             "the test under the tag at {at} has a template name; add `case:\"<name>\"` with one name of the report"
         ),
+        Some(Reason::NoCase) if bind.by == By::Case => {
+            let near = if bind.near.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    ", and the report has {}",
+                    bind.near
+                        .iter()
+                        .map(|n| format!("`{n}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
+            format!(
+                "no case of a fresh report has the name `{name}`, the `case:` of the tag at {at}; `case:` needs the whole name of a case{near}"
+            )
+        }
         Some(Reason::NoCase) => format!(
             "no case of a fresh report names the test `{name}` of the tag at {at} in that file; check the name, or add `case:\"<name>\"`"
         ),
@@ -1383,32 +1627,42 @@ impl Evidence {
         if !d.verified_by.is_empty() || !d.parsed.reqs[r].verified_by.is_empty() {
             return None;
         }
-        if let Some(Proof::Failed(n)) = proofs
-            .iter()
-            .map(|p| &p.1)
-            .find(|p| matches!(p, Proof::Failed(_)))
-        {
-            return Some(format!("the bound case `{n}` failed in the report"));
+        let binds = self.binds.get(&(di, r));
+        // The text of a failed or skipped case. A shared set names its tests.
+        let text = |i: usize, n: &str, plain: String, what: &str| -> String {
+            match binds.and_then(|b| b.get(i)).filter(|b| b.shared) {
+                Some(b) => {
+                    let at = &proofs[i].0;
+                    let path = at.rsplit_once(':').map_or(at.as_str(), |x| x.0);
+                    let name = b.test.as_deref().unwrap_or(n);
+                    format!(
+                        "the tests of the name `{name}` in {path} share their cases, and the case `{n}` {what}"
+                    )
+                }
+                None => plain,
+            }
+        };
+        if let Some((i, n)) = proofs.iter().enumerate().find_map(|(i, p)| match &p.1 {
+            Proof::Failed(n) => Some((i, n)),
+            _ => None,
+        }) {
+            let plain = format!("the bound case `{n}` failed in the report");
+            return Some(text(i, n, plain, "failed"));
         }
         if proofs.iter().any(|p| matches!(p.1, Proof::Passed(..))) {
             return None;
         }
-        if let Some(Proof::Skipped(n)) = proofs
-            .iter()
-            .map(|p| &p.1)
-            .find(|p| matches!(p, Proof::Skipped(_)))
-        {
-            return Some(format!(
+        if let Some((i, n)) = proofs.iter().enumerate().find_map(|(i, p)| match &p.1 {
+            Proof::Skipped(n) => Some((i, n)),
+            _ => None,
+        }) {
+            let plain = format!(
                 "the bound case `{n}` was skipped in the report, and a skipped case is no pass"
-            ));
+            );
+            return Some(text(i, n, plain, "was skipped"));
         }
         let at = &proofs[0].0;
-        let bind = self
-            .binds
-            .get(&(di, r))
-            .and_then(|b| b.first())
-            .cloned()
-            .unwrap_or_default();
+        let bind = binds.and_then(|b| b.first()).cloned().unwrap_or_default();
         Some(unbound_text(at, &bind))
     }
 
@@ -1916,8 +2170,22 @@ mod tests {
         );
     }
 
+    /// The bind of the first tag of `text` in the file `path`, to the cases.
+    fn bind_of(
+        path: &str,
+        text: &str,
+        case_name: Option<&str>,
+        cases: &[Case],
+        files: &[&str],
+    ) -> (Proof, Bind) {
+        let lines: Vec<&str> = text.lines().collect();
+        let tag = lines.iter().position(|l| l.contains("covers:")).unwrap();
+        let files: Vec<String> = files.iter().map(|f| f.to_string()).collect();
+        Binder::new(cases, &files).bind(path, &lines, tag, case_name)
+    }
+
     #[test]
-    fn a_classname_that_names_no_test_file_binds_a_tag_of_any_test_file() {
+    fn a_classname_that_names_no_test_file_binds_by_its_name_only() {
         let text = "# covers: requirements/valves#close\ndef test_init():\n    pass\n";
         let cases = [case(
             "test_init",
@@ -1925,10 +2193,370 @@ mod tests {
             None,
             Outcome::Pass,
         )];
-        assert_eq!(
-            proof("tests/test_a.py", text, None, &cases, &["tests/test_a.py"]),
-            Proof::Passed("test_init".into(), 1)
+        let (proof, bind) = bind_of("tests/test_a.py", text, None, &cases, &["tests/test_a.py"]);
+        assert_eq!(proof, Proof::Passed("test_init".into(), 1));
+        assert_eq!(bind.fit, Some(Fit::Name));
+        assert!(bind.by_name && !bind.shared);
+    }
+
+    /// The table of the file rule (design 0.8.1, D82 item 6): the test file of
+    /// the tag, the other test files, the `classname` and the `file` of the
+    /// case, and how the case fits.
+    #[test]
+    fn the_file_rule_fits_the_case_of_each_runner_to_its_test_file() {
+        let py = "# covers: a#b\ndef test_x():\n    pass\n";
+        let rs = "// covers: a#b\n#[test]\nfn test_x() {\n}\n";
+        let go = "// covers: a#b\nfunc TestX(t *testing.T) {\n}\n";
+        let java = "// covers: a#b\n@Test\nvoid testX() {\n}\n";
+        let js = "describe('V', () => {\n  // covers: a#b\n  it('x', () => {\n  });\n});\n";
+        type Row<'a> = (
+            &'a str,
+            &'a str,
+            &'a [&'a str],
+            &'a str,
+            Option<&'a str>,
+            Option<&'a str>,
+            Option<Fit>,
         );
+        // (tag file, text, all test files, name, classname, file, the fit)
+        let rows: Vec<Row> = vec![
+            // pytest: the dotted path, with a class after the module.
+            (
+                "tests/test_a.py",
+                py,
+                &["tests/test_a.py", "tests/test_b.py"],
+                "test_x",
+                Some("tests.test_a"),
+                None,
+                Some(Fit::Classname),
+            ),
+            (
+                "tests/test_a.py",
+                py,
+                &["tests/test_a.py", "tests/test_b.py"],
+                "test_x",
+                Some("tests.test_b"),
+                None,
+                None,
+            ),
+            (
+                "tests/test_a.py",
+                py,
+                &["tests/test_a.py"],
+                "test_x",
+                Some("tests.test_a.TestA"),
+                None,
+                Some(Fit::Classname),
+            ),
+            // pytest xunit1 and PHPUnit: the file.
+            (
+                "tests/test_a.py",
+                py,
+                &["tests/test_a.py"],
+                "test_x",
+                Some("tests.test_a"),
+                Some("tests/test_a.py"),
+                Some(Fit::File),
+            ),
+            (
+                "tests/test_a.py",
+                py,
+                &["tests/test_a.py", "tests/test_b.py"],
+                "test_x",
+                None,
+                Some("/work/app/tests/test_b.py"),
+                None,
+            ),
+            // cargo-nextest: the binary id, and a `main` file in a folder.
+            (
+                "tests/valves.rs",
+                rs,
+                &["tests/valves.rs", "tests/pumps.rs"],
+                "test_x",
+                Some("app::valves"),
+                None,
+                Some(Fit::Classname),
+            ),
+            (
+                "tests/valves.rs",
+                rs,
+                &["tests/valves.rs", "tests/pumps.rs"],
+                "test_x",
+                Some("app::pumps"),
+                None,
+                None,
+            ),
+            (
+                "tests/valves/main.rs",
+                rs,
+                &["tests/valves/main.rs"],
+                "test_x",
+                Some("app::test/valves"),
+                None,
+                Some(Fit::Classname),
+            ),
+            // Vitest: the path of the file.
+            (
+                "tests/valves.test.ts",
+                js,
+                &["tests/valves.test.ts", "tests/pumps.test.ts"],
+                "V > x",
+                Some("tests/valves.test.ts"),
+                None,
+                Some(Fit::Classname),
+            ),
+            (
+                "tests/valves.test.ts",
+                js,
+                &["tests/valves.test.ts", "tests/pumps.test.ts"],
+                "V > x",
+                Some("tests/pumps.test.ts"),
+                None,
+                None,
+            ),
+            // Go: the longest folder that ends the package path.
+            (
+                "valves/sensor_test.go",
+                go,
+                &["valves/sensor_test.go", "pumps/sensor_test.go"],
+                "TestX",
+                Some("example.org/app/valves"),
+                None,
+                Some(Fit::Classname),
+            ),
+            (
+                "valves/sensor_test.go",
+                go,
+                &["valves/sensor_test.go", "app/valves/sensor_test.go"],
+                "TestX",
+                Some("example.org/app/valves"),
+                None,
+                None,
+            ),
+            (
+                "app/valves/sensor_test.go",
+                go,
+                &["valves/sensor_test.go", "app/valves/sensor_test.go"],
+                "TestX",
+                Some("example.org/app/valves"),
+                None,
+                Some(Fit::Classname),
+            ),
+            // gotestsum, the short form: one segment ends the folder.
+            (
+                "valves/sensor_test.go",
+                go,
+                &["valves/sensor_test.go", "pumps/sensor_test.go"],
+                "TestX",
+                Some("valves"),
+                None,
+                Some(Fit::Classname),
+            ),
+            // The package path of a Go module with no folder of a test file.
+            (
+                "valves/sensor_test.go",
+                go,
+                &["valves/sensor_test.go"],
+                "TestX",
+                Some("example.org/app"),
+                None,
+                Some(Fit::Name),
+            ),
+            // Java and Kotlin: the class with its package, and an inner class.
+            (
+                "src/test/java/com/example/ValveTest.java",
+                java,
+                &["src/test/java/com/example/ValveTest.java"],
+                "testX",
+                Some("com.example.ValveTest"),
+                None,
+                Some(Fit::Classname),
+            ),
+            (
+                "src/test/java/com/example/ValveTest.java",
+                java,
+                &["src/test/java/com/example/ValveTest.java"],
+                "testX",
+                Some("com.example.ValveTest$Inner"),
+                None,
+                Some(Fit::Classname),
+            ),
+            // .NET with a namespace that the folders do not follow.
+            (
+                "tests/ValveTest.cs",
+                java,
+                &["tests/ValveTest.cs"],
+                "testX",
+                Some("Valves.Tests.ValveTest"),
+                None,
+                Some(Fit::Name),
+            ),
+            // jest-junit with its defaults: the classname is the title.
+            (
+                "tests/valves.test.js",
+                js,
+                &["tests/valves.test.js"],
+                "V x",
+                Some("V x"),
+                None,
+                Some(Fit::Name),
+            ),
+            // The line format: no file and no classname.
+            (
+                "tests/test_a.py",
+                py,
+                &["tests/test_a.py"],
+                "test_x",
+                None,
+                None,
+                Some(Fit::Name),
+            ),
+        ];
+        for (path, text, files, name, classname, file, want) in rows {
+            let cases = [case(name, classname, file, Outcome::Pass)];
+            let (proof, bind) = bind_of(path, text, None, &cases, files);
+            assert_eq!(bind.fit, want, "{path} / {classname:?} / {file:?}");
+            assert_eq!(
+                proof != Proof::Unbound,
+                want.is_some(),
+                "{path} / {classname:?} / {file:?}"
+            );
+            assert_eq!(bind.by_name, want == Some(Fit::Name), "{classname:?}");
+        }
+    }
+
+    #[test]
+    fn a_case_that_fits_the_file_hides_a_case_that_fits_by_its_name_only() {
+        let text = "# covers: a#b\ndef test_init():\n    pass\n";
+        let cases = [
+            case("test_init", Some("tests.test_a"), None, Outcome::Skip),
+            case("test_init", None, None, Outcome::Pass),
+        ];
+        let (proof, bind) = bind_of("tests/test_a.py", text, None, &cases, &["tests/test_a.py"]);
+        assert_eq!(proof, Proof::Skipped("test_init".into()));
+        assert_eq!(bind.fit, Some(Fit::Classname));
+        assert_eq!(bind.cases, 1);
+        assert!(!bind.by_name);
+    }
+
+    #[test]
+    fn two_tests_of_one_name_make_a_shared_set_that_needs_each_case_to_pass() {
+        let text = "class A:\n    # covers: a#b\n    def test_init(self):\n        pass\n\nclass B:\n    def test_init(self):\n        pass\n";
+        let two = |a, b| {
+            [
+                case("test_init", Some("tests.test_a.A"), None, a),
+                case("test_init", Some("tests.test_a.B"), None, b),
+            ]
+        };
+        let files = ["tests/test_a.py"];
+        let (proof, bind) = bind_of(
+            "tests/test_a.py",
+            text,
+            None,
+            &two(Outcome::Skip, Outcome::Pass),
+            &files,
+        );
+        assert_eq!(proof, Proof::Skipped("test_init".into()));
+        assert!(bind.shared && !bind.by_name && bind.cases == 2);
+        let (proof, _) = bind_of(
+            "tests/test_a.py",
+            text,
+            None,
+            &two(Outcome::Pass, Outcome::Pass),
+            &files,
+        );
+        assert_eq!(proof, Proof::Passed("test_init".into(), 1));
+        let (proof, _) = bind_of(
+            "tests/test_a.py",
+            text,
+            None,
+            &two(Outcome::Fail, Outcome::Pass),
+            &files,
+        );
+        assert_eq!(proof, Proof::Failed("test_init".into()));
+        // One test of the name is not shared.
+        let one = "# covers: a#b\ndef test_init():\n    pass\n";
+        let (_, bind) = bind_of(
+            "tests/test_a.py",
+            one,
+            None,
+            &two(Outcome::Skip, Outcome::Pass),
+            &files,
+        );
+        assert!(!bind.shared);
+    }
+
+    #[test]
+    fn cases_that_fit_by_name_only_are_shared_unless_they_are_one_case() {
+        let text = "// covers: a#b\nit('closes', () => {\n});\n";
+        let files = ["tests/v.test.js"];
+        let run = |name: &str, report: &str, outcome| Case {
+            report: report.to_string(),
+            ..case(name, Some(name), None, outcome)
+        };
+        // One case in 3 reports: one case.
+        let cases = [
+            run("V closes", "a", Outcome::Pass),
+            run("V closes", "b", Outcome::Pass),
+            run("V closes", "c", Outcome::Pass),
+        ];
+        let (proof, bind) = bind_of("tests/v.test.js", text, None, &cases, &files);
+        assert_eq!(proof, Proof::Passed("V closes".into(), 3));
+        assert!(bind.by_name && !bind.shared);
+        // The same case twice in one report: 2 cases that share their name.
+        let cases = [
+            run("V closes", "a", Outcome::Skip),
+            run("V closes", "a", Outcome::Pass),
+        ];
+        let (proof, bind) = bind_of("tests/v.test.js", text, None, &cases, &files);
+        assert_eq!(proof, Proof::Skipped("V closes".into()));
+        assert!(bind.shared);
+        // 2 names that end with the literal.
+        let cases = [
+            run("V closes", "a", Outcome::Pass),
+            run("W closes", "a", Outcome::Skip),
+        ];
+        let (proof, bind) = bind_of("tests/v.test.js", text, None, &cases, &files);
+        assert_eq!(proof, Proof::Skipped("W closes".into()));
+        assert!(bind.shared);
+    }
+
+    #[test]
+    fn case_is_exact_and_a_unique_name_is_an_exact_bind() {
+        let text = "# covers: a#b case:closes\nVALUE = 1\n";
+        let cases = [case("V closes", None, None, Outcome::Pass)];
+        let (proof, bind) = bind_of("t/test_a.py", text, Some("closes"), &cases, &[]);
+        assert_eq!(proof, Proof::Unbound);
+        assert_eq!(bind.reason, Some(Reason::NoCase));
+        assert_eq!(bind.near, ["V closes"]);
+        let (proof, bind) = bind_of("t/test_a.py", text, Some("V closes"), &cases, &[]);
+        assert_eq!(proof, Proof::Passed("V closes".into(), 1));
+        assert_eq!(bind.by, By::Case);
+        assert_eq!(bind.fit, Some(Fit::Name));
+        // The one case of the name: no SD621.
+        assert!(!bind.by_name && !bind.shared);
+        // 2 cases of the name in 2 files: a bind by name, and a shared set.
+        let cases = [
+            case("V closes", Some("V closes"), None, Outcome::Pass),
+            case("V closes", Some("V closes"), None, Outcome::Skip),
+        ];
+        let (proof, bind) = bind_of("t/test_a.py", text, Some("V closes"), &cases, &[]);
+        assert_eq!(proof, Proof::Skipped("V closes".into()));
+        assert!(bind.by_name && bind.shared);
+        // A case with a `classname` of another test file still binds by its
+        // name, and a case of the file hides it.
+        let cases = [
+            case("T", Some("tests.test_b"), None, Outcome::Pass),
+            case("T", Some("tests.test_a"), None, Outcome::Skip),
+        ];
+        let files = ["tests/test_a.py", "tests/test_b.py"];
+        let (proof, bind) = bind_of("tests/test_a.py", text, Some("T"), &cases, &files);
+        assert_eq!(proof, Proof::Skipped("T".into()));
+        assert_eq!(bind.fit, Some(Fit::Classname));
+        // A case with a file binds only when the file is the file of the tag.
+        let cases = [case("T", None, Some("tests/test_b.py"), Outcome::Pass)];
+        let (proof, _) = bind_of("tests/test_a.py", text, Some("T"), &cases, &files);
+        assert_eq!(proof, Proof::Unbound);
     }
 
     #[test]

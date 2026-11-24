@@ -225,16 +225,30 @@ fn a_verified_by_marker_keeps_its_meaning_and_needs_no_report() {
     assert_eq!(code, 0, "{out}");
 }
 
-// The 5 runners: the first proof of the bind rule
+// The runners: the shapes of the reports of 7 runners (design 0.8.1, D82). The
+// names of the projects are made up.
 
-/// One runner: the test file with its tag, the report text for a case that
-/// ran in the outcome `child`, and the name that a skipped case has.
+/// One runner: the test file with its tag, a twin file that has a test of the
+/// same name, and the reports that the runner writes.
 struct Runner {
     name: &'static str,
     path: &'static str,
     test: &'static str,
-    report: fn(&str) -> String,
+    /// A second test file with a test of the same name, and no tag. It is in
+    /// another class, module or package, as the runner needs.
+    twin_path: &'static str,
+    twin_test: &'static str,
+    /// The reports: the child of the case under the tag, then the child of the
+    /// case of the twin, or `None` for a report with no twin.
+    report: fn(&str, Option<&str>) -> Reports,
 }
+
+/// The reports of a runner as (file, text).
+type Reports = Vec<(&'static str, String)>;
+
+/// The test file of a Vitest or Jest test with the tag above the test.
+const JS_TEST: &str = "describe('Valves', () => {\n  // covers: requirements/valves#flush\n  it('closes on timeout', () => {\n    expect(1).toBe(1);\n  });\n});\n";
+const JS_TWIN: &str = "describe('Valves', () => {\n  it('closes on timeout', () => {\n    expect(1).toBe(1);\n  });\n});\n";
 
 fn runners() -> Vec<Runner> {
     vec![
@@ -242,76 +256,194 @@ fn runners() -> Vec<Runner> {
             name: "pytest xunit2",
             path: "tests/test_valves.py",
             test: PY_TEST,
-            report: |c| {
-                junit(
-                    "pytest",
-                    &[("tests.test_valves", "test_closes_on_timeout", c)],
-                )
+            twin_path: "tests/test_pumps.py",
+            twin_test: "def test_closes_on_timeout():\n    assert True\n",
+            report: |c, t| {
+                let mut cases = vec![("tests.test_valves", "test_closes_on_timeout", c)];
+                cases.extend(t.map(|t| ("tests.test_pumps", "test_closes_on_timeout", t)));
+                vec![("r.xml", junit("pytest", &cases))]
             },
         },
         Runner {
             name: "cargo-nextest",
             path: "tests/valves.rs",
             test: "// covers: requirements/valves#flush\n#[test]\nfn closes() {\n    assert!(true);\n}\n",
-            report: |c| {
-                format!(
-                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?><testsuites name=\"nextest-run\" tests=\"1\" failures=\"0\" errors=\"0\" time=\"0.1\"><testsuite name=\"valves\" tests=\"1\" disabled=\"0\" errors=\"0\" failures=\"0\"><testcase name=\"tests::closes\" classname=\"valves\" time=\"0.01\">{c}</testcase></testsuite></testsuites>"
-                )
+            twin_path: "tests/pumps.rs",
+            twin_test: "#[test]\nfn closes() {\n    assert!(true);\n}\n",
+            report: |c, t| {
+                let suite = |bin: &str, child: &str| {
+                    format!(
+                        "<testsuite name=\"app::{bin}\" tests=\"1\" disabled=\"0\" errors=\"0\" failures=\"0\"><testcase name=\"closes\" classname=\"app::{bin}\" timestamp=\"2026-01-01T00:00:00.000+00:00\" time=\"0.01\">{child}</testcase></testsuite>"
+                    )
+                };
+                let twin = t.map(|t| suite("pumps", t)).unwrap_or_default();
+                vec![(
+                    "r.xml",
+                    format!(
+                        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><testsuites name=\"nextest-run\" tests=\"2\" failures=\"0\" errors=\"0\" time=\"0.1\">{}{twin}</testsuites>",
+                        suite("valves", c)
+                    ),
+                )]
             },
         },
         Runner {
-            name: "Jest",
+            name: "Jest with addFileAttribute",
             path: "tests/valves.test.js",
-            test: "// covers: requirements/valves#flush\nit('closes on timeout', () => {\n  expect(1).toBe(1);\n});\n",
-            report: |c| {
-                format!(
-                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?><testsuites name=\"jest tests\" tests=\"1\" failures=\"0\" errors=\"0\" time=\"0.5\"><testsuite name=\"Valves\" errors=\"0\" failures=\"0\" skipped=\"0\" time=\"0.3\" tests=\"1\"><testcase classname=\"Valves closes on timeout\" name=\"Valves closes on timeout\" time=\"0.002\">{c}</testcase></testsuite></testsuites>"
-                )
+            test: JS_TEST,
+            twin_path: "tests/pumps.test.js",
+            twin_test: JS_TWIN,
+            report: |c, t| {
+                let case = |file: &str, child: &str| {
+                    format!(
+                        "<testsuite name=\"Valves\" errors=\"0\" failures=\"0\" skipped=\"0\" time=\"0.3\" tests=\"1\"><testcase classname=\"Valves closes on timeout\" name=\"Valves closes on timeout\" time=\"0.002\" file=\"{file}\">{child}</testcase></testsuite>"
+                    )
+                };
+                let twin = t
+                    .map(|t| case("tests/pumps.test.js", t))
+                    .unwrap_or_default();
+                vec![(
+                    "r.xml",
+                    format!(
+                        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><testsuites name=\"jest tests\" tests=\"2\" failures=\"0\" errors=\"0\" time=\"0.5\">{}{twin}</testsuites>",
+                        case("tests/valves.test.js", c)
+                    ),
+                )]
             },
         },
         Runner {
-            name: "Go",
+            name: "Vitest",
+            path: "tests/valves.test.ts",
+            test: JS_TEST,
+            twin_path: "tests/pumps.test.ts",
+            twin_test: JS_TWIN,
+            report: |c, t| {
+                let suite = |file: &str, child: &str| {
+                    format!(
+                        "<testsuite name=\"{file}\" timestamp=\"2026-01-01T00:00:00.000Z\" hostname=\"ci\" tests=\"1\" failures=\"0\" errors=\"0\" skipped=\"0\" time=\"0.001\"><testcase classname=\"{file}\" name=\"Valves &gt; closes on timeout\" time=\"0.001\">{child}</testcase></testsuite>"
+                    )
+                };
+                let twin = t
+                    .map(|t| suite("tests/pumps.test.ts", t))
+                    .unwrap_or_default();
+                vec![(
+                    "r.xml",
+                    format!(
+                        "<?xml version=\"1.0\" encoding=\"UTF-8\" ?><testsuites name=\"vitest tests\" tests=\"2\" failures=\"0\" errors=\"0\" time=\"0.01\">{}{twin}</testsuites>",
+                        suite("tests/valves.test.ts", c)
+                    ),
+                )]
+            },
+        },
+        Runner {
+            name: "Go, go-junit-report",
             path: "valves/sensor_test.go",
             test: "package valves\n\n// covers: requirements/valves#flush\nfunc TestTimeout(t *testing.T) {\n\tt.Run(\"no_reply\", func(t *testing.T) {})\n}\n",
-            report: |c| {
-                format!(
-                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?><testsuites tests=\"2\"><testsuite name=\"example.org/valves\" tests=\"2\" failures=\"0\" errors=\"0\" id=\"0\"><testcase name=\"TestTimeout\" classname=\"example.org/valves\" time=\"0.00\">{c}</testcase><testcase name=\"TestTimeout/no_reply\" classname=\"example.org/valves\" time=\"0.00\">{c}</testcase></testsuite></testsuites>"
-                )
+            twin_path: "pumps/sensor_test.go",
+            twin_test: "package pumps\n\nfunc TestTimeout(t *testing.T) {\n}\n",
+            report: |c, t| {
+                let suite = |pkg: &str, child: &str| {
+                    format!(
+                        "<testsuite name=\"example.org/app/{pkg}\" tests=\"2\" failures=\"0\" errors=\"0\" id=\"0\" hostname=\"ci\" time=\"0.000\" timestamp=\"2026-01-01T00:00:00Z\"><properties><property name=\"go.version\" value=\"go1.22\"></property></properties><testcase name=\"TestTimeout\" classname=\"example.org/app/{pkg}\" time=\"0.000\">{child}</testcase><testcase name=\"TestTimeout/no_reply\" classname=\"example.org/app/{pkg}\" time=\"0.000\">{child}</testcase></testsuite>"
+                    )
+                };
+                let twin = t.map(|t| suite("pumps", t)).unwrap_or_default();
+                vec![(
+                    "r.xml",
+                    format!(
+                        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><testsuites tests=\"4\">{}{twin}</testsuites>",
+                        suite("valves", c)
+                    ),
+                )]
             },
         },
         Runner {
-            name: "JUnit Java",
+            name: "JUnit 5, Surefire",
             path: "src/test/java/com/example/ValveTest.java",
             test: "package com.example;\n\nclass ValveTest {\n    // covers: requirements/valves#flush\n    @Test\n    void flushesFirst() {\n        assertTrue(true);\n    }\n}\n",
-            report: |c| {
-                format!(
-                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?><testsuite name=\"com.example.ValveTest\" tests=\"1\" errors=\"0\" skipped=\"0\" failures=\"0\" time=\"0.01\"><testcase name=\"flushesFirst\" classname=\"com.example.ValveTest\" time=\"0.01\">{c}</testcase></testsuite>"
-                )
+            twin_path: "src/test/java/com/example/PumpTest.java",
+            twin_test: "package com.example;\n\nclass PumpTest {\n    @Test\n    void flushesFirst() {\n        assertTrue(true);\n    }\n}\n",
+            report: |c, t| {
+                let suite = |class: &str, child: &str| {
+                    format!(
+                        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><testsuite version=\"3.0\" name=\"com.example.{class}\" time=\"0.01\" tests=\"1\" errors=\"0\" skipped=\"0\" failures=\"0\"><properties><property name=\"java.version\" value=\"21\"/></properties><testcase name=\"flushesFirst\" classname=\"com.example.{class}\" time=\"0.01\">{child}</testcase></testsuite>"
+                    )
+                };
+                let mut out = vec![("TEST-com.example.ValveTest.xml", suite("ValveTest", c))];
+                out.extend(t.map(|t| ("TEST-com.example.PumpTest.xml", suite("PumpTest", t))));
+                out
+            },
+        },
+        Runner {
+            name: "PHPUnit",
+            path: "tests/ValveTest.php",
+            test: "<?php\n\nclass ValveTest extends TestCase\n{\n    // covers: requirements/valves#flush\n    public function testClosesOnTimeout()\n    {\n        $this->assertTrue(true);\n    }\n}\n",
+            twin_path: "tests/PumpTest.php",
+            twin_test: "<?php\n\nclass PumpTest extends TestCase\n{\n    public function testClosesOnTimeout()\n    {\n        $this->assertTrue(true);\n    }\n}\n",
+            report: |c, t| {
+                let suite = |class: &str, child: &str| {
+                    format!(
+                        "<testsuite name=\"Tests\\{class}\" file=\"/work/app/tests/{class}.php\" tests=\"1\" assertions=\"1\" errors=\"0\" failures=\"0\" skipped=\"0\" time=\"0.01\"><testcase name=\"testClosesOnTimeout with data set #0\" file=\"/work/app/tests/{class}.php\" line=\"9\" class=\"Tests\\{class}\" classname=\"Tests.{class}\" assertions=\"1\" time=\"0.01\">{child}</testcase></testsuite>"
+                    )
+                };
+                let twin = t.map(|t| suite("PumpTest", t)).unwrap_or_default();
+                let n = 1 + usize::from(t.is_some());
+                vec![(
+                    "r.xml",
+                    format!(
+                        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><testsuites><testsuite name=\"Valves\" tests=\"{n}\" assertions=\"{n}\" errors=\"0\" failures=\"0\" skipped=\"0\" time=\"0.02\">{}{twin}</testsuite></testsuites>",
+                        suite("ValveTest", c)
+                    ),
+                )]
             },
         },
     ]
+}
+
+/// A pull request with the test file of `run`, and the test file of its twin
+/// when `twin` is set. The reports hold the cases as the runner writes them.
+fn runner_pr(run: &Runner, child: &str, twin: Option<&str>) -> Repo {
+    let mut files = vec![(run.path, run.test)];
+    if twin.is_some() {
+        files.push((run.twin_path, run.twin_test));
+    }
+    let r = pr("strict", REPORTS, &files);
+    for (file, text) in (run.report)(child, twin) {
+        r.write(&format!("reports/{file}"), &text);
+    }
+    stamp(&r);
+    r
 }
 
 #[test]
 fn a_tag_above_the_test_binds_to_its_case_in_the_report_of_each_runner() {
     for run in runners() {
         // Passed: the tag proves the requirement.
-        let r = pr("strict", REPORTS, &[(run.path, run.test)]);
-        r.write("reports/r.xml", &(run.report)(""));
-        stamp(&r);
+        let r = runner_pr(&run, "", None);
         let (code, out) = check(&r, &[]);
         assert!(!has(&out, "SD617"), "{}: {out}", run.name);
         assert_eq!(code, 0, "{}: {out}", run.name);
         // Skipped: the tag is bound, so the message names the skipped case.
-        let r = pr("strict", REPORTS, &[(run.path, run.test)]);
-        r.write("reports/r.xml", &(run.report)(SKIPPED));
-        stamp(&r);
+        let r = runner_pr(&run, SKIPPED, None);
         let (code, out) = check(&r, &[]);
         let found = lines(&out, "SD617");
         assert_eq!(found.len(), 1, "{}: {out}", run.name);
         assert!(found[0].contains("was skipped"), "{}: {out}", run.name);
         assert_eq!(code, 1, "{}: {out}", run.name);
     }
+}
+
+#[test]
+fn a_passed_twin_of_the_same_name_in_a_second_file_does_not_prove_the_tag() {
+    let mut failed = Vec::new();
+    for run in runners() {
+        let r = runner_pr(&run, SKIPPED, Some(""));
+        let (code, out) = check(&r, &[]);
+        let found = lines(&out, "SD617");
+        if found.len() != 1 || !found[0].contains("was skipped") || code != 1 {
+            failed.push(format!("{}: {out}", run.name));
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
 }
 
 // The bind
@@ -1946,4 +2078,179 @@ fn a_tag_binds_the_test_under_its_attributes_and_annotations() {
         assert!(found[0].contains("was skipped"), "{path}: {out}");
         assert_eq!(code, 1, "{path}: {out}");
     }
+}
+
+// The file of a case, the shared cases and the exact `case:` (design 0.8.1, D82
+// items 6 to 8)
+
+/// A line-format report: `spec-dna-report 1`, then one line for each case.
+fn lines_report(cases: &[(&str, &str, &str)]) -> String {
+    let mut out = String::from("spec-dna-report 1\n");
+    for (outcome, file, name) in cases {
+        out.push_str(&format!("{outcome}\t{file}\t{name}\n"));
+    }
+    out
+}
+
+#[test]
+fn a_classname_that_is_the_path_of_another_file_binds_no_case() {
+    // The report has the case `Valves > closes` of `tests/b.test.ts`, and no
+    // case of `tests/a.test.ts`, which has the tag.
+    let tag = format!(
+        "describe('Valves', () => {{\n  {SLASH_TAG}  it('closes', () => {{\n    expect(1).toBe(1);\n  }});\n}});\n"
+    );
+    let plain =
+        "describe('Valves', () => {\n  it('closes', () => {\n    expect(1).toBe(1);\n  });\n});\n";
+    let r = pr(
+        "strict",
+        REPORTS,
+        &[("tests/a.test.ts", &tag), ("tests/b.test.ts", plain)],
+    );
+    r.write(
+        "reports/r.xml",
+        &junit("vitest", &[("tests/b.test.ts", "Valves > closes", "")]),
+    );
+    stamp(&r);
+    let (code, out) = check(&r, &[]);
+    let found = lines(&out, "SD617");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].contains("names the test `closes` of the tag at tests/a.test.ts:2"),
+        "{out}"
+    );
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn a_skipped_case_of_the_file_hides_a_passed_case_of_no_file() {
+    // The precedence: the case of `tests.test_a` fits the file by its
+    // `classname`, so the line of the line format, which fits by its name only,
+    // does not bind.
+    let tag = "# covers: requirements/valves#flush\ndef test_init():\n    assert True\n";
+    let r = pr("strict", REPORTS, &[("tests/test_a.py", tag)]);
+    r.write(
+        "reports/junit.xml",
+        &junit("pytest", &[("tests.test_a", "test_init", SKIPPED)]),
+    );
+    r.write(
+        "reports/lines.txt",
+        &lines_report(&[("pass", "-", "test_init")]),
+    );
+    stamp(&r);
+    let (code, out) = check(&r, &[]);
+    let found = lines(&out, "SD617");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(found[0].contains("`test_init` was skipped"), "{out}");
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn two_tests_of_one_name_in_one_file_share_their_cases() {
+    // `test_init` is in 2 classes. The tag is above the first, whose case was
+    // skipped. The case of the second passed.
+    let text = "class TestA:\n    # covers: requirements/valves#flush\n    def test_init(self):\n        assert True\n\n\nclass TestB:\n    def test_init(self):\n        assert True\n";
+    let (code, out) = bind_check(
+        "tests/test_valves.py",
+        text,
+        &[
+            ("tests.test_valves.TestA", "test_init", SKIPPED),
+            ("tests.test_valves.TestB", "test_init", ""),
+        ],
+    );
+    let found = lines(&out, "SD617");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].contains(
+            "the tests of the name `test_init` in tests/test_valves.py share their cases"
+        ),
+        "{out}"
+    );
+    assert!(
+        found[0].contains("the case `test_init` was skipped"),
+        "{out}"
+    );
+    assert_eq!(code, 1, "{out}");
+    // Each case passed: the requirement is proven.
+    let (code, out) = bind_check(
+        "tests/test_valves.py",
+        text,
+        &[
+            ("tests.test_valves.TestA", "test_init", ""),
+            ("tests.test_valves.TestB", "test_init", ""),
+        ],
+    );
+    assert!(!has(&out, "SD617"), "{out}");
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn jest_twins_in_2_files_share_their_cases() {
+    // 2 files have the same titles. The default of jest-junit writes no file,
+    // so the 2 cases fit both files by their name only.
+    let text = format!(
+        "describe('Valves', () => {{\n  {SLASH_TAG}  it('closes', () => {{\n    expect(1).toBe(1);\n  }});\n}});\n"
+    );
+    let twin =
+        "describe('Valves', () => {\n  it('closes', () => {\n    expect(1).toBe(1);\n  });\n});\n";
+    let r = pr(
+        "standard",
+        REPORTS,
+        &[("tests/a.test.js", &text), ("tests/b.test.js", twin)],
+    );
+    r.write(
+        "reports/r.xml",
+        &junit(
+            "jest",
+            &[
+                ("Valves closes", "Valves closes", SKIPPED),
+                ("Valves closes", "Valves closes", ""),
+            ],
+        ),
+    );
+    stamp(&r);
+    let (code, out) = check(&r, &[]);
+    let found = lines(&out, "SD617");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].contains("the tests of the name `closes` in tests/a.test.js share their cases"),
+        "{out}"
+    );
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn case_is_exact_and_the_message_names_the_case_that_ends_with_the_value() {
+    let text = "# covers: requirements/valves#flush case:closes\nVALUE = 1\n";
+    let (code, out) = bind_check(
+        "tests/test_valves.py",
+        text,
+        &[("tests.test_valves", "Valves closes", "")],
+    );
+    let found = lines(&out, "SD617");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(found[0].contains("`closes`"), "{out}");
+    assert!(found[0].contains("`Valves closes`"), "{out}");
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn case_binds_a_name_with_a_slash_a_space_and_a_hash() {
+    // Guard: the explicit name binds, and the `#` of a data set is no id.
+    let go = "package valves\n\n// covers: requirements/valves#flush case:\"TestTimeout/no_reply\"\nVALUE = 1\n";
+    let (code, out) = bind_check(
+        "valves/sensor_test.go",
+        go,
+        &[("example.org/valves", "TestTimeout/no_reply", "")],
+    );
+    assert!(!has(&out, "SD617") && !has(&out, "SD105"), "{out}");
+    assert_eq!(code, 0, "{out}");
+    let php =
+        "<?php\n// covers: requirements/valves#flush case:\"testOne with data set #0\"\n$x = 1;\n";
+    let (code, out) = bind_check(
+        "tests/ValveTest.php",
+        php,
+        &[("Tests.ValveTest", "testOne with data set #0", "")],
+    );
+    assert!(!has(&out, "SD617") && !has(&out, "SD105"), "{out}");
+    assert_eq!(code, 0, "{out}");
 }
