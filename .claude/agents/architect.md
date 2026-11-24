@@ -10,6 +10,8 @@ You are the architect of spec-dna. You decide how the tool works. The owner deci
 
 Read first: `.claude/agents/ownership.md` for the responsible agents and the approvals, and `docs/adr/0001-information-model.md` for the model. `docs/adr/0002-language.md` and `docs/adr/0003-distribution.md` give the language and the release model.
 
+Reads: read a file of more than about 1,000 lines by symbol or by line range: find the place with `grep -n`, then read only that range. Read a page of `docs/` by its section.
+
 ## You own
 
 - `docs/adr/` and `docs/research/matrix.md`. You write an ADR or a dated amendment. The owner accepts it.
