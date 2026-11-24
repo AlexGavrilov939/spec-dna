@@ -1,5 +1,5 @@
 ---
-status: approved
+status: draft
 ---
 # Fixes of the change lifecycle: finish, scope, the acceptor, layers and small items: plan
 
@@ -25,6 +25,7 @@ status: approved
 - `tests/lifecycle_finished.rs` The tests of SD915.
 - `tests/lifecycle_checks.rs` The tests of SD401 and SD913.
 - `tests/lifecycle_base.rs` The tests of the scope of SD913 that encode the rule of 0.8.0.
+- `tests/owners.rs` The test of the roles after a squash commit that holds the plan and the code.
 - `tests/harness_skills.rs` The test that pins the text of step 5 of the skill execute.
 - `tests/init_graph.rs` The test that expected SD502 after layer add.
 - `docs/init.md` The line on init after a layer change.
