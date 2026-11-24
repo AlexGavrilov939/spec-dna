@@ -226,6 +226,22 @@ fn lean_repo() -> Repo {
 /// new project of `standard` has no advisor (D97).
 const ADVISOR: &str = "harness-models = [\"advisor=fable\"]\n";
 
+/// The file that only a project with the advisor has.
+const FALLBACK: &str = ".claude/agents/fallback-advisor.md";
+
+/// `lean_repo` with the advisor.
+fn advisor_repo() -> Repo {
+    let r = Repo::empty();
+    let (code, out, err) = r.init_with(ADVISOR, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    r
+}
+
+/// The files of the team of a new project of `standard`.
+fn new_team_files() -> impl Iterator<Item = &'static str> {
+    LEAN_FILES.into_iter().filter(|f| *f != FALLBACK)
+}
+
 /// Replaces the version of the marker of a generated file with an old one. The
 /// hash covers the text above the marker, so it stays valid.
 fn age_marker(text: &str) -> String {
@@ -237,10 +253,12 @@ fn init_writes_the_lean_harness_and_check_is_clean() {
     let r = Repo::empty();
     let (code, out, err) = r.run3(&["init", "--non-interactive"]);
     assert_eq!(code, 0, "{out}{err}");
-    for f in LEAN_FILES {
+    for f in new_team_files() {
         assert!(r.exists(f), "{f}");
         assert!(out.contains(&format!("wrote {f}\n")), "{out}");
     }
+    assert!(!r.exists(FALLBACK));
+    assert!(!out.contains("fallback-advisor"), "{out}");
     assert!(!r.exists(".claude/agents/implementer.md"));
     assert!(!r.exists(".claude/agents/code-simplifier.md"));
     let cfg = r.read("spec-dna.toml");
@@ -252,9 +270,9 @@ fn init_writes_the_lean_harness_and_check_is_clean() {
     assert!(claude.contains("\n\nModel team: opus builds."), "{claude}");
     assert!(claude.contains("<!-- spec-dna v"), "{claude}");
     let settings = r.read(".claude/settings.json");
+    assert!(!settings.contains("advisorModel"), "{settings}");
     for want in [
         "\"model\": \"opus\"",
-        "\"advisorModel\": \"fable\"",
         "\"CLAUDE_CODE_SUBAGENT_MODEL\": \"haiku\"",
         "\"NotebookEdit\"",
         "spec-dna hook context-meter --levels 300000,600000 --subagent 250000 2>/dev/null || true",
@@ -309,9 +327,10 @@ fn a_dry_run_shows_the_harness_and_writes_nothing() {
     let (code, out, _) = r.run3(&["init", "--dry-run", "--non-interactive", "--json"]);
     assert_eq!(code, 0, "{out}");
     assert!(
-        out.contains("\"harness\":{\"level\":\"lean\",\"files\":[{\"path\":\".claude/agents/fallback-advisor.md\",\"action\":\"create\",\"note\":\"agent fallback-advisor: opus, xhigh\"}"),
+        out.contains("\"harness\":{\"level\":\"lean\",\"files\":[{\"path\":\".claude/agents/verifier.md\",\"action\":\"create\",\"note\":\"agent verifier: opus, high\"}"),
         "{out}"
     );
+    assert!(!out.contains("fallback-advisor.md"), "{out}");
 }
 
 #[test]
@@ -376,7 +395,7 @@ fn an_answers_file_writes_the_full_harness_with_the_chosen_models() {
 
 #[test]
 fn reconfigure_moves_between_the_levels_and_removes_what_it_wrote() {
-    let r = lean_repo();
+    let r = advisor_repo();
     r.commit("init");
     let (code, out, err) = r.init_with("harness = \"full\"\n", &["--reconfigure"]);
     assert_eq!(code, 0, "{out}{err}");
@@ -487,7 +506,7 @@ fn a_file_of_the_project_makes_its_role_none_and_stays() {
     // An agent with the name of the advisor agent turns off only its file.
     let r = Repo::empty();
     r.write(".claude/agents/fallback-advisor.md", "own\n");
-    let (code, out, err) = r.run3(&["init", "--non-interactive"]);
+    let (code, out, err) = r.init_with(ADVISOR, &[]);
     assert_eq!(code, 0, "{out}{err}");
     assert_eq!(r.read(".claude/agents/fallback-advisor.md"), "own\n");
     assert!(
@@ -554,7 +573,7 @@ fn settings_that_are_not_json_refuse_the_harness() {
 
 #[test]
 fn check_reports_each_kind_of_drift_after_init() {
-    let r = lean_repo();
+    let r = advisor_repo();
     r.commit("init");
     let (code, out) = r.run(&["check"]);
     assert_eq!(code, 0, "{out}");
@@ -927,12 +946,13 @@ fn a_dry_run_gives_the_diff_of_each_harness_file_in_text_and_json() {
     let r = Repo::empty();
     let (code, out, err) = r.run3(&["init", "--dry-run", "--non-interactive"]);
     assert_eq!(code, 0, "{out}{err}");
-    for f in LEAN_FILES {
+    for f in new_team_files() {
         assert!(
             out.contains(&format!("--- /dev/null\n+++ b/{f}\n")),
             "{f}: {out}"
         );
     }
+    assert!(!out.contains(&format!("+++ b/{FALLBACK}\n")), "{out}");
     assert!(
         out.contains("--- /dev/null\n+++ b/.claude/settings.json\n"),
         "{out}"
@@ -940,7 +960,7 @@ fn a_dry_run_gives_the_diff_of_each_harness_file_in_text_and_json() {
     assert!(!r.exists(".claude"));
     let (code, json, err) = r.run3(&["init", "--dry-run", "--non-interactive", "--json"]);
     assert_eq!(code, 0, "{json}{err}");
-    for f in LEAN_FILES.iter().chain(&[".claude/settings.json"]) {
+    for f in new_team_files().chain([".claude/settings.json"]) {
         assert!(
             json.contains(&format!(
                 "{{\"path\":\"{f}\",\"action\":\"create\",\"note\":"
@@ -1028,7 +1048,7 @@ fn the_preview_has_14_answers_and_questions_13_and_14_write_nothing_without_a_ha
         "  12. agent harness: lean (default) -> [harness] level = \"lean\", ",
         ".claude/agents/verifier.md",
         ".claude/settings.json",
-        "  13. harness models: orchestrator=opus:xhigh advisor=fable ",
+        "  13. harness models: orchestrator=opus:xhigh advisor=none ",
         " (default) -> [harness.roles] table\n",
     ] {
         assert!(shown.contains(want), "{want}:\n{shown}");

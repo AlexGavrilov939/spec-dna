@@ -72,7 +72,7 @@ start=$(block Start)
 added=$(diff <(printf '%s\n' "$before_claude") CLAUDE.md | grep -c '^> .' || true)
 [ "$added" = 2 ] || fail "init added $added non-empty lines to CLAUDE.md, not 2"
 grep -q '^Model team: ' CLAUDE.md || fail "init wrote no model-team line"
-for f in verifier Explore fallback-advisor model-team; do
+for f in verifier Explore model-team; do
     [ -f ".claude/agents/$f.md" ] || fail "init wrote no .claude/agents/$f.md"
 done
 # The skills that are on by default (ADR 0023): `spec-dna skill list --json`

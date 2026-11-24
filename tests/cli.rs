@@ -831,7 +831,7 @@ fn fresh_project_init_check_uninstall() {
     assert!(
         out.starts_with(
             &format!(
-                "spec-dna init: greenfield repository; profile standard; 1 root (see spec-dna.toml)\nwrote spec-dna.toml\nwrote AGENTS.md\nwrote CLAUDE.md\nwrote .claude/skills/spec-dna/SKILL.md\nwrote .claude/agents/fallback-advisor.md\nwrote .claude/agents/verifier.md\nwrote .claude/agents/acceptor.md\nwrote .claude/agents/Explore.md\n{}wrote REVIEW.md\nwrote .claude/agents/model-team.md\nwrote .claude/settings.json\nwrote evals/check.sh\nwrote evals/example.json\nwrote evals/fixtures/example/notes.txt\nper-request prefix: ",
+                "spec-dna init: greenfield repository; profile standard; 1 root (see spec-dna.toml)\nwrote spec-dna.toml\nwrote AGENTS.md\nwrote CLAUDE.md\nwrote .claude/skills/spec-dna/SKILL.md\nwrote .claude/agents/verifier.md\nwrote .claude/agents/acceptor.md\nwrote .claude/agents/Explore.md\n{}wrote REVIEW.md\nwrote .claude/agents/model-team.md\nwrote .claude/settings.json\nwrote evals/check.sh\nwrote evals/example.json\nwrote evals/fixtures/example/notes.txt\nper-request prefix: ",
                 default_skills()
                     .iter()
                     .map(|n| format!("wrote .claude/skills/spec-dna-{n}/SKILL.md\n"))
@@ -841,9 +841,11 @@ fn fresh_project_init_check_uninstall() {
         "{out}"
     );
     assert!(
-        out.contains("\nto commit: git add spec-dna.toml AGENTS.md CLAUDE.md .claude/skills/spec-dna/SKILL.md .claude/agents/fallback-advisor.md"),
+        out.contains("\nto commit: git add spec-dna.toml AGENTS.md CLAUDE.md .claude/skills/spec-dna/SKILL.md .claude/agents/verifier.md"),
         "{out}"
     );
+    // A new project of `standard` has no advisor (D97).
+    assert!(!out.contains("fallback-advisor"), "{out}");
     assert!(out.contains("\nRestart Claude Code. Then check:"), "{out}");
     assert_eq!(r.read("AGENTS.md").lines().count(), 1);
     // CLAUDE.md has the same line, a blank line and the model-team line.
@@ -898,7 +900,6 @@ fn fresh_project_init_check_uninstall() {
     let mut deleted: Vec<String> = [
         ".claude/agents/Explore.md",
         ".claude/agents/acceptor.md",
-        ".claude/agents/fallback-advisor.md",
         ".claude/agents/model-team.md",
         ".claude/agents/verifier.md",
         ".claude/settings.json",

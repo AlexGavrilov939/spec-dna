@@ -418,6 +418,12 @@ impl Plan {
         if self.kind == "reconfigure" {
             return;
         }
+        // The role of the preset moves with the profile. A detected advisor
+        // is not the default of the old profile, so it stays.
+        let advisor = self.harness.cfg_mut(Role::Advisor);
+        if advisor.model == default_advisor_model(self.preset) {
+            advisor.model = default_advisor_model(profile);
+        }
         self.preset = profile;
         self.change_policy = match profile {
             Profile::Lite => ChangePolicy::TwoClass,
@@ -2474,12 +2480,28 @@ fn apply_conflicts(
     notes
 }
 
-/// The defaults of the harness for a new configuration: level `lean`, the
-/// models of the table, the deny rule for notebooks, the main model and the
-/// advisor of an existing `.claude/settings.json`, and no role over a file of
-/// the project. Returns the harness and the reasons of the roles that are off.
-fn harness_defaults(repo: &Repo, existing: &[(String, String)]) -> (Harness, Vec<String>) {
+/// The model of the role `advisor` that `init` writes into a new configuration
+/// (design 0.8.1, D97). The default of the code stays `fable`, so a table with
+/// no row `advisor` means what it meant in 0.8.0.
+fn default_advisor_model(profile: Profile) -> Model {
+    match profile {
+        Profile::Lite | Profile::Standard => Model::None,
+        Profile::Strict => Model::Id("fable".into()),
+    }
+}
+
+/// The defaults of the harness for a new configuration of `profile`: level
+/// `lean`, the models of the table with the advisor of the profile, the deny
+/// rule for notebooks, the main model and the advisor of an existing
+/// `.claude/settings.json`, and no role over a file of the project. Returns
+/// the harness and the reasons of the roles that are off.
+fn harness_defaults(
+    repo: &Repo,
+    existing: &[(String, String)],
+    profile: Profile,
+) -> (Harness, Vec<String>) {
     let mut h = Harness::new(Level::Lean);
+    h.cfg_mut(Role::Advisor).model = default_advisor_model(profile);
     let notebooks = repo
         .git
         .ls_files()
@@ -3562,7 +3584,7 @@ fn ask(plan: &mut Plan, facts: &Facts, io: &mut Ask) -> Result<(), String> {
         plan.base = b.clone();
     }
 
-    io.say("    The agent harness is a team of models for Claude Code. lean writes the main model, the advisor, `verifier`, `Explore`, `fallback-advisor`, `acceptor` (it comes with the skill `review`, and `lite` has none), the stage skills, `REVIEW.md`, up to 3 hooks and a model-team line in CLAUDE.md.");
+    io.say("    The agent harness is a team of models for Claude Code. lean writes the main model, `verifier`, `Explore`, `acceptor` (it comes with the skill `review`, and `lite` has none), the stage skills, `REVIEW.md`, up to 3 hooks and a model-team line in CLAUDE.md. It writes the advisor and `fallback-advisor` only when question 13 turns the advisor on.");
     io.say("    full also writes `implementer` and `code-simplifier`, and proposes the 11 skills, also the skills that are off by default (`spec-dna skill list` shows them). none writes nothing. The files are for Claude Code only.");
     for n in &plan.harness_notes {
         io.say(&format!("    {n}"));
@@ -3592,7 +3614,7 @@ fn ask(plan: &mut Plan, facts: &Facts, io: &mut Ask) -> Result<(), String> {
         let parts: Vec<String> = a.split_whitespace().map(str::to_string).collect();
         apply_parts(plan, &parts)?;
         io.say("    The main model sets the cost of each request.");
-        io.say("    The advisor reads the whole context at its own price each time that it is consulted. It needs Fable access, or `fallback-advisor` gives the advice.");
+        io.say("    The advisor reads the whole context at its own price each time that it is consulted, and the model-team line asks for a consult only in a change of class higher-risk. It is off by default (advisor=none), and on in the profile strict. In protocol 2 of the model-team measurement it gave no gain on the main measure at 1.49 times the cost (docs/team-measurement-2.md). Write advisor=fable to turn it on. It needs Fable access, or `fallback-advisor` gives the advice.");
         io.say("    `verifier` and `Explore` run only when the main session uses them.");
         io.say("    `none` turns a role off. Write advisor=<model>/<model of fallback-advisor> to set both.");
         let a = io.line(
@@ -3884,7 +3906,7 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     if plan.harness_old.is_none() || was_none {
         // A configuration of level `none` holds no other key, so a new level
         // takes the fresh defaults. The level `none` stays the default.
-        let (h, notes) = harness_defaults(repo, &existing);
+        let (h, notes) = harness_defaults(repo, &existing, plan.profile);
         plan.harness = h;
         // The defaults have the profile `standard`: the profile of the plan
         // decides the text of a skill and the agent `acceptor` (design 0.8.0, D71
