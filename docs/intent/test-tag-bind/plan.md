@@ -55,7 +55,7 @@ status: approved
 - [x] t11: Make `upgrade` print the same note, and document the note. Files: `src/upgrade.rs`, `tests/upgrade_cli.rs`, `docs/init.md`. Verify: `cargo test --test upgrade_cli`. Hours: 2.
 - [x] t12: Write the page of the test reports with the rule of D82, the code tree of D85 and the hook of D89. Move the 2 sections of the configuration page to it, link the section stats of the commands page from the section of the proof levels, and link the page from the change guide. Files: `docs/test-report.md`, `docs/config.md`, `docs/guides/change.md`. Verify: `pre-commit run --all-files` and `cargo run --quiet -- check --all` with no SD102 and no SD602. Hours: 4.
 - [x] t13: Document SD621, the reasons of SD616 and SD617, the text of SD614, the new heading of the test reports and its links, and the sections of check and show. Files: `docs/diagnostics.md`, `docs/commands.md`, `docs/test-report.md`. Verify: `pre-commit run --all-files` and `cargo run --quiet -- check --all` with no SD102 and no SD602. Hours: 2.
-- [ ] t14: Add the line of the page to the map and its row to the ownership file, and write the entry of the change. Files: `docs/README.md`, `.claude/agents/ownership.md`, `CHANGELOG.md`. Verify: `pre-commit run --all-files`. Hours: 1.
+- [x] t14: Add the line of the page to the map and its row to the ownership file, and write the entry of the change. Files: `docs/README.md`, `.claude/agents/ownership.md`, `CHANGELOG.md`. Verify: `pre-commit run --all-files`. Hours: 1.
 - [ ] t15: Run the independent review and the acceptance pass, and finish the change. Files: none: finish deletes the folder of the change. Verify: `spec-dna finish test-tag-bind --dry-run`. Hours: 3.
 
 ## Risks

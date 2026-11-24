@@ -210,6 +210,7 @@ docs/config.md, docs/types.md        COR. REL: the version in docs/config.md
 docs/commands.md                     The agent of each command: its section. COR: the summary, the exit codes and the cache
 docs/diagnostics.md                  DIA
 docs/profiles.md                     DIA
+docs/test-report.md                  DIA
 docs/init.md, docs/quickstart.md     INI. REL: the version in docs/quickstart.md
 docs/harness.md                      INI. DIA: the section "Check"
 docs/agents.md                       INI
