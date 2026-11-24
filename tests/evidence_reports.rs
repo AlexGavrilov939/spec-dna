@@ -2881,3 +2881,185 @@ fn a_case_with_a_space_after_the_colon_or_a_stray_quote_is_not_valid() {
         assert_eq!(code, 1, "{tag}: {out}");
     }
 }
+
+// The name of a case is a whole segment: the review of the acceptor
+
+/// The check of a pull request with the test files `files` and the cases of one
+/// report. Returns the exit code and the output.
+fn bind_files(files: &[(&str, &str)], cases: &[(&str, &str, &str)]) -> (i32, String) {
+    let r = pr("strict", REPORTS, files);
+    r.write("reports/r.xml", &junit("runner", cases));
+    stamp(&r);
+    check(&r, &[])
+}
+
+#[test]
+fn a_template_of_the_file_claims_its_case_so_a_skipped_test_stays_unproven() {
+    let cl = "tests/valves.test.js";
+    // The tag is above a skipped test. The template `%s opens` is a test of
+    // the file, and its case ends with the word `opens`.
+    for template in [
+        "  it.each(['fast'])('%s opens', (x) => {\n  });\n",
+        "  test.each`\n    a\n    ${1}\n  `('$a opens', (x) => {\n  });\n",
+        "  it(`${speed} opens`, () => {\n  });\n",
+    ] {
+        let text = format!(
+            "describe('Valves', () => {{\n  // covers: requirements/valves#flush\n  it.skip('opens', () => {{\n  }});\n\n{template}}});\n"
+        );
+        for name in ["Valves > fast opens", "Valves fast opens"] {
+            let (code, out) = bind_check("tests/valves.test.js", &text, &[(cl, name, "")]);
+            let found = lines(&out, "SD617");
+            assert_eq!(found.len(), 1, "{template} {name}: {out}");
+            assert_eq!(code, 1, "{template} {name}: {out}");
+        }
+    }
+    // A name that a runner separates with ` > ` never binds by its last word.
+    let text = "describe('Valves', () => {\n  // covers: requirements/valves#flush\n  it('opens', () => {\n  });\n});\n";
+    let (code, out) = bind_check(
+        "tests/valves.test.js",
+        text,
+        &[(cl, "Valves > fast opens", "")],
+    );
+    assert!(has(&out, "SD617"), "{out}");
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn a_shared_example_of_rspec_claims_its_cases() {
+    let text = "describe Valve do\n  it_behaves_like 'closable'\n\n  # covers: requirements/valves#flush\n  it 'closes' do\n  end\nend\n";
+    let r = pr("strict", REPORTS, &[("spec/valve_spec.rb", text)]);
+    r.write(
+        "reports/r.xml",
+        "<?xml version=\"1.0\"?><testsuite name=\"rspec\" tests=\"1\"><testcase classname=\"spec.valve_spec\" name=\"Valve behaves like closable closes\" file=\"./spec/valve_spec.rb\"/></testsuite>",
+    );
+    stamp(&r);
+    let (code, out) = check(&r, &[]);
+    assert!(has(&out, "SD617"), "{out}");
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn a_display_name_of_another_test_binds_nothing() {
+    // xUnit: the test under the tag is skipped, and the report has the case of
+    // another test that starts with its name.
+    let cs = "public class ValveTest {\n    // covers: requirements/valves#flush\n    [Fact(Skip = \"later\")] public void Closes() {\n    }\n\n    [Fact(DisplayName = \"Closes when cold\")] public void Other() {\n    }\n}\n";
+    let (code, out) = bind_check(
+        "Valves/Tests/ValveTest.cs",
+        cs,
+        &[("Valves.Tests.ValveTest", "Closes when cold", "")],
+    );
+    assert_eq!(lines(&out, "SD617").len(), 1, "{out}");
+    assert_eq!(code, 1, "{out}");
+    // JUnit 5 with a display name.
+    let java = "class ValveTest {\n    // covers: requirements/valves#flush\n    @Test\n    @Disabled\n    void closes() {\n    }\n\n    @Test\n    @DisplayName(\"closes when cold\")\n    void other() {\n    }\n}\n";
+    let (code, out) = bind_check(
+        "src/test/java/com/example/ValveTest.java",
+        java,
+        &[("com.example.ValveTest", "closes when cold", "")],
+    );
+    assert_eq!(lines(&out, "SD617").len(), 1, "{out}");
+    assert_eq!(code, 1, "{out}");
+    // A parameter tail that starts right after the name still binds.
+    let (code, out) = bind_check(
+        "src/test/java/com/example/ValveTest.java",
+        java,
+        &[("com.example.ValveTest", "closes(int) [1] 3", "")],
+    );
+    assert!(!has(&out, "SD617"), "{out}");
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn a_classname_fits_a_test_file_only_by_its_whole_dotted_path() {
+    // The case of `tests/test_close.py` must not fit `app/tests.py` (a Django
+    // layout), because the part before the last dot of its `classname` is
+    // `tests`.
+    let tag = "# covers: requirements/valves#flush\ndef test_close():\n    assert True\n";
+    let plain = "def test_close():\n    assert True\n";
+    let (code, out) = bind_files(
+        &[("app/tests/tests.py", tag), ("tests/test_close.py", plain)],
+        &[("tests.test_close", "test_close", "")],
+    );
+    assert_eq!(lines(&out, "SD617").len(), 1, "{out}");
+    assert_eq!(code, 1, "{out}");
+    // A test in a class has the class after the module, and it still fits.
+    let class = "class TestValves:\n    # covers: requirements/valves#flush\n    def test_close(self):\n        assert True\n";
+    let (code, out) = bind_files(
+        &[("tests/test_valves.py", class)],
+        &[("tests.test_valves.TestValves", "test_close", "")],
+    );
+    assert!(!has(&out, "SD617") && !has(&out, "SD621"), "{out}");
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn a_nextest_unit_test_of_the_library_does_not_prove_a_test_of_a_binary_with_its_name() {
+    // `app` is the binary id of the unit tests of the library. The file
+    // `tests/app.rs` is the binary `app::app`.
+    let rs = "// covers: requirements/valves#flush\n#[test]\n#[ignore]\nfn closes() {\n}\n";
+    let (code, out) = bind_files(
+        &[("tests/app.rs", rs)],
+        &[("app", "valves::tests::closes", "")],
+    );
+    assert_eq!(lines(&out, "SD617").len(), 1, "{out}");
+    assert_eq!(code, 1, "{out}");
+    // The binary id of the file still binds, and it gives no SD621.
+    let (code, out) = bind_files(&[("tests/app.rs", rs)], &[("app::app", "closes", "")]);
+    assert!(!has(&out, "SD617") && !has(&out, "SD621"), "{out}");
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn a_function_that_runs_2_suites_with_one_method_name_binds_no_case() {
+    let text = "package valves\n\nfunc TestAll(t *testing.T) {\n\tsuite.Run(t, new(BSuite))\n\tsuite.Run(t, &ASuite{})\n}\n\nfunc (s *BSuite) TestOpen() {\n}\n\n// covers: requirements/valves#flush\nfunc (s *ASuite) TestOpen() {\n}\n";
+    let pkg = "example.org/app/valves";
+    // Go names the second subtest of one name with `#01`.
+    let (code, out) = bind_check(
+        "valves/suite_test.go",
+        text,
+        &[
+            (pkg, "TestAll", ""),
+            (pkg, "TestAll/TestOpen", ""),
+            (pkg, "TestAll/TestOpen#01", SKIPPED),
+        ],
+    );
+    let found = lines(&out, "SD617");
+    assert_eq!(found.len(), 1, "{out}");
+    assert_eq!(code, 1, "{out}");
+    // A method that no other suite of the function has still binds.
+    let only = text.replace("func (s *BSuite) TestOpen()", "func (s *BSuite) TestShut()");
+    let (code, out) = bind_check(
+        "valves/suite_test.go",
+        &only,
+        &[(pkg, "TestAll/TestOpen", "")],
+    );
+    assert!(!has(&out, "SD617"), "{out}");
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn a_kotlin_name_in_backticks_with_parentheses_or_brackets_binds_whole() {
+    let path = "src/test/kotlin/com/example/ValveTest.kt";
+    let cl = "com.example.ValveTest";
+    for name in ["stops (fast)", "stops [fast]"] {
+        let text = format!(
+            "class ValveTest {{\n    // covers: requirements/valves#flush\n    @Test fun `{name}`() {{\n    }}\n}}\n"
+        );
+        for case in [
+            name.to_string(),
+            format!("{name}()"),
+            format!("{name}(int) [1] 3"),
+        ] {
+            let (code, out) = bind_check(path, &text, &[(cl, &case, "")]);
+            assert!(!has(&out, "SD617"), "{case}: {out}");
+            assert_eq!(code, 0, "{case}: {out}");
+            let (code, out) = bind_check(path, &text, &[(cl, &case, SKIPPED)]);
+            assert_eq!(lines(&out, "SD617").len(), 1, "{case}: {out}");
+            assert_eq!(code, 1, "{case}: {out}");
+        }
+        // A case that has only the first word of the name binds nothing.
+        let (code, out) = bind_check(path, &text, &[(cl, "stops()", "")]);
+        assert!(has(&out, "SD617"), "{out}");
+        assert_eq!(code, 1, "{out}");
+    }
+}

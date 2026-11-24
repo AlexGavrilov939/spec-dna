@@ -563,6 +563,11 @@ pub struct TestName {
     /// Only the method of a suite is a test, and the case is `<Test function>/
     /// <method>`, where the function runs the suite (`suite.Run`).
     pub recv: Option<String>,
+    /// True for a template of a table (`it.each(rows)('%s opens')`, a name with
+    /// `${}`, a shared example). `name` is the literal with its placeholders.
+    /// Such a test takes part in the rule of the nearer name, so that its cases
+    /// do not bind to another test of the file, but no tag binds to it.
+    pub template: bool,
 }
 
 /// The first byte index after the leading identifier of `s`: letters, digits,
@@ -804,6 +809,7 @@ fn call_form(rest: &str) -> Option<Under> {
         call: true,
         bt: false,
         recv: None,
+        template: false,
     }))
 }
 
@@ -823,6 +829,7 @@ fn method_form(body: &str, annotated: bool) -> Option<Under> {
                 call: true,
                 bt: true,
                 recv: None,
+                template: false,
             })
         });
     }
@@ -845,6 +852,7 @@ fn method_form(body: &str, annotated: bool) -> Option<Under> {
             call: false,
             bt: false,
             recv: None,
+            template: false,
         })
     })
 }
@@ -866,6 +874,16 @@ fn classify(text: &str, annotated: bool) -> Option<Under> {
     {
         return Some(Under::Group);
     }
+    // A shared example of RSpec gives the cases `<group> behaves like <name> ...`.
+    if matches!(word, "it_behaves_like" | "it_should_behave_like")
+        && let Some(lit) = literal(
+            rest.trim_start()
+                .strip_prefix('(')
+                .map_or(rest.trim_start(), str::trim_start),
+        )
+    {
+        return Some(Under::Template(format!("behaves like {lit}%s")));
+    }
     let named = |name: &str, recv: Option<String>| {
         (!name.is_empty()).then(|| {
             Under::Test(TestName {
@@ -873,6 +891,7 @@ fn classify(text: &str, annotated: bool) -> Option<Under> {
                 call: false,
                 bt: false,
                 recv,
+                template: false,
             })
         })
     };
@@ -940,6 +959,11 @@ fn before_tag(prefix: &str) -> &str {
 /// definition line with less indent than the tag ends the scope of the tag, so
 /// a tag in the body of a test stands above no test.
 pub fn under_tag(lines: &[&str], tag: usize) -> Under {
+    under_tag_line(lines, tag).0
+}
+
+/// Like `under_tag`. It also gives the index of the definition line.
+fn under_tag_line(lines: &[&str], tag: usize) -> (Under, usize) {
     let tag_indent =
         comment_open(lines, tag).map_or_else(|| indent(lines[tag]), |k| indent(lines[k]));
     let mut annotated = false;
@@ -958,14 +982,75 @@ pub fn under_tag(lines: &[&str], tag: usize) -> Under {
         annotated = any;
         let text = own[0][off..].trim();
         if !text.is_empty() {
-            return classify(text, annotated).unwrap_or(Under::NoTest(Some(tag + 1)));
+            let under = classify(text, annotated).unwrap_or(Under::NoTest(Some(tag + 1)));
+            return (under, tag);
         }
     }
     match definition(lines, tag + 1, annotated) {
-        None => Under::NoTest(None),
-        Some(d) if indent(lines[d.first]) < tag_indent => Under::NoTest(Some(d.line + 1)),
-        Some(d) => classify(d.text, d.annotated).unwrap_or(Under::NoTest(Some(d.line + 1))),
+        None => (Under::NoTest(None), tag),
+        Some(d) if indent(lines[d.first]) < tag_indent => (Under::NoTest(Some(d.line + 1)), d.line),
+        Some(d) => (
+            classify(d.text, d.annotated).unwrap_or(Under::NoTest(Some(d.line + 1))),
+            d.line,
+        ),
     }
+}
+
+/// The title of the group that a line opens: `Some(Some(title))` for
+/// `describe('Valves'`, `Some(None)` for a class or a module, and `None` for a
+/// line that is no group.
+fn group_title(body: &str) -> Option<Option<String>> {
+    let n = ident_end(body);
+    let (word, rest) = body.split_at(n);
+    if matches!(
+        word,
+        "class" | "object" | "mod" | "impl" | "module" | "namespace"
+    ) && rest.starts_with(' ')
+    {
+        return Some(None);
+    }
+    if !matches!(word, "describe" | "context" | "suite") {
+        return None;
+    }
+    let mut s = rest;
+    while let Some(r) = s.strip_prefix('.') {
+        s = &r[ident_end(r)..];
+    }
+    let s = s.strip_prefix('(').unwrap_or(s).trim_start();
+    if let Some(title) = literal(s) {
+        return Some(Some(title.to_string()));
+    }
+    // `describe Valve do`
+    let m = ident_end(s);
+    (m > 0).then(|| Some(s[..m].to_string()))
+}
+
+/// The titles of the groups that hold the definition at `lines[def]`, the
+/// outermost first (`describe('Valves'` gives `Valves`). `None` when a line with
+/// less indent is no group: the chain is not readable, and the name of the case
+/// then stays a weak match.
+fn ancestors(lines: &[&str], def: usize) -> Option<Vec<String>> {
+    let mut want = indent(lines[def]);
+    let mut out = Vec::new();
+    for k in (0..def).rev() {
+        if want == 0 {
+            break;
+        }
+        let t = lines[k].trim();
+        if t.is_empty() || is_comment(t) {
+            continue;
+        }
+        let ind = indent(lines[k]);
+        if ind >= want {
+            continue;
+        }
+        if let Some(title) = group_title(strip_modifiers(t))? {
+            out.push(title);
+        }
+        want = ind;
+    }
+    out.reverse();
+    Some(out)
 }
 
 /// The tests of a file, each at its definition line. It reads the file once.
@@ -981,8 +1066,19 @@ fn tests_of(lines: &[&str]) -> Vec<TestName> {
         let Some(d) = definition(lines, i, false) else {
             break;
         };
-        if let Some(Under::Test(t)) = classify(d.text, d.annotated) {
-            out.push(t);
+        match classify(d.text, d.annotated) {
+            Some(Under::Test(t)) => out.push(t),
+            // A template is a test of the file: its cases must not bind to
+            // another test (design 0.8.1, D82 item 5). The name of a table on
+            // more than one line is not read: the empty name stands for it.
+            Some(Under::Template(name)) => out.push(TestName {
+                name,
+                call: true,
+                bt: false,
+                recv: None,
+                template: true,
+            }),
+            _ => {}
         }
         i = d.line + 1;
     }
@@ -1018,117 +1114,264 @@ fn same_file(case_file: &str, path: &str) -> bool {
     case_file == path || ends(case_file, path) || ends(path, case_file)
 }
 
-/// The segments of the head of a case name, each with the byte where it ends.
-/// The head is the part before the first `(`, `[`, `/` or space. `::` and `.`
-/// split it (design 0.8.1, D82 item 4).
-fn head_segments(name: &str) -> Vec<(&str, usize)> {
-    let head_end = name.find(['(', '[', '/', ' ']).unwrap_or(name.len());
-    let head = &name[..head_end];
-    let mut out = Vec::new();
-    let (mut start, mut i) = (0, 0);
-    while i < head.len() {
-        if head[i..].starts_with("::") {
-            out.push((&head[start..i], i));
-            i += 2;
-            start = i;
-        } else if head.as_bytes()[i] == b'.' {
-            out.push((&head[start..i], i));
-            i += 1;
-            start = i;
-        } else {
-            i += head[i..].chars().next().map_or(1, char::len_utf8);
-        }
-    }
-    out.push((&head[start..], head.len()));
-    out.retain(|(s, _)| !s.is_empty());
-    out
+/// The separators of the segments of a case name. A space inside a name is no
+/// separator: `Closes when cold` is one segment.
+const SEPS: [&str; 6] = [" > ", " \u{203a} ", "::", "/", ".", "#"];
+
+/// How well the name of a case names a test.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum NameFit {
+    /// The case name only ends with the name after a space (jest-junit and
+    /// RSpec join the titles with a space), or it is the claim of a template.
+    Weak,
+    /// The name is a whole segment of the case name.
+    Strong,
 }
 
-/// Where the name of the test ends in the name of the case, or `None` when the
-/// case does not name the test (design 0.8.1, D82 item 4). The form call names
-/// the test when the case name equals the literal or ends with it after a space
-/// (` > ` and ` \u{203a} ` end with a space). The other forms name it when it is
-/// one segment of the head.
-fn name_end(case: &str, test: &TestName) -> Option<usize> {
-    if test.recv.is_some() {
-        // A Go method of a suite: `<Test function>/<method>`, with more
-        // segments for a subtest. A case of one segment names no method.
-        let mut segs = case.split('/');
-        let first = segs.next()?;
-        let second = segs.next()?;
-        return (second == test.name).then_some(first.len() + 1 + second.len());
+/// The end of the last place where `text` has `lit` as a whole segment: at the
+/// start or after a separator, and at the end or before a separator.
+fn find_whole(text: &str, lit: &str) -> Option<usize> {
+    if lit.is_empty() {
+        return None;
     }
-    if test.call {
-        let named = |c: &str| {
-            c == test.name
-                || c.strip_suffix(test.name.as_str())
-                    .is_some_and(|p| p.ends_with(' '))
-        };
-        // A report can add the parameters of a Kotlin method to its name.
-        let plain = if test.bt { without_tail(case) } else { case };
-        return (named(case) || named(plain)).then_some(case.len());
-    }
-    head_segments(case)
-        .into_iter()
-        .filter(|(s, _)| *s == test.name)
-        .map(|(_, e)| e)
+    text.match_indices(lit)
+        .filter(|(i, _)| {
+            let j = i + lit.len();
+            (*i == 0 || SEPS.iter().any(|s| text[..*i].ends_with(s)))
+                && (j == text.len() || SEPS.iter().any(|s| text[j..].starts_with(s)))
+        })
+        .map(|(i, _)| i + lit.len())
         .max()
 }
 
-/// The name of a case without its parameters: the part before the first `(` or
-/// ` [`. The names `closes()` and `closes(int) [1] 3` have the name `closes`.
-fn without_tail(name: &str) -> &str {
-    let cut = [name.find('('), name.find(" [")]
-        .into_iter()
-        .flatten()
-        .min();
-    match cut {
-        Some(i) if i > 0 => name[..i].trim_end(),
-        _ => name,
+/// The case name, and the parts of it before each `(` and ` [`: a report adds
+/// the parameters of a method after its name (`closes()`, `closes(int) [1] 3`).
+fn tail_variants(case: &str) -> Vec<&str> {
+    let mut out = vec![case];
+    for (i, c) in case.char_indices() {
+        if i > 0 && (c == '(' || case[i..].starts_with(" [")) {
+            out.push(case[..i].trim_end());
+        }
     }
+    out
 }
 
-/// The type that a Go suite method names, and the functions that run it. A
-/// function `func TestX(t *testing.T)` of the files runs the type when its
-/// lines have `suite.Run(t, new(<Type>))` or `suite.Run(t, &<Type>{...})`. The
-/// result is empty when no function runs the type, and then the method binds no
-/// case.
-pub fn suite_funcs<'a>(texts: impl IntoIterator<Item = &'a str>, ty: &str) -> Vec<String> {
-    let new = format!("new({ty})");
-    let literal = format!("&{ty}{{");
-    let mut out: Vec<String> = Vec::new();
+/// The head of a case name for an identifier: the part before the parameters
+/// that start right after the name (`test_x[1-2]`, `test1(String) [1] a`) and
+/// before ` with data set` (PHPUnit). A `(` after a space is part of a display
+/// name.
+fn cut_head(case: &str) -> &str {
+    let mut cut = case.find(" with data set").unwrap_or(case.len());
+    for (i, c) in case.char_indices() {
+        if i < cut && (c == '(' || c == '[') && i > 0 && !case[..i].ends_with(char::is_whitespace) {
+            cut = i;
+            break;
+        }
+    }
+    &case[..cut]
+}
+
+/// The fixed parts of a template literal, and true when it ends with a
+/// placeholder. A placeholder is `%s` (any character after `%`), `${...}`,
+/// `#{...}` and `$name`.
+fn template_parts(lit: &str) -> (Vec<&str>, bool) {
+    let mut parts = Vec::new();
+    let (mut start, mut i) = (0, 0);
+    while i < lit.len() {
+        let rest = &lit[i..];
+        let ph = if rest.starts_with("${") || rest.starts_with("#{") {
+            rest.find('}').map(|n| n + 1)
+        } else if let Some(r) = rest.strip_prefix('%') {
+            Some(1 + r.chars().next().map_or(0, char::len_utf8))
+        } else {
+            rest.strip_prefix('$').map(|r| 1 + ident_end(r))
+        };
+        match ph {
+            Some(n) if n > 0 => {
+                parts.push(&lit[start..i]);
+                i += n;
+                start = i;
+            }
+            _ => i += rest.chars().next().map_or(1, char::len_utf8),
+        }
+    }
+    let last = &lit[start..];
+    parts.push(last);
+    (parts, last.is_empty())
+}
+
+/// True if the case name can come from the template literal: the fixed parts
+/// are in the name in order, and the name ends with the last one when the
+/// literal does not end with a placeholder.
+fn template_match(case: &str, lit: &str) -> bool {
+    let (parts, ends_open) = template_parts(lit);
+    let fixed: Vec<&str> = parts
+        .iter()
+        .map(|p| p.trim())
+        .filter(|p| !p.is_empty())
+        .collect();
+    let Some(last) = fixed.last() else {
+        return false;
+    };
+    let mut at = 0;
+    for part in &fixed {
+        match case[at..].find(part) {
+            Some(k) => at += k + part.len(),
+            None => return false,
+        }
+    }
+    ends_open || case.ends_with(last)
+}
+
+/// How the name of the case names the test, or `None` (design 0.8.1, D82 item
+/// 4). The rule is that the name of the test is a whole segment of the case
+/// name, with the separators of `SEPS` only:
+///
+/// - a Go method of a suite: `<Test function>/<method>`, and more segments for a
+///   subtest;
+/// - a template: the fixed parts of its literal are in the name;
+/// - a name in a literal (the form call): the name is a whole segment, or it is
+///   the end of the case name after a space (a weak match, unless the case name
+///   has a segment of ` > `). A Kotlin name in backticks has the parameters
+///   after it: the whole name first, then each part before a `(` or ` [`;
+/// - an identifier: it is a whole segment of the name before its parameters.
+///
+/// The first part is where the name ends in the case name, and the ranking of
+/// the item 5 uses it.
+fn name_match(case: &str, test: &TestName) -> Option<(usize, NameFit)> {
+    if test.recv.is_some() {
+        // A case of one segment names no method.
+        let mut segs = case.split('/');
+        let first = segs.next()?;
+        let second = segs.next()?;
+        return (second == test.name).then_some((first.len() + 1 + second.len(), NameFit::Strong));
+    }
+    if test.template {
+        return template_match(case, &test.name).then_some((case.len(), NameFit::Weak));
+    }
+    if test.call {
+        let lit = test.name.as_str();
+        let variants = if test.bt {
+            tail_variants(case)
+        } else {
+            vec![case]
+        };
+        if variants.iter().any(|v| find_whole(v, lit).is_some()) {
+            return Some((case.len(), NameFit::Strong));
+        }
+        let space = |v: &str| {
+            v.strip_suffix(lit).is_some_and(|prefix| {
+                prefix.ends_with(' ') && !prefix.contains(" > ") && !prefix.contains(" \u{203a} ")
+            })
+        };
+        return variants
+            .iter()
+            .any(|v| space(v))
+            .then_some((case.len(), NameFit::Weak));
+    }
+    find_whole(cut_head(case), &test.name).map(|e| (e, NameFit::Strong))
+}
+
+/// True if the case is the one that the titles of the groups and the name of
+/// the test give: the titles and the name, joined with a space, ` > ` or
+/// ` \u{203a} `. Then the weak match is the expected full name.
+fn expected_name(case: &str, test: &TestName, titles: &[String]) -> bool {
+    [" ", " > ", " \u{203a} "].iter().any(|sep| {
+        let mut want = titles.join(sep);
+        if !want.is_empty() {
+            want.push_str(sep);
+        }
+        want.push_str(&test.name);
+        case == want
+    })
+}
+
+/// The types that a line `suite.Run(t, ...)` runs: `new(<Type>)` and
+/// `&<Type>{...}`.
+fn suite_types(call: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for (open, close) in [("new(", ')'), ("&", '{')] {
+        for (at, _) in call.match_indices(open) {
+            let rest = &call[at + open.len()..];
+            let n = ident_end(rest);
+            if n > 0 && rest[n..].starts_with(close) {
+                out.push(rest[..n].to_string());
+            }
+        }
+    }
+    out
+}
+
+/// The functions that run the Go suite of the type `ty` and that can name its
+/// method `method`. A function `func TestX(t *testing.T)` of the files runs a
+/// type when its lines have `suite.Run(t, new(<Type>))` or `suite.Run(t,
+/// &<Type>{...})`. The result leaves out a function that also runs another type
+/// with a method of the same name: the cases of both methods have one name, so
+/// they bind to neither. The result is empty when no function runs the type,
+/// and then the method binds no case.
+pub fn suite_funcs<'a>(
+    texts: impl IntoIterator<Item = &'a str>,
+    ty: &str,
+    method: &str,
+) -> Vec<String> {
+    let mut runs: Vec<(String, String)> = Vec::new();
+    let mut methods: HashSet<(String, String)> = HashSet::new();
     for text in texts {
         let mut current: Option<&str> = None;
         for line in text.lines() {
             if let Some(rest) = line.strip_prefix("func ") {
-                let name = &rest[..ident_end(rest)];
-                current = (name.starts_with("Test") && rest[name.len()..].starts_with('('))
-                    .then_some(name);
+                if rest.starts_with('(') {
+                    // A method: `func (s *Suite) TestX(`.
+                    current = None;
+                    if let Some(close) = rest.find(')') {
+                        let recv = rest[1..close].split_whitespace().last().unwrap_or("");
+                        let recv = recv.trim_start_matches('*');
+                        let after = rest[close + 1..].trim_start();
+                        let name = &after[..ident_end(after)];
+                        if !recv.is_empty() && !name.is_empty() {
+                            methods.insert((recv.to_string(), name.to_string()));
+                        }
+                    }
+                } else {
+                    let name = &rest[..ident_end(rest)];
+                    current = (name.starts_with("Test") && rest[name.len()..].starts_with('('))
+                        .then_some(name);
+                }
             }
             if let Some(func) = current
                 && let Some(at) = line.find("suite.Run(")
-                && (line[at..].contains(&new) || line[at..].contains(&literal))
-                && !out.iter().any(|f| f == func)
             {
-                out.push(func.to_string());
+                for t in suite_types(&line[at..]) {
+                    runs.push((func.to_string(), t));
+                }
             }
+        }
+    }
+    let mut out: Vec<String> = Vec::new();
+    for (func, t) in &runs {
+        let clash = runs.iter().any(|(g, other)| {
+            g == func && other != ty && methods.contains(&(other.clone(), method.to_string()))
+        });
+        if t == ty && !clash && !out.contains(func) {
+            out.push(func.clone());
         }
     }
     out
 }
 
 /// True if the case belongs to another test of the file than `ours`: that
-/// test names the case with an end nearer the end of the case name, and on a
-/// tie with a longer name (design 0.8.1, D82 item 5).
+/// test names the case better. The better name is the stronger match, then the
+/// one that ends nearer the end of the case name, and on a tie the longer name
+/// (design 0.8.1, D82 item 5). A template is a test of the file too.
 fn belongs_elsewhere(case: &str, ours: &TestName, tests: &[TestName]) -> bool {
-    let Some(end) = name_end(case, ours) else {
+    let Some((end, fit)) = name_match(case, ours) else {
         return false;
     };
-    let rank = (end, ours.name.len());
+    let rank = (fit, end, ours.name.len());
     tests
         .iter()
         .filter(|t| t.name != ours.name)
-        .any(|t| name_end(case, t).is_some_and(|e| (e, t.name.len()) > rank))
+        .any(|t| name_match(case, t).is_some_and(|(e, f)| (f, e, t.name.len()) > rank))
 }
 
 /// The path of the folder of a file, or an empty text for a file in the root.
@@ -1178,12 +1421,47 @@ enum Kind {
     Name,
 }
 
+/// A Rust test file: an integration test (`tests/<name>.rs`, a binary of its
+/// own), or a file of `src/` with unit tests, with its module path.
+enum RustFile {
+    No,
+    Test,
+    Src(Vec<String>),
+}
+
+/// The kind of a Rust file by its path. The module path of `src/a/b.rs` is
+/// `a::b`, and `src/lib.rs` and `src/main.rs` have the empty path.
+fn rust_file(path: &str) -> RustFile {
+    if !path.ends_with(".rs") {
+        return RustFile::No;
+    }
+    let rest = path
+        .strip_prefix("src/")
+        .or_else(|| path.rsplit_once("/src/").map(|(_, r)| r));
+    let Some(rest) = rest else {
+        return RustFile::Test;
+    };
+    let mut module: Vec<String> = rest
+        .trim_end_matches(".rs")
+        .split('/')
+        .map(str::to_string)
+        .collect();
+    if matches!(
+        module.last().map(String::as_str),
+        Some("mod" | "lib" | "main")
+    ) {
+        module.pop();
+    }
+    RustFile::Src(module)
+}
+
 /// The test file of a tag, with what the rules of fit read.
 struct Place<'p> {
     path: &'p str,
     dotted: String,
     key: &'p str,
     folder: &'p str,
+    rust: RustFile,
 }
 
 impl<'p> Place<'p> {
@@ -1193,21 +1471,61 @@ impl<'p> Place<'p> {
             dotted: dotted(path),
             key: binary_key(path),
             folder: folder_of(path),
+            rust: rust_file(path),
         }
     }
 }
 
+/// The keys of a case name for the index: the name, the parts before each
+/// parameter list, the parts after a space or a separator, and the segments.
+/// The index only finds the cases to look at. `name_match` decides.
+fn case_keys(name: &str) -> Vec<&str> {
+    let mut variants = vec![name];
+    for (i, c) in name.char_indices() {
+        if i > 0 && (c == '(' || c == '[') {
+            variants.push(name[..i].trim_end());
+        }
+    }
+    if let Some(i) = name.find(" with data set") {
+        variants.push(&name[..i]);
+    }
+    let mut keys = Vec::new();
+    for v in variants {
+        keys.push(v);
+        keys.extend(v.match_indices(' ').map(|(p, _)| &v[p + 1..]));
+        // The segments: from the start or after a separator, to a separator or
+        // the end.
+        let mut starts = vec![0];
+        let mut ends = vec![v.len()];
+        for sep in SEPS {
+            for (p, _) in v.match_indices(sep) {
+                starts.push(p + sep.len());
+                ends.push(p);
+            }
+        }
+        for &a in &starts {
+            for &b in &ends {
+                if a < b {
+                    keys.push(&v[a..b]);
+                }
+            }
+        }
+    }
+    keys.retain(|k| !k.is_empty());
+    keys.sort_unstable();
+    keys.dedup();
+    keys
+}
+
 /// The index of the cases of the reports, for the bind of many tags. It holds,
-/// once for all tags, what a bind needs about a case: the cases by the names
-/// that they can have, and the test files that each `classname` names. The cost
-/// of a bind is then the cost of its test, and not the number of cases times
-/// the number of test files.
+/// once for all tags, what a bind needs about a case: the cases by the keys of
+/// their names, and the test files that each `classname` names. The cost of a
+/// bind is then the cost of its test, and not the number of cases times the
+/// number of test files.
 pub struct Binder<'a> {
     cases: &'a [Case],
-    /// A segment of the head of a name, to the cases that have it.
-    by_segment: HashMap<&'a str, Vec<usize>>,
-    /// A name, and the part of a name after each space, to the cases that have it.
-    by_suffix: HashMap<&'a str, Vec<usize>>,
+    /// A key of a name (`case_keys`), to the cases that have it.
+    by_key: HashMap<&'a str, Vec<usize>>,
     /// A whole name, to the cases that have it.
     by_name: HashMap<&'a str, Vec<usize>>,
     /// The second segment of a name with `/`, to the cases that have it: the
@@ -1220,33 +1538,14 @@ pub struct Binder<'a> {
 impl<'a> Binder<'a> {
     pub fn new(cases: &'a [Case], test_files: &[String]) -> Binder<'a> {
         let names = Names::new(test_files);
-        let mut by_segment: HashMap<&str, Vec<usize>> = HashMap::new();
-        let mut by_suffix: HashMap<&str, Vec<usize>> = HashMap::new();
+        let mut by_key: HashMap<&str, Vec<usize>> = HashMap::new();
         let mut by_name: HashMap<&str, Vec<usize>> = HashMap::new();
         let mut by_second: HashMap<&str, Vec<usize>> = HashMap::new();
         let mut kind = Vec::with_capacity(cases.len());
         for (i, c) in cases.iter().enumerate() {
-            let mut segs: Vec<&str> = head_segments(&c.name).into_iter().map(|s| s.0).collect();
-            segs.sort_unstable();
-            segs.dedup();
-            for k in segs {
-                by_segment.entry(k).or_default().push(i);
-            }
             let name = c.name.as_str();
-            let mut tails = vec![name];
-            tails.extend(name.match_indices(' ').map(|(p, _)| &name[p + 1..]));
-            // The same names without the parameters that a report can add to a
-            // Kotlin name. The bind checks the form of the test again.
-            let plain = without_tail(name);
-            if plain != name {
-                tails.push(plain);
-                tails.extend(plain.match_indices(' ').map(|(p, _)| &plain[p + 1..]));
-            }
-            tails.retain(|k| !k.is_empty());
-            tails.sort_unstable();
-            tails.dedup();
-            for k in tails {
-                by_suffix.entry(k).or_default().push(i);
+            for k in case_keys(name) {
+                by_key.entry(k).or_default().push(i);
             }
             by_name.entry(name).or_default().push(i);
             if let Some(second) = name.split('/').nth(1) {
@@ -1266,8 +1565,7 @@ impl<'a> Binder<'a> {
         }
         Binder {
             cases,
-            by_segment,
-            by_suffix,
+            by_key,
             by_name,
             by_second,
             kind,
@@ -1283,6 +1581,22 @@ impl<'a> Binder<'a> {
             Kind::File(f) => same_file(f, at.path).then_some(Fit::File),
             Kind::Name => Some(Fit::Name),
             Kind::Class(class, named) => {
+                // The `classname` of a unit test of Rust is the crate. It fits a
+                // file of `src/` by the module path of the name, and no file of
+                // `tests/`: that file is another binary (`<crate>::<name>`).
+                if let Class::Dotted(..) = class {
+                    match &at.rust {
+                        RustFile::Src(module) => {
+                            let name = &self.cases[i].name;
+                            let segs: Vec<&str> = name.split("::").collect();
+                            let ok = segs.len() > module.len()
+                                && module.iter().zip(&segs).all(|(m, s)| m == s);
+                            return ok.then_some(Fit::Name);
+                        }
+                        RustFile::Test if *named => return None,
+                        _ => {}
+                    }
+                }
                 if !named {
                     return Some(Fit::Name);
                 }
@@ -1306,14 +1620,13 @@ impl<'a> Binder<'a> {
         }
     }
 
-    /// The cases whose name the test has, by the name forms of the design.
+    /// The cases that can name the test: the cases with its name as a key. The
+    /// index is wide, and `name_match` decides.
     fn named_by(&self, test: &TestName) -> Vec<usize> {
         let index = if test.recv.is_some() {
             &self.by_second
-        } else if test.call {
-            &self.by_suffix
         } else {
-            &self.by_segment
+            &self.by_key
         };
         index.get(test.name.as_str()).cloned().unwrap_or_default()
     }
@@ -1334,25 +1647,26 @@ impl<'a> Binder<'a> {
         case: Option<&str>,
     ) -> (Proof, Bind) {
         // The suite function is in the file of the tag only.
-        let suites = |ty: &str| suite_funcs([lines.join("\n").as_str()], ty);
+        let suites = |ty: &str, method: &str| suite_funcs([lines.join("\n").as_str()], ty, method);
         self.bind_with(path, lines, tag, case, &suites)
     }
 
     /// Like `bind`. `suites` gives the functions that run the Go suite of a type
-    /// (`suite_funcs` over the test files of the package).
+    /// for a method (`suite_funcs` over the test files of the package).
     pub fn bind_with(
         &self,
         path: &str,
         lines: &[&str],
         tag: usize,
         case: Option<&str>,
-        suites: &dyn Fn(&str) -> Vec<String>,
+        suites: &dyn Fn(&str, &str) -> Vec<String>,
     ) -> (Proof, Bind) {
         let at = Place::new(path);
         let mut bind = Bind::default();
         let mut cand: Vec<usize>;
         let mut tests: Vec<TestName> = Vec::new();
         let mut ours: Option<TestName> = None;
+        let mut def_line = tag;
         match case {
             Some("") => {
                 // A broken `case:` binds no case, and not the test under the tag.
@@ -1368,11 +1682,12 @@ impl<'a> Binder<'a> {
                 }
             }
             None => {
-                let under = if tag < lines.len() {
-                    under_tag(lines, tag)
+                let (under, line) = if tag < lines.len() {
+                    under_tag_line(lines, tag)
                 } else {
-                    Under::NoTest(None)
+                    (Under::NoTest(None), tag)
                 };
+                def_line = line;
                 match under {
                     Under::NoTest(line) => {
                         bind.line = line;
@@ -1392,51 +1707,90 @@ impl<'a> Binder<'a> {
             }
         }
         if let Some(t) = &ours {
-            // The index is wide. The name form of the test decides.
-            cand.retain(|&i| name_end(&self.cases[i].name, t).is_some());
+            // The index is wide. The name of the test decides.
+            cand.retain(|&i| name_match(&self.cases[i].name, t).is_some());
             if let Some(ty) = &t.recv {
                 // Only a case of the function that runs the suite binds. With no
-                // such function, the tag binds no case.
-                let funcs = suites(ty);
+                // such function, or when another suite of it has a method of the
+                // same name, the tag binds no case.
+                let funcs = suites(ty, &t.name);
                 cand.retain(|&i| {
                     let first = self.cases[i].name.split('/').next().unwrap_or("");
                     funcs.iter().any(|f| f == first)
                 });
             }
         }
+        // The titles of the groups of the test: with them, a name that a runner
+        // joins with a space is the expected name.
+        let titles = ours
+            .as_ref()
+            .filter(|t| t.call && !t.template && t.recv.is_none())
+            .and_then(|_| ancestors(lines, def_line));
         if let Some(t) = &ours
             && !cand.is_empty()
         {
             tests = tests_of(lines);
-            cand.retain(|&i| !belongs_elsewhere(&self.cases[i].name, t, &tests));
+            // A template with a name that is not read can claim any case that
+            // only ends with the name of the test: fail closed.
+            let blind = tests.iter().any(|x| x.template && x.name.is_empty());
+            cand.retain(|&i| {
+                let name = &self.cases[i].name;
+                // The expected full name of the test is its own case.
+                if titles
+                    .as_deref()
+                    .is_some_and(|ts| expected_name(name, t, ts))
+                {
+                    return true;
+                }
+                let weak = matches!(name_match(name, t), Some((_, NameFit::Weak)));
+                !(blind && weak) && !belongs_elsewhere(name, t, &tests)
+            });
         }
         let loose = ours.is_none();
-        let mut fits: Vec<(usize, Fit)> = cand
+        let mut fits: Vec<(usize, Fit, bool)> = cand
             .iter()
-            .filter_map(|&i| self.fit(i, &at, loose).map(|f| (i, f)))
+            .filter_map(|&i| {
+                let fit = self.fit(i, &at, loose)?;
+                let name = &self.cases[i].name;
+                // A name that is a whole segment, or the expected full name.
+                let strong = match &ours {
+                    None => true,
+                    Some(t) => match name_match(name, t) {
+                        Some((_, NameFit::Strong)) => true,
+                        Some((_, NameFit::Weak)) => titles
+                            .as_deref()
+                            .is_some_and(|ts| expected_name(name, t, ts)),
+                        None => false,
+                    },
+                };
+                Some((i, fit, strong))
+            })
             .collect();
-        // A case that fits by its file or its `classname` hides the cases that
-        // fit by their name only (item 6).
-        if fits.iter().any(|(_, f)| *f != Fit::Name) {
-            fits.retain(|(_, f)| *f != Fit::Name);
+        // One strength: a case that fits by its file or its `classname`, with a
+        // name that is a whole segment, hides the others. Else the cases are one
+        // weak set.
+        let strong = |f: &(usize, Fit, bool)| f.1 != Fit::Name && f.2;
+        if fits.iter().any(strong) {
+            fits.retain(strong);
         }
-        let bound: Vec<&Case> = fits.iter().map(|(i, _)| &self.cases[*i]).collect();
+        let weak = !fits.is_empty() && !fits.iter().any(strong);
+        let bound: Vec<&Case> = fits.iter().map(|(i, ..)| &self.cases[*i]).collect();
         if bound.is_empty() {
             return (Proof::Unbound, bind.unbound(Reason::NoCase));
         }
         bind.cases = bound.len();
-        let by_name = fits.iter().all(|(_, f)| *f == Fit::Name);
+        let by_name = fits.iter().all(|(_, f, _)| *f == Fit::Name);
         bind.fit = Some(if by_name {
             Fit::Name
-        } else if fits.iter().any(|(_, f)| *f == Fit::File) {
+        } else if fits.iter().any(|(_, f, _)| *f == Fit::File) {
             Fit::File
         } else {
             Fit::Classname
         });
         let weak_one = one_case(&bound);
-        // A bind by name is a bind of the strength SD621 reports, unless `case:`
+        // A weak bind is a bind of the strength SD621 reports, unless `case:`
         // names the one case of that name in the reports (item 9).
-        bind.by_name = by_name
+        bind.by_name = weak
             && match case {
                 Some(name) => !one_case(
                     &self
@@ -1450,7 +1804,10 @@ impl<'a> Binder<'a> {
         let twins = ours
             .as_ref()
             .is_some_and(|t| tests.iter().filter(|x| *x == t).count() > 1);
-        bind.shared = twins || (by_name && !weak_one);
+        // A weak set that is not one case proves the requirement only when each
+        // case passed: the worst case decides, so a skipped twin never hides
+        // behind a passed one.
+        bind.shared = twins || (weak && !weak_one);
         let proof = decide(&bound, bind.shared);
         bind.case = match &proof {
             Proof::Passed(n, _) | Proof::Skipped(n) | Proof::Failed(n) => Some(n.clone()),
@@ -1459,11 +1816,11 @@ impl<'a> Binder<'a> {
         (proof, bind)
     }
 
-    /// The names of the cases whose name ends with `value` after a space: the
-    /// cases that a `case:` with a part of a name meant. At most 3.
+    /// The names of the cases that have `value` as a key: the cases that a
+    /// `case:` with a part of a name meant. At most 3.
     fn near(&self, value: &str) -> Vec<String> {
         let mut names: Vec<String> = self
-            .by_suffix
+            .by_key
             .get(value)
             .into_iter()
             .flatten()
@@ -1541,10 +1898,20 @@ impl<'t> Names<'t> {
                 longest.is_some(),
             );
         }
+        // The whole `classname` is a key. A class after the module (pytest) or
+        // an inner class (Java) is a trailing segment that starts with an upper
+        // case letter: it can go. The part before the last dot of another name
+        // is no key (`tests.test_close` names no file `tests.py`).
         let cn = cn.replace('$', ".");
         let mut keys: Vec<String> = vec![cn.clone()];
-        if let Some((module, _)) = cn.rsplit_once('.') {
-            keys.push(module.to_string());
+        let mut whole = cn.as_str();
+        while let Some((head, last)) = whole.rsplit_once('.') {
+            if !head.is_empty() && last.starts_with(char::is_uppercase) {
+                keys.push(head.to_string());
+                whole = head;
+            } else {
+                break;
+            }
         }
         let one = (!cn.contains('.')).then(|| cn.clone());
         let named = keys.iter().any(|k| self.ends.contains(k))
@@ -1668,7 +2035,7 @@ pub fn bind_covers(root: &std::path::Path, covers: &mut [Cover], reads: &Reads) 
             .unwrap_or_default();
         // The functions that run a Go suite are in the test files of the package.
         let folder = cv.path.rsplit_once('/').map_or("", |(f, _)| f).to_string();
-        let suites = |ty: &str| -> Vec<String> {
+        let suites = |ty: &str, method: &str| -> Vec<String> {
             let texts: Vec<String> = reads
                 .test_files
                 .iter()
@@ -1678,7 +2045,7 @@ pub fn bind_covers(root: &std::path::Path, covers: &mut [Cover], reads: &Reads) 
                 .filter_map(|f| std::fs::read(root.join(f)).ok())
                 .map(|b| String::from_utf8_lossy(&b).into_owned())
                 .collect();
-            suite_funcs(texts.iter().map(String::as_str), ty)
+            suite_funcs(texts.iter().map(String::as_str), ty, method)
         };
         let (proof, bind) = binder.bind_with(
             &cv.path,
@@ -2331,10 +2698,28 @@ mod tests {
     fn a_rust_attribute_line_is_code_and_a_nextest_case_binds() {
         let text =
             "// covers: requirements/valves#close\n#[test]\nfn closes() {\n    assert!(true);\n}\n";
-        let cases = [case("tests::closes", Some("valves"), None, Outcome::Pass)];
+        // The shape of a unit test of a library (E6): the `classname` is the
+        // crate, and the name has the module path.
+        let cases = [case(
+            "valves::tests::closes",
+            Some("app"),
+            None,
+            Outcome::Pass,
+        )];
         assert_eq!(
             proof("src/valves.rs", text, None, &cases, &[]),
-            Proof::Passed("tests::closes".into(), 1)
+            Proof::Passed("valves::tests::closes".into(), 1)
+        );
+        // The module path is the one of the file: another module binds nothing.
+        let cases = [case(
+            "pumps::tests::closes",
+            Some("app"),
+            None,
+            Outcome::Pass,
+        )];
+        assert_eq!(
+            proof("src/valves.rs", text, None, &cases, &[]),
+            Proof::Unbound
         );
     }
 
@@ -3029,6 +3414,7 @@ mod tests {
             call,
             bt: false,
             recv: None,
+            template: false,
         }
     }
 
@@ -3069,6 +3455,7 @@ mod tests {
                     call: false,
                     bt: false,
                     recv: Some("Suite".into()),
+                    template: false,
                 }),
             ),
             // The form call, with its suffixes.
@@ -3095,6 +3482,7 @@ mod tests {
                     call: true,
                     bt: true,
                     recv: None,
+                    template: false,
                 }),
             ),
             (
@@ -3195,39 +3583,148 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_end_of_a_name_in_a_case_depends_on_the_form_of_the_test() {
-        let call = test_name("closes", true);
-        let def = test_name("closes", false);
-        // The form call: the whole name, or the end of it after a space.
-        assert_eq!(name_end("closes", &call), Some(6));
-        assert_eq!(name_end("Valves > closes", &call), Some(15));
-        assert_eq!(name_end("Valves \u{203a} closes", &call), Some(17));
-        assert_eq!(name_end("Valves reopens", &call), None);
-        assert_eq!(name_end("Valves closes now", &call), None);
-        // The other forms: a segment of the head. The end is the end of the
-        // segment.
-        assert_eq!(name_end("closes", &def), Some(6));
-        assert_eq!(name_end("tests::closes", &def), Some(13));
-        assert_eq!(name_end("closes::case_1", &def), Some(6));
-        assert_eq!(name_end("closes[1-2]", &def), Some(6));
-        assert_eq!(name_end("closes/no_reply", &def), Some(6));
-        assert_eq!(name_end("closes(int) [1] a", &def), Some(6));
-        assert_eq!(name_end("Valves closes", &def), None);
-        assert_eq!(name_end("closes_late", &def), None);
+    /// The strength of a match: `Some(true)` for a whole segment, `Some(false)`
+    /// for the end after a space, `None` for no match.
+    fn strong(case: &str, test: &TestName) -> Option<bool> {
+        name_match(case, test).map(|(_, f)| f == NameFit::Strong)
     }
 
     #[test]
-    fn a_case_belongs_to_the_test_whose_name_ends_nearer_its_end() {
+    fn the_name_of_a_test_is_a_whole_segment_of_the_name_of_the_case() {
+        let call = test_name("closes", true);
+        let def = test_name("closes", false);
+        // The form call: the whole name, or a whole segment after a separator.
+        assert_eq!(strong("closes", &call), Some(true));
+        assert_eq!(strong("Valves > closes", &call), Some(true));
+        assert_eq!(strong("Valves \u{203a} closes", &call), Some(true));
+        assert_eq!(strong("Valves > closes > more", &call), Some(true));
+        // The end after a space is weak. A name that has a segment of ` > ` never
+        // matches by its last word.
+        assert_eq!(strong("Valves closes", &call), Some(false));
+        assert_eq!(strong("Valves > fast closes", &call), None);
+        assert_eq!(strong("Valves reopens", &call), None);
+        assert_eq!(strong("Valves closes now", &call), None);
+        assert_eq!(strong("closes (slow)", &call), None);
+        assert_eq!(strong("closes()", &call), None);
+        // An identifier: a whole segment before its parameters. A space is no
+        // separator, and a tail starts right after the name.
+        assert_eq!(strong("closes", &def), Some(true));
+        assert_eq!(strong("tests::closes", &def), Some(true));
+        assert_eq!(strong("closes::case_1", &def), Some(true));
+        assert_eq!(strong("closes[1-2]", &def), Some(true));
+        assert_eq!(strong("closes/no_reply", &def), Some(true));
+        assert_eq!(strong("closes(int) [1] a", &def), Some(true));
+        assert_eq!(strong("closes with data set #0", &def), Some(true));
+        assert_eq!(strong("Valves closes", &def), None);
+        assert_eq!(
+            strong("Closes when cold", &test_name("Closes", false)),
+            None
+        );
+        assert_eq!(strong("Closes (cold)", &test_name("Closes", false)), None);
+        assert_eq!(strong("closes_late", &def), None);
+        // A Kotlin name in backticks is whole, and the parameters follow it.
+        let kt = TestName {
+            bt: true,
+            ..test_name("stops (fast)", true)
+        };
+        assert_eq!(strong("stops (fast)", &kt), Some(true));
+        assert_eq!(strong("stops (fast)()", &kt), Some(true));
+        assert_eq!(strong("stops (fast)(int) [1] 3", &kt), Some(true));
+        assert_eq!(strong("stops()", &kt), None);
+        // A template claims the cases that its literal can give.
+        let each = test_name("%s opens", true);
+        let each = TestName {
+            template: true,
+            ..each
+        };
+        assert_eq!(strong("Valves > fast opens", &each), Some(false));
+        assert_eq!(strong("Valves > fast closes", &each), None);
+        let named = TestName {
+            template: true,
+            ..test_name("${speed} opens now", true)
+        };
+        assert_eq!(strong("Valves fast opens now", &named), Some(false));
+        assert_eq!(strong("Valves fast opens", &named), None);
+    }
+
+    #[test]
+    fn the_index_finds_each_case_that_the_matcher_accepts() {
+        // The index is only a filter: a key that is missing gives a silent
+        // `no-case`. Each pair that `name_match` accepts must come out of it.
+        let pairs: Vec<(TestName, &str)> = vec![
+            (test_name("closes", true), "closes"),
+            (test_name("closes", true), "Valves > closes"),
+            (test_name("closes", true), "Valves \u{203a} closes > more"),
+            (test_name("closes", true), "Valves closes"),
+            (
+                test_name("handles v1.2 input", true),
+                "A > handles v1.2 input",
+            ),
+            (test_name("closes", false), "tests::closes"),
+            (test_name("closes", false), "closes::case_1"),
+            (test_name("closes", false), "closes[1-2]"),
+            (test_name("closes", false), "closes(int) [1] a"),
+            (test_name("closes", false), "closes with data set #0"),
+            (test_name("closes", false), "Suite/closes"),
+            (test_name("closes", false), "ValveTest.closes"),
+            (test_name("closes", false), "ValveTest#closes"),
+            (
+                TestName {
+                    bt: true,
+                    ..test_name("stops (fast)", true)
+                },
+                "stops (fast)(int) [1] 3",
+            ),
+            (
+                TestName {
+                    bt: true,
+                    ..test_name("closes on timeout", true)
+                },
+                "ValveTest closes on timeout()",
+            ),
+            (
+                TestName {
+                    recv: Some("Suite".into()),
+                    ..test_name("TestCloses", false)
+                },
+                "TestSuite/TestCloses/sub",
+            ),
+        ];
+        for (test, name) in pairs {
+            assert!(name_match(name, &test).is_some(), "{name} / {}", test.name);
+            let cases = [case(name, None, None, Outcome::Pass)];
+            let binder = Binder::new(&cases, &[]);
+            assert_eq!(binder.named_by(&test), [0], "{name} / {}", test.name);
+        }
+    }
+
+    #[test]
+    fn a_case_belongs_to_the_test_that_names_it_better() {
         let tests = [test_name("closes", true), test_name("never closes", true)];
         // A tie goes to the longer name.
         assert!(belongs_elsewhere("Valves never closes", &tests[0], &tests));
         assert!(!belongs_elsewhere("Valves never closes", &tests[1], &tests));
         assert!(!belongs_elsewhere("Valves closes", &tests[0], &tests));
+        // A whole segment wins over the end after a space.
+        // `closes` is no match at all for a name with a segment of ` > `.
+        assert!(name_match("Valves > never closes", &tests[0]).is_none());
+        assert!(!belongs_elsewhere(
+            "Valves > never closes",
+            &tests[0],
+            &tests
+        ));
         // A name that ends nearer the end wins over a longer name.
         let rows = [test_name("closes", false), test_name("case_1", false)];
         assert!(belongs_elsewhere("closes::case_1", &rows[0], &rows));
         assert!(!belongs_elsewhere("closes::case_1", &rows[1], &rows));
+        // A template is a test of the file too.
+        let each = TestName {
+            template: true,
+            ..test_name("%s opens", true)
+        };
+        let both = [test_name("opens", true), each];
+        assert!(belongs_elsewhere("Valves fast opens", &both[0], &both));
+        assert!(!belongs_elsewhere("Valves > opens", &both[0], &both));
     }
 
     #[test]
