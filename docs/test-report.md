@@ -58,7 +58,8 @@ A tag binds no case in these 3 cases:
 A case names the test only in the forms of this closed list:
 
 - The forms `def`, `fn`, `func` and method. The head of the case name is the part before the first `(`, `[`, `/` or space. `::` and `.` split the head into segments. The case names the test when the name of the test is one segment of the head. Examples: `test_closes[1-2]` (pytest parameters), `tests::closes` (a module path of nextest), `closes::case_1` (the cases of a Rust macro), `TestTimeout/no_reply` (a Go subtest), `test1(String) [1] a` (JUnit 5 parameters), `testOne with data set #0` (PHPUnit data) and `ValveTest.ClosesOnTimeout` (.NET). The name `test_x_slow` is not the name `test_x`.
-- The form call. The case name equals the literal, or ends with the literal after a space. A separator ` > ` or ` › ` ends with a space. Examples: `closes on timeout`, `Valves closes on timeout` (jest-junit, RSpec) and `Valves > closes on timeout` (Vitest).
+- A Go method of a suite (`func (s *ValveSuite) TestCloses()`, testify) also has the case `<Test function>/<method>`, for example `TestValveSuite/TestCloses`. The last segment after `/` names the method, and the file rule still applies.
+- The form call. The case name equals the literal, or ends with the literal after a space. A report can add the `()` of a method: the case `closes on timeout()` has the name `closes on timeout`. A Kotlin test with a name in backticks has this form. A separator ` > ` or ` › ` ends with a space. Examples: `closes on timeout`, `Valves closes on timeout` (jest-junit, RSpec) and `Valves > closes on timeout` (Vitest).
 - A word of the line that is not the name of the test never binds. In particular, the word `it` of an import line binds no case.
 
 A case can name 2 tests of the file. Example: `Valves never closes` ends with `closes` and with `never closes`. The case belongs to the test whose name ends nearer the end of the case name, and on a tie to the test with the longer name. Thus a tag above `it('closes', ...)` does not bind it.
@@ -85,7 +86,7 @@ The cases of a tag are shared in 2 cases: 2 tests of the file have the name of t
 
 ### The name of a case with `case:`
 
-`case:<name>` follows the ids of the tag: `# covers: loans#renew case:test_renew_on_time`. Use `case:"<name>"` when the name has a space or a `#`. The value is the whole `name` of the case as the report writes it, and it equals the name byte for byte. A part of a name binds nothing: `case:closes` does not bind the case `Valves closes`, and the message names the cases of the report that end with the value. A tag with `case:` needs no test under it.
+`case:<name>` follows the ids of the tag: `# covers: loans#renew case:test_renew_on_time`. Use `case:"<name>"` when the name has a space or a `#`. The value is the whole `name` of the case as the report writes it, and it equals the name byte for byte. A part of a name binds nothing: `case:closes` does not bind the case `Valves closes`, and the message names the cases of the report that end with the value. A tag with `case:` needs no test under it. A `"` inside the name, and a quote that is not closed, make the `case:` not valid. Such a tag binds no case (the reason `no-case`), and it never binds the test under it. Write the name without a `"`.
 
 A case with a `file` binds only when the file is the file of the tag. For a case with no `file`, the `classname` does not exclude the case: it decides the strength, and the precedence of the file rule applies.
 
