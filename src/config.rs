@@ -194,6 +194,18 @@ pub struct Evals {
 }
 
 impl Evals {
+    /// The table with the default value of each key and the folder `dir`. A
+    /// new key of the table changes this function only, and not each place
+    /// that needs a table.
+    pub fn defaults(dir: &str) -> Evals {
+        Evals {
+            dir: dir.to_string(),
+            min_pass_rate: DEFAULT_EVALS_MIN_PASS_RATE,
+            runs: DEFAULT_EVALS_RUNS,
+            max_total_usd: DEFAULT_EVALS_MAX_TOTAL_USD,
+        }
+    }
+
     fn parse(v: &Value, templates_dir: &str) -> Result<Evals, String> {
         let tbl = v.as_table().ok_or("`evals` must be a table")?;
         let mut f = Fields::new(tbl, "evals.");
@@ -3611,6 +3623,22 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
         assert!(e.contains("unknown key `harness.upgrade`"), "{e}");
         let e = with("upgrade = true", "").unwrap_err();
         assert!(e.contains("unknown key `upgrade`"), "{e}");
+    }
+
+    #[test]
+    fn the_function_defaults_gives_the_table_of_an_empty_evals_table() {
+        let parsed = with("", "[evals]\n").unwrap().evals.unwrap();
+        assert_eq!(Evals::defaults("evals"), parsed);
+        assert_eq!(Evals::defaults(DEFAULT_EVALS_DIR), parsed);
+        let other = Evals::defaults("qa/evals");
+        assert_eq!(other.dir, "qa/evals");
+        assert_eq!(
+            Evals {
+                dir: parsed.dir.clone(),
+                ..other
+            },
+            parsed
+        );
     }
 
     #[test]

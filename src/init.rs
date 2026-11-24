@@ -1041,12 +1041,7 @@ fn defaults(facts: &Facts, root: Option<&str>) -> Plan {
 
 /// The table `[evals]` with the default values and the folder `dir`.
 fn default_evals(dir: &str) -> config::Evals {
-    config::Evals {
-        dir: dir.to_string(),
-        min_pass_rate: config::DEFAULT_EVALS_MIN_PASS_RATE,
-        runs: config::DEFAULT_EVALS_RUNS,
-        max_total_usd: config::DEFAULT_EVALS_MAX_TOTAL_USD,
-    }
+    config::Evals::defaults(dir)
 }
 
 /// The plan of the current configuration, for `--reconfigure`.

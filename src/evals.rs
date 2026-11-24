@@ -443,12 +443,7 @@ mod tests {
     use super::*;
 
     fn table() -> Evals {
-        Evals {
-            dir: "evals".into(),
-            min_pass_rate: 0.8,
-            runs: 3,
-            max_total_usd: 20.0,
-        }
+        Evals::defaults("evals")
     }
 
     const GOOD: &str = r#"{"id":"example","task":"Edit the file.","fixture":"evals/fixtures/example","max-budget-usd":1,"checks":[{"name":"done","run":"true"}]}"#;
