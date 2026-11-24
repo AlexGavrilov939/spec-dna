@@ -382,6 +382,26 @@ fn a_squash_commit_that_holds_the_plan_and_the_code_still_gives_the_role() {
     assert!(out.contains("security-reviewer"), "{out}");
 }
 
+#[test]
+fn a_root_commit_that_holds_the_plan_and_the_code_still_gives_the_role() {
+    let text = config(
+        "standard",
+        "",
+        &owners("\"src/valves.py\" = [\"security-reviewer\"]\n"),
+    );
+    let r = Repo::with_config(&text);
+    base_files(&r);
+    change_files(&r);
+    r.write(CODE, CODE_NEW);
+    r.write(TEST, TEST_NEW);
+    r.commit("the root commit");
+    origin_head(&r.dir, "main");
+    let (code, out, err) = finish(&r);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(has(&out, "SD927"), "{out}");
+    assert!(out.contains("security-reviewer"), "{out}");
+}
+
 // The roles of the brief and the record.
 
 #[test]

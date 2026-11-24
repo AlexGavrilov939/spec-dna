@@ -514,6 +514,27 @@ fn a_squash_commit_that_holds_the_plan_and_the_code_gives_the_code_paths() {
     );
 }
 
+#[test]
+fn a_root_commit_that_holds_the_plan_and_the_code_gives_the_code_paths() {
+    // The first commit of the repository holds everything. It has no parent, so
+    // the diff since the plan starts at the empty tree.
+    let r = Repo::with_config(&config("standard", ""));
+    r.write(".gitignore", "reports/\n");
+    r.write(REQ, VALVES);
+    r.write(INTENT, INTENT_TEXT);
+    r.write(SPEC, SPEC_TEXT);
+    r.write(PLAN, PLAN_TEXT);
+    r.write(CODE, CODE_NEW);
+    r.write(TEST, TEST_NEW);
+    r.commit("the root commit");
+    origin_head(&r.dir, "HEAD");
+    let t = write_record(&r);
+    assert!(
+        t.contains("paths = [\"src/valves.py\", \"tests/test_valves.py\"]\n"),
+        "{t}"
+    );
+}
+
 /// The pull request of a change whose plan has the section `Deviations`.
 fn built_with_deviations(devs: &str) -> Repo {
     let r = start(&config("standard", ""));

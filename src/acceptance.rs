@@ -525,13 +525,12 @@ pub fn change_roles(nc: &NeedConfig, i: &RoleInput) -> Result<Vec<String>, Strin
     // no code path in `scope` (a pull request with only `finish`). The diff starts
     // at the first parent of that commit, as the fallback of `accept` does, so a
     // squash commit that holds the plan and the code gives its code. A root commit
-    // has no parent: the diff then starts at the commit itself.
+    // has no parent: the diff then starts at the empty tree ([`before_commit`]).
     let mut since: Vec<String> = Vec::new();
     if !diff_code.iter().any(|p| change::in_scope(i.scope, p))
         && let Some(added) = i.git.added_by(i.plan_path)?
     {
-        let from = i.git.commit(&format!("{added}^")).unwrap_or(added);
-        since = Diff::read(i.git, &from, false)?
+        since = Diff::read(i.git, &before_commit(i.git, &added), false)?
             .files
             .into_iter()
             .map(|f| f.0)
@@ -539,6 +538,19 @@ pub fn change_roles(nc: &NeedConfig, i: &RoleInput) -> Result<Vec<String>, Strin
             .collect();
     }
     Ok(nc.matched_roles(i.cfg, &role_paths(&diff_code, i.scope, &others, &since)))
+}
+
+/// The id of the empty tree of git (SHA-1). `git diff` knows it with no object.
+const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+/// The revision that a diff of "the paths since the commit `commit`" starts at:
+/// the first parent of `commit`, or the empty tree for a root commit. `accept` and
+/// the roles of `[owners]` both use it, so a squash commit and a root commit that
+/// hold the plan and the code give their code paths. A repository with the hash
+/// SHA-256 has another empty tree: it is a known limit.
+pub fn before_commit(git: &Git, commit: &str) -> String {
+    git.commit(&format!("{commit}^"))
+        .unwrap_or_else(|| EMPTY_TREE.to_string())
 }
 
 // The class of the change for the acceptance (D70 items 2 to 4).

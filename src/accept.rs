@@ -274,12 +274,9 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
         // changed since the commit that added the plan. The diff starts at the
         // first parent of that commit, so a squash commit that holds the plan
         // and the code gives its code (Q8). A root commit has no parent: the
-        // diff then starts at the commit itself.
+        // diff then starts at the empty tree.
         if let Some(added) = repo.git.added_by(&plan_path).map_err(Fatal::Io)? {
-            let from = repo
-                .git
-                .commit(&format!("{added}^"))
-                .unwrap_or_else(|| added.clone());
+            let from = crate::acceptance::before_commit(&repo.git, &added);
             let since = Diff::read(&repo.git, &from, false).map_err(Fatal::Io)?;
             changed = since.files.iter().map(|f| f.0.clone()).collect();
             paths = record::select_paths(&scope, &changed, &is_code);

@@ -666,7 +666,11 @@ mod tests {
         ] {
             assert_eq!(title_of(id), want, "{id}");
         }
-        // A word of 6 letters with no vowel and a word with a digit are no acronym.
+        // The limit is 5 letters: 5 letters with no vowel are an acronym, and 6
+        // are not. A word with a vowel or with a digit is no acronym either.
+        assert_eq!(title_of("bcdfg"), "BCDFG");
+        assert_eq!(title_of("bcdfgh"), "Bcdfgh");
+        assert_eq!(title_of("bc"), "BC");
         assert_eq!(title_of("rhythms"), "Rhythms");
         assert_eq!(title_of("b2b"), "B2b");
     }
