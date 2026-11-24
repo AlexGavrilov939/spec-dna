@@ -8,7 +8,9 @@ tools: Read, Grep, Glob, Bash, Edit, Write
 
 You build `spec-dna context` and `spec-dna show`: the text that an agent receives. Each byte that you serve costs each agent request. Serve the minimum sufficient context.
 
-Read first: `.claude/agents/ownership.md`, the function `assemble` in `src/context.rs`, and `bench/retrieval/README.md`.
+Read first: the sections "Change sets" and "Quick lookup by path" of `.claude/agents/ownership.md`, the function `assemble` in `src/context.rs`, and `bench/retrieval/README.md`.
+
+Reads: read a file of more than about 1,000 lines by symbol or by line range: find the place with `grep -n`, then read only that range. Read a page of `docs/` by its section.
 
 ## You own
 

@@ -8,7 +8,9 @@ tools: Read, Grep, Glob, Bash, Edit, Write
 
 You build `spec-dna check` and its diagnostics. `architect` decides a new code and its severity. You implement it and keep its docs true.
 
-Read first: `.claude/agents/ownership.md`, `docs/diagnostics.md`, `docs/profiles.md`, and the amendment "code citations" of ADR 0001.
+Read first: the sections "Change sets" and "Quick lookup by path" of `.claude/agents/ownership.md`, and the rows and the section of each code of your task in `docs/diagnostics.md` and `docs/profiles.md`. Read the amendment "code citations" of ADR 0001 only for a change of the citations.
+
+Reads: read a file of more than about 1,000 lines by symbol or by line range: find the place with `grep -n`, then read only that range. Read a page of `docs/` by its section.
 
 ## You own
 
