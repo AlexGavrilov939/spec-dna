@@ -280,6 +280,11 @@ pub struct Doc {
     /// without link destinations. After a decision is accepted, this text is
     /// frozen (SD405).
     pub frozen_hash: Hash,
+    /// Hash of the text in force (design 0.8.1, D84): the chunks outside the
+    /// history and live sections, without link destinations. It is the input
+    /// of `frozen_hash` plus the amendment sections, so an amendment changes it.
+    /// A pin to a whole decision or research document matches it.
+    pub force_hash: Hash,
     /// For a stub that `mv --stub` left at an old path: the id in its
     /// `moved-to` field. A stub has no id of its own and no budget.
     pub moved_to: Option<(String, u32)>,
@@ -816,6 +821,7 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
             history: Vec::new(),
             companions: Vec::new(),
             frozen_hash: Hash::default(),
+            force_hash: Hash::default(),
             moved_to,
             generated: None,
             type_failed: false,
@@ -1203,6 +1209,15 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
         }
     }
     let frozen_hash = crate::hash::hash_bytes(&frozen);
+    // The text in force is the same chunks plus the amendment sections: the
+    // chunks that are no history and no live section (design 0.8.1, D84).
+    let mut in_force = Vec::new();
+    for (i, ch) in parsed.chunks.iter().enumerate() {
+        if !history.contains(&i) && !live.contains(&i) {
+            in_force.extend_from_slice(&ch.frozen);
+        }
+    }
+    let force_hash = crate::hash::hash_bytes(&in_force);
     Doc {
         path,
         id,
@@ -1230,6 +1245,7 @@ fn make_doc(config: &Config, path: String, parsed: Arc<ParsedDoc>) -> Doc {
         history,
         companions,
         frozen_hash,
+        force_hash,
         moved_to: None,
         generated,
         type_failed,
@@ -1785,6 +1801,41 @@ mod tests {
         );
         assert_ne!(frozen(base), frozen(&base.replace("W.", "W2.")));
         assert_ne!(frozen(base), frozen(&base.replace("Use X.", "Use X2.")));
+    }
+
+    #[test]
+    fn the_hash_in_force_sees_an_amendment_and_not_a_live_section() {
+        let base = "---\ntype: decision\nstatus: accepted\n---\n# D\n\n## Decision\n\nUse X, see [the page](a.md).\n\n## Amendments\n\n### 2026-11-01\n\nThe TTL is 5 min.\n\n## Status\n\n- step 1: open\n\n## History\n\n- 2026-10-01: proposed\n";
+        let cfg = "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\nhistory-sections = { decision = [\"History\"] }\nlive-sections = { decision = [\"Status\"] }\n";
+        let hashes = |text: &str| {
+            let c = corpus_with(cfg, &[("docs/d.md", text)]);
+            (c.docs[0].frozen_hash, c.docs[0].force_hash)
+        };
+        let (frozen, force) = hashes(base);
+        // An edit of an amendment, and a new amendment, change the hash in
+        // force. They do not change `frozen_hash`.
+        let edited = hashes(&base.replace("5 min", "10 min"));
+        assert_eq!(edited.0, frozen);
+        assert_ne!(edited.1, force);
+        let added = hashes(&format!("{base}\n## Amendments 2\n\nMore.\n"));
+        assert_ne!(added.1, force);
+        // An edit of a live section or of the history changes neither hash.
+        let live = hashes(&base.replace("step 1: open", "step 1: done"));
+        assert_eq!(live, (frozen, force));
+        let hist = hashes(&base.replace("proposed", "accepted"));
+        assert_eq!(hist, (frozen, force));
+        // A link destination counts in neither hash.
+        let link = hashes(&base.replace("a.md", "b.md"));
+        assert_eq!(link, (frozen, force));
+        // The outcome is in both hashes.
+        let outcome = hashes(&base.replace("Use X", "Use Y"));
+        assert_ne!(outcome.0, frozen);
+        assert_ne!(outcome.1, force);
+        // A research document has a hash in force too.
+        let note = "# Study\n\nOne writer is enough.\n";
+        let a = corpus_with(cfg, &[("docs/n.md", note)]).docs[0].force_hash;
+        let b = corpus_with(cfg, &[("docs/n.md", &note.replace("One", "Two"))]).docs[0].force_hash;
+        assert_ne!(a, b);
     }
 
     #[test]
