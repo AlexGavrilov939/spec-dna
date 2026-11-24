@@ -1,5 +1,5 @@
 ---
-status: approved
+status: draft
 ---
 # Fixes of the change lifecycle: finish, scope, the acceptor, layers and small items: plan
 
