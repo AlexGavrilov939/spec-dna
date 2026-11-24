@@ -279,7 +279,7 @@ A task closes with `finish` when its text, the part before the first label, name
 
 ### Files and paths
 
-A `Files` item of a plan, and an entry of the label `Files:` of a task, gives paths and globs. A code span is the first choice, and each code span of a `Files` item is a path. Write each path in a code span, as `` `src/valve.py` ``.
+A `Files` item of a plan, and an entry of the label `Files:` of a task, gives paths and globs. A code span is the first choice, and each code span of a `Files` item is a path. Write each path in a code span, as `` `src/valve.py` ``. Each code span of a `Files` item is a path or a glob of the scope, also in the record and in the brief. Write a package, a module or a symbol as plain text.
 
 An item that has no code span, or an entry that has none, is a plain path if it follows these rules:
 
