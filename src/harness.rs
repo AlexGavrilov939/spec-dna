@@ -1355,6 +1355,10 @@ fn team_page(h: &Harness) -> String {
     if h.on(Role::Advisor) {
         let adv = h.cfg(Role::Advisor);
         s += "\n## Advisor\n\nAt each consult, the advisor reads the whole context. The price of the advisor model applies.";
+        // The page of `lite` is the page of 0.7.1 (D76).
+        if h.profile != Profile::Lite {
+            s += " The model-team line of `CLAUDE.md` asks the main session to consult it only in a change of class `higher-risk`. This is a rule of text: no hook and no check enforces it, and each subagent gets the advisor of its session.";
+        }
         if adv.agent != Model::None {
             s += " If the advisor tool is missing, fails or declines, the main model briefs `fallback-advisor`.";
         }
@@ -1631,7 +1635,8 @@ fn claude_body(h: &Harness) -> String {
         );
     }
     if adv {
-        s += "Consult the advisor before you choose an approach, before you say that a task is done, and when the same error occurs twice. Each consult sends the whole context at the advisor price, so consult before the context grows large. ";
+        // The rule of `higher-risk` is text only (D98): no hook sees a consult.
+        s += "Consult the advisor only in a change of class `higher-risk` (the `class` of its `intent.md`): before you choose an approach, before you say that a task is done, and when the same error occurs twice. In other work, do not consult it. This rule is text: no gate checks it. Each consult sends the whole context at the advisor price, so consult before the context grows large. ";
         if h.cfg(Role::Advisor).agent != Model::None {
             s += "If the advisor tool is missing, fails or declines, brief `fallback-advisor`. ";
         }
@@ -3418,6 +3423,11 @@ opus = "xhigh"
         let line = claude_line(&lean()).unwrap();
         assert!(!line.contains('\n'));
         assert!(line.starts_with("Model team: opus builds. The advisor (fable) gives advice and writes no code. `verifier` (opus) tests finished work. `Explore` (haiku) searches. Consult the advisor"), "{line}");
+        // The advisor is for a `higher-risk` change only, as a rule of text.
+        assert!(
+            line.contains("Consult the advisor only in a change of class `higher-risk` (the `class` of its `intent.md`): before you choose an approach, before you say that a task is done, and when the same error occurs twice. In other work, do not consult it. This rule is text: no gate checks it. Each consult sends the whole context at the advisor price, so consult before the context grows large. If the advisor tool"),
+            "{line}"
+        );
         assert!(line.contains(
             "brief `fallback-advisor`. Run `verifier` before you say that a task is done."
         ));
