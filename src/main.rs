@@ -486,8 +486,13 @@ it (`eval run --ab` starts and stops before a run that could pass the cap). --ru
 files and of the table. --out writes the result to <dir>/eval-<time>.json
 (counts, costs and check names only). --dry-run starts no process. --isolate
 adds --setting-sources project --strict-mcp-config. spec-dna makes no network call, but `claude`
-does. Exit codes: 0 pass, 1 the pass rate is lower, 2 usage, 3 configuration,
-a stop by the cap or no `claude`, 4 git or file error.
+does. Before each run (each attempt), `eval run`, --ab and --arms read the free
+space of the temporary folder and of the folder of the result with `df -Pk`.
+Below [evals] min-free-mib (default 2048 MiB, 0 turns it off) they start no
+run, keep the complete pairs and waves, set `stopped` to disk-space and exit
+with 3. Exit codes: 0 pass, 1 the pass rate is lower, 2 usage, 3 configuration,
+a stop by the cap or by the floor of free space, or no `claude`, 4 git or file
+error.
 
 `eval run --ab <target>` runs the evals of <dir>/pack/ in 2 arms, with the
 skill and without it, in pairs of the same eval and run number. The target is
@@ -510,8 +515,8 @@ SIGHUP, SIGINT and SIGTERM write it and exit with 129, 130 and 143, and
 --resume <result file> goes on in it, and with a higher --runs it adds runs to
 each eval. An estimate above the cap prints a note, and the run starts and stops
 at the cap. --dry-run prints the estimate also above the cap. Exit codes of --ab: 0 complete, 2 usage, 3 configuration, an invalid
-pack file, a stop by the cap or by api-error, 4 git or file error, 129, 130
-and 143 a signal.
+pack file, a stop by the cap, by api-error or by disk-space, 4 git or file
+error, 129, 130 and 143 a signal.
 
 A harness arm is `none`, `lean`, `lean-no-advisor`, `full` or `project`. `--harness
 <arm>` gives the copy of each run that arm, in place of the harness files of the

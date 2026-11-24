@@ -160,6 +160,19 @@ esac
 printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":%s,"num_turns":4,"modelUsage":{"claude-test-1":{}},"permission_denials":[],"result":"ok"}\n' "${STUB_COST:-0.1}"
 "#;
 
+/// A stub `df` for the check of the free space (D100). The tests never read the
+/// free space of the machine. The stub logs its arguments to `$STUB_DF_LOG`,
+/// and it prints the output of `df -Pk` with much free space. From the call
+/// after the call number `$STUB_DF_LOW_AFTER` on, it prints 100 KiB.
+const DF_STUB: &str = r#"#!/bin/sh
+echo "$*" >> "$STUB_DF_LOG"
+n=$(wc -l < "$STUB_DF_LOG" | tr -d ' ')
+free=90000000
+if [ -n "$STUB_DF_LOW_AFTER" ] && [ "$n" -gt "$STUB_DF_LOW_AFTER" ]; then free=100; fi
+echo "Filesystem 1024-blocks Used Available Capacity Mounted on"
+echo "/dev/stub 100000000 1000 $free 1% /mnt/stub disk"
+"#;
+
 const CHECK_SH: &str = "file_has() {\n    grep -q -F -- \"$2\" \"$1\"\n}\n";
 
 /// The groups of the evals of the pair `agents-line`: `tdd-1`, `debug-1` and
@@ -218,6 +231,7 @@ impl Fx {
         repo.commit("evals");
         let stubs = Repo::empty();
         stub_bin(&stubs.dir.join("bin"), "claude", STUB);
+        stub_bin(&stubs.dir.join("bin"), "df", DF_STUB);
         fs::create_dir_all(stubs.dir.join("tmp")).unwrap();
         Fx { repo, stubs }
     }
@@ -247,7 +261,9 @@ impl Fx {
         let tmp = self.path("tmp").to_string_lossy().into_owned();
         let results = self.repo.dir.join("evals/results");
         let results = results.to_string_lossy().into_owned();
+        let df_log = self.path("df-log").to_string_lossy().into_owned();
         let mut set: Vec<(&str, &str)> = vec![
+            ("STUB_DF_LOG", &df_log),
             ("STUB_RESULTS", &results),
             ("PATH", &bin),
             ("STUB_DIR", &dir),
@@ -271,6 +287,15 @@ impl Fx {
             }
         }
         calls
+    }
+
+    /// The arguments of each call of the stub `df`.
+    fn df_calls(&self) -> Vec<String> {
+        fs::read_to_string(self.path("df-log"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
     }
 
     /// The arguments of call `n` (0-based), without the prefix `ARG `.
@@ -2742,6 +2767,126 @@ fn files_of_2_versions_of_claude_code_give_a_note() {
         // The note is on the standard error: the output has the verdict only.
         assert!(!out.contains("2.1.400"), "{out}");
     }
+}
+
+// D100: a floor of free space before each attempt.
+
+#[test]
+fn a_disk_below_the_floor_stops_before_the_second_pair_and_resume_goes_on() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    // Each attempt reads 2 folders. The stub `df` is low after 4 calls: the
+    // first pair (2 attempts) runs, and the second pair does not start.
+    let (code, out, err) = fx.run_env(
+        &["tdd", "--max-total-usd", "100", "--json"],
+        &[("STUB_DF_LOW_AFTER", "4")],
+    );
+    assert_eq!(code, 3, "{out}{err}");
+    assert_eq!(fx.calls().len(), 2, "only the first pair ran");
+    assert_eq!(fx.df_calls().len(), 5, "{:?}", fx.df_calls());
+    assert!(out.contains("\"stopped\":\"disk-space\""), "{out}");
+    let names = fx.results();
+    assert_eq!(names.len(), 1, "{names:?}");
+    let file = format!("evals/results/{}", names[0]);
+    let tmp = fx.path("tmp").to_string_lossy().into_owned();
+    assert!(
+        err.contains(&format!(
+            "spec-dna eval run: stopped before a run: `{tmp}` has 0 MiB free, below `[evals] min-free-mib` (2048); free space, then run the command again with `--resume {file}`"
+        )),
+        "{err}"
+    );
+    // The file keeps the complete pair, and the next pairs are not there.
+    let text: String = fs::read_to_string(fx.repo.dir.join(&file))
+        .unwrap()
+        .split_whitespace()
+        .collect();
+    assert!(text.contains("\"stopped\":\"disk-space\""), "{text}");
+    assert!(text.contains("\"eval\":\"tdd-1\",\"run\":1"), "{text}");
+    assert!(!text.contains("\"eval\":\"tdd-2\""), "{text}");
+    // `--resume` after the person freed space (the stub reports much) runs the rest.
+    let (code, out, err) = fx.run(&["tdd", "--resume", &file, "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(fx.calls().len(), 10, "the 8 attempts that were left");
+    assert!(out.contains("\"stopped\":null"), "{out}");
+    assert_eq!(fx.results().len(), 1, "--resume writes the same file");
+    fx.assert_clean();
+}
+
+#[test]
+fn the_free_space_is_read_again_after_a_refusal_of_the_api() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    // The first attempt is refused (503), and the disk is low when the retry
+    // would start: the stub `df` is low after its 2 first calls.
+    fx.modes(&["503"]);
+    let (code, out, err) = fx.run_env(
+        &["tdd", "--max-total-usd", "100", "--json"],
+        &[("STUB_DF_LOW_AFTER", "2")],
+    );
+    assert_eq!(code, 3, "{out}{err}");
+    assert_eq!(fx.calls().len(), 1, "the retry did not start");
+    assert!(out.contains("\"stopped\":\"disk-space\""), "{out}");
+    assert!(
+        out.contains("\"excluded\":{\"with\":1,\"without\":0}"),
+        "{out}"
+    );
+    assert!(err.contains("stopped before a run:"), "{err}");
+}
+
+#[test]
+fn a_disk_below_the_floor_stops_arms_and_resume_goes_on() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM[..1]);
+    // A wave is 2 attempts (2 arms). The stub `df` is low after 4 calls: wave 1
+    // runs, and wave 2 does not start.
+    let (code, out, err) = fx.arms(
+        "none,lean",
+        &["--runs", "2", "--max-total-usd", "100", "--json"],
+        &[("STUB_DF_LOW_AFTER", "4")],
+    );
+    assert_eq!(code, 3, "{out}{err}");
+    assert_eq!(fx.calls().len(), 2);
+    assert!(out.contains("\"stopped\":\"disk-space\""), "{out}");
+    assert!(out.contains("\"waves\":1"), "{out}");
+    let file = format!("evals/results/{}", fx.results()[0]);
+    assert!(
+        err.contains(&format!(
+            "has 0 MiB free, below `[evals] min-free-mib` (2048); free space, then run the command again with `--resume {file}`"
+        )),
+        "{err}"
+    );
+    let (code, out, err) = fx.arms(
+        "none,lean",
+        &["--resume", &file, "--max-total-usd", "100", "--json"],
+        &[],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(fx.calls().len(), 4, "wave 2 ran");
+    assert!(out.contains("\"waves\":2"), "{out}");
+    assert!(out.contains("\"stopped\":null"), "{out}");
+}
+
+#[test]
+fn a_floor_of_0_turns_the_check_off_for_ab_and_arms() {
+    // Guard: with the floor at 0, the stub `df` is never called, also when it
+    // would report no space.
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    let toml = fs::read_to_string(fx.repo.dir.join("spec-dna.toml")).unwrap();
+    fx.repo.write(
+        "spec-dna.toml",
+        &toml.replace("[evals]\n", "[evals]\nmin-free-mib = 0\n"),
+    );
+    fx.add_plain(&TEAM[..1]);
+    let (code, out, err) = fx.arms(
+        "none",
+        &["--max-total-usd", "100"],
+        &[("STUB_DF_LOW_AFTER", "0")],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    let (code, out, err) = fx.run_env(
+        &["tdd", "--max-total-usd", "100", "--runs", "1"],
+        &[("STUB_DF_LOW_AFTER", "0")],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(fx.df_calls().is_empty(), "{:?}", fx.df_calls());
 }
 
 #[test]

@@ -23,10 +23,10 @@ use crate::adapters::{self, VERSION};
 use crate::config::{Config, Evals, Profile};
 use crate::config_text::{insert_keys, k, set_value};
 use crate::eval_run::{
-    Ctx, EPS, HarnessArm, Limits, Planned, Refusal, RunResult, Tokens, catch_interrupts,
-    claude_version, first_wait, harness_list, interrupt_signal, load_evals, load_evals_in,
-    make_out_dir, normalize_out, now_secs, one_attempt, plan_eval, r6, replace_result, retry_waits,
-    select as select_ids, tokens_json, utc_time,
+    Ctx, EPS, Floor, HarnessArm, Limits, Low, Planned, Refusal, RunResult, Tokens,
+    catch_interrupts, claude_version, first_wait, harness_list, interrupt_signal, load_evals,
+    load_evals_in, make_out_dir, normalize_out, now_secs, one_attempt, plan_eval, r6,
+    replace_result, retry_waits, select as select_ids, tokens_json, utc_time,
 };
 use crate::evals::{self, Eval};
 use crate::harness::{self, Level, Skill};
@@ -183,11 +183,14 @@ enum Stop {
     Error,
     /// SIGINT or SIGTERM ended the run.
     Interrupted,
+    /// A folder is below `[evals] min-free-mib` (D100).
+    DiskSpace,
 }
 
 impl Stop {
     fn name(self) -> &'static str {
         match self {
+            Stop::DiskSpace => "disk-space",
             Stop::MaxTotal => "max-total-usd",
             Stop::ApiError => "api-error",
             Stop::Error => "error",
@@ -371,6 +374,11 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
         excluded: vec![0, 0],
         models: BTreeSet::new(),
         streak: 0,
+        floor: Floor::new(
+            table.min_free_mib,
+            Some((repo.root.join(&out_dir), out_dir.clone())),
+        ),
+        low: None,
     };
     let mut started = utc_time(now_secs());
     let mut written: Option<String> = None;
@@ -578,6 +586,12 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
             Ok(3)
         }
         Some(Stop::Error) => unreachable!("an error returns above"),
+        Some(Stop::DiskSpace) => {
+            if let Some(low) = &state.low {
+                eprintln!("{}", low.message(Some(&path)));
+            }
+            Ok(3)
+        }
         Some(Stop::ApiError) => {
             eprintln!(
                 "eval run: stopped (api-error): the API refused the attempts and the waits are over, or 5 attempts in a row failed with an error and no cost; the partial result is written. Run the target again later with --resume {path}"
@@ -621,6 +635,10 @@ struct State {
     /// The excluded attempts in a row that are errors with no cost and no
     /// marker (`Refusal::Silent`). A real run resets it.
     streak: u32,
+    /// The check of the free space before each attempt (D100).
+    floor: Floor,
+    /// The folder that stopped the command with `Stop::DiskSpace`.
+    low: Option<Low>,
 }
 
 /// The excluded errors with no cost in a row that stop the command.
@@ -802,6 +820,11 @@ fn run_side(ctx: &mut Ctx, state: &mut State, job: &Job) -> Result<Done, Fatal> 
         }
         if state.spend + p.eval.max_budget_usd > state.cap + EPS {
             return Ok(Done::Stop(Stop::MaxTotal));
+        }
+        // Before each attempt, also the new attempt after a refusal (D100).
+        if let Some(low) = state.floor.low() {
+            state.low = Some(low);
+            return Ok(Done::Stop(Stop::DiskSpace));
         }
         eprintln!(
             "eval run: {} {} run {n} of {} ({})",
@@ -2130,6 +2153,11 @@ pub fn run_arms(repo: &Repo, cfg: &Config, o: &ArmsOpts) -> Result<u8, Fatal> {
         excluded: vec![0; o.arms.len()],
         models: BTreeSet::new(),
         streak: 0,
+        floor: Floor::new(
+            table.min_free_mib,
+            Some((repo.root.join(&out_dir), out_dir.clone())),
+        ),
+        low: None,
     };
     let mut started = utc_time(now_secs());
     let mut written: Option<String> = None;
@@ -2309,6 +2337,12 @@ pub fn run_arms(repo: &Repo, cfg: &Config, o: &ArmsOpts) -> Result<u8, Fatal> {
             Ok(3)
         }
         Some(Stop::Error) => unreachable!("an error returns above"),
+        Some(Stop::DiskSpace) => {
+            if let Some(low) = &state.low {
+                eprintln!("{}", low.message(Some(&path)));
+            }
+            Ok(3)
+        }
         Some(Stop::ApiError) => {
             eprintln!(
                 "eval run: stopped (api-error): the API refused the attempts and the waits are over, or 5 attempts in a row failed with an error and no cost; the partial result is written. Run the arms again later with spec-dna eval run --arms {} --resume {path}",
