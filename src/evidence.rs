@@ -403,11 +403,26 @@ pub fn tags_with_case(line: &str) -> Vec<Tag> {
     out
 }
 
-/// The name after `case:`: a word, or a text in double quotes. `None` for an
-/// empty name or a quote that is not closed.
+/// The name after `case:`: a word, or a text in double quotes. `None` for no
+/// name. A quote that is not closed, an empty quoted name, and a `"` inside the
+/// name (the closing quote is followed by a letter, a digit, `_` or `"`) give
+/// the empty name `Some("")`. That tag binds no case, and it never falls back to
+/// the test under it.
 fn case_name(value: &str) -> Option<String> {
     let name = match value.strip_prefix('"') {
-        Some(quoted) => quoted.split_once('"')?.0.to_string(),
+        Some(quoted) => {
+            let Some((name, after)) = quoted.split_once('"') else {
+                return Some(String::new());
+            };
+            let broken = after
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '"');
+            if broken || name.is_empty() {
+                return Some(String::new());
+            }
+            name.to_string()
+        }
         None => value
             .split(char::is_whitespace)
             .next()
@@ -476,6 +491,8 @@ fn indent(line: &str) -> usize {
 /// True for a line that is a comment in a common language: `//`, `/*`, `*`,
 /// `<!--`, `--`, or `#` that does not start an attribute (`#[` or `#![`).
 fn is_comment(trimmed: &str) -> bool {
+    // A file can start with a byte order mark, which is no text of the line.
+    let trimmed = trimmed.trim_start_matches('\u{feff}');
     trimmed.starts_with("//")
         || trimmed.starts_with("/*")
         || trimmed.starts_with('*')
@@ -489,7 +506,7 @@ fn is_comment(trimmed: &str) -> bool {
 /// starts with `/*`, or the nearest line above it that starts with `/*`, when
 /// the lines between start with `*`.
 fn comment_open(lines: &[&str], tag: usize) -> Option<usize> {
-    let t = lines[tag].trim();
+    let t = lines[tag].trim().trim_start_matches('\u{feff}');
     if t.starts_with("/*") {
         return Some(tag);
     }
@@ -531,6 +548,9 @@ pub struct TestName {
     /// True for the form call (`it('<literal>', ...)`): the case name ends with
     /// the literal. Else the name is one segment of the head of the case name.
     pub call: bool,
+    /// True for a Go method of a suite (`func (s *Suite) TestX()`). The case is
+    /// `<Test function>/<method>`, so the last segment after `/` can name it.
+    pub sub: bool,
 }
 
 /// The first byte index after the leading identifier of `s`: letters, digits,
@@ -770,12 +790,15 @@ fn call_form(rest: &str) -> Option<Under> {
     Some(Under::Test(TestName {
         name: name.to_string(),
         call: true,
+        sub: false,
     }))
 }
 
 /// The form method: a word and `(`, where an annotation or an attribute came
 /// before, or where the line has `void`, `fun`, `function` or `def` before the
-/// word. In Kotlin, ``fun `<text>`( `` names the test by its text.
+/// word. In Kotlin, `fun`, a text in backticks and `(` name the test by its text.
+/// The text can have spaces, so the test has the form call: the case name ends
+/// with the text, and the report can add `()`.
 fn method_form(body: &str, annotated: bool) -> Option<Under> {
     if let Some(r) = body.strip_prefix("fun ")
         && let Some(q) = r.trim_start().strip_prefix('`')
@@ -784,7 +807,8 @@ fn method_form(body: &str, annotated: bool) -> Option<Under> {
         return (after.starts_with('(') && !name.is_empty()).then(|| {
             Under::Test(TestName {
                 name: name.to_string(),
-                call: false,
+                call: true,
+                sub: false,
             })
         });
     }
@@ -805,6 +829,7 @@ fn method_form(body: &str, annotated: bool) -> Option<Under> {
         Under::Test(TestName {
             name: name.to_string(),
             call: false,
+            sub: false,
         })
     })
 }
@@ -826,11 +851,12 @@ fn classify(text: &str, annotated: bool) -> Option<Under> {
     {
         return Some(Under::Group);
     }
-    let named = |name: &str| {
+    let named = |name: &str, sub: bool| {
         (!name.is_empty()).then(|| {
             Under::Test(TestName {
                 name: name.to_string(),
                 call: false,
+                sub,
             })
         })
     };
@@ -840,26 +866,28 @@ fn classify(text: &str, annotated: bool) -> Option<Under> {
             let m = ident_end(r);
             let next = r[m..].chars().next();
             if matches!(next, None | Some('(' | ' ')) {
-                return named(&r[..m]);
+                return named(&r[..m], false);
             }
         }
         "fn" if rest.starts_with(' ') => {
             let r = rest.trim_start();
             let m = ident_end(r);
             if r[m..].starts_with(['(', '<']) {
-                return named(&r[..m]);
+                return named(&r[..m], false);
             }
         }
         "func" if rest.starts_with(' ') => {
             let mut r = rest.trim_start();
+            let mut receiver = false;
             if r.starts_with('(') {
                 let one = [r];
                 let (_, o) = close_of(&one, 0, 0, 1)?;
                 r = r[o..].trim_start();
+                receiver = true;
             }
             let m = ident_end(r);
             if r[m..].starts_with(['(', '[']) {
-                return named(&r[..m]);
+                return named(&r[..m], receiver);
             }
         }
         "it" | "test" | "specify" | "example" | "scenario" => {
@@ -901,7 +929,7 @@ pub fn under_tag(lines: &[&str], tag: usize) -> Under {
         .find(TAG)
         .filter(|&pos| !is_comment(lines[tag][..pos].trim()))
     {
-        let own = [before_tag(&lines[tag][..pos])];
+        let own = [before_tag(&lines[tag][..pos]).trim_start_matches('\u{feff}')];
         let (mut off, mut any) = (0, false);
         while let Some((_, o)) = skip_item(&own, 0, off, 1) {
             (off, any) = (o, true);
@@ -1002,16 +1030,36 @@ fn head_segments(name: &str) -> Vec<(&str, usize)> {
 /// one segment of the head.
 fn name_end(case: &str, test: &TestName) -> Option<usize> {
     if test.call {
-        let by_space = case
-            .strip_suffix(test.name.as_str())
-            .is_some_and(|p| p.ends_with(' '));
-        return (case == test.name || by_space).then_some(case.len());
+        // The report of a runner can add the `()` of a method to the name.
+        let named = |c: &str| {
+            c == test.name
+                || c.strip_suffix(test.name.as_str())
+                    .is_some_and(|p| p.ends_with(' '))
+        };
+        return (named(case) || named(without_params(case))).then_some(case.len());
     }
-    head_segments(case)
+    let head = head_segments(case)
         .into_iter()
         .filter(|(s, _)| *s == test.name)
         .map(|(_, e)| e)
-        .max()
+        .max();
+    // A Go method of a suite: the last segment after `/` is the method.
+    let method = (test.sub && last_segment(case) == test.name).then_some(case.len());
+    head.max(method)
+}
+
+/// The name of a case without a final group `(...)`: `closes on timeout()` has
+/// the name `closes on timeout`.
+fn without_params(name: &str) -> &str {
+    match name.strip_suffix(')').and_then(|r| r.rfind('(')) {
+        Some(i) if i > 0 => name[..i].trim_end(),
+        _ => name,
+    }
+}
+
+/// The part of a case name after its last `/`, or the whole name.
+fn last_segment(name: &str) -> &str {
+    name.rsplit_once('/').map_or(name, |(_, last)| last)
 }
 
 /// True if the case belongs to another test of the file than `ours`: that
@@ -1107,6 +1155,9 @@ pub struct Binder<'a> {
     by_suffix: HashMap<&'a str, Vec<usize>>,
     /// A whole name, to the cases that have it.
     by_name: HashMap<&'a str, Vec<usize>>,
+    /// The part of a name after its last `/`, to the cases that have it: the
+    /// method of a Go suite.
+    by_last: HashMap<&'a str, Vec<usize>>,
     /// For each case, the way that it fits a test file.
     kind: Vec<Kind>,
 }
@@ -1117,6 +1168,7 @@ impl<'a> Binder<'a> {
         let mut by_segment: HashMap<&str, Vec<usize>> = HashMap::new();
         let mut by_suffix: HashMap<&str, Vec<usize>> = HashMap::new();
         let mut by_name: HashMap<&str, Vec<usize>> = HashMap::new();
+        let mut by_last: HashMap<&str, Vec<usize>> = HashMap::new();
         let mut kind = Vec::with_capacity(cases.len());
         for (i, c) in cases.iter().enumerate() {
             let mut segs: Vec<&str> = head_segments(&c.name).into_iter().map(|s| s.0).collect();
@@ -1128,6 +1180,12 @@ impl<'a> Binder<'a> {
             let name = c.name.as_str();
             let mut tails = vec![name];
             tails.extend(name.match_indices(' ').map(|(p, _)| &name[p + 1..]));
+            // The same names without the `()` that a report can add.
+            let plain = without_params(name);
+            if plain != name {
+                tails.push(plain);
+                tails.extend(plain.match_indices(' ').map(|(p, _)| &plain[p + 1..]));
+            }
             tails.retain(|k| !k.is_empty());
             tails.sort_unstable();
             tails.dedup();
@@ -1135,6 +1193,9 @@ impl<'a> Binder<'a> {
                 by_suffix.entry(k).or_default().push(i);
             }
             by_name.entry(name).or_default().push(i);
+            if name.contains('/') {
+                by_last.entry(last_segment(name)).or_default().push(i);
+            }
             kind.push(match (&c.file, &c.classname) {
                 (Some(f), _) => {
                     let f = f.replace('\\', "/");
@@ -1152,6 +1213,7 @@ impl<'a> Binder<'a> {
             by_segment,
             by_suffix,
             by_name,
+            by_last,
             kind,
         }
     }
@@ -1195,7 +1257,15 @@ impl<'a> Binder<'a> {
         } else {
             &self.by_segment
         };
-        index.get(test.name.as_str()).cloned().unwrap_or_default()
+        let mut found = index.get(test.name.as_str()).cloned().unwrap_or_default();
+        if test.sub
+            && let Some(more) = self.by_last.get(test.name.as_str())
+        {
+            found.extend(more);
+            found.sort_unstable();
+            found.dedup();
+        }
+        found
     }
 
     /// Binds one tag to the cases of the reports. `lines` are the lines of the
@@ -1217,6 +1287,11 @@ impl<'a> Binder<'a> {
         let mut tests: Vec<TestName> = Vec::new();
         let mut ours: Option<TestName> = None;
         match case {
+            Some("") => {
+                // A broken `case:` binds no case, and not the test under the tag.
+                bind.by = By::Case;
+                return (Proof::Unbound, bind.unbound(Reason::NoCase));
+            }
             Some(name) => {
                 bind.by = By::Case;
                 bind.test = Some(name.to_string());
@@ -1479,7 +1554,7 @@ pub fn bind_covers(root: &std::path::Path, covers: &mut [Cover], reads: &Reads) 
                 } else {
                     By::Definition
                 },
-                test: cv.case.clone(),
+                test: cv.case.clone().filter(|c| !c.is_empty()),
                 ..Bind::default().unbound(Reason::NoReport)
             });
         }
@@ -1497,7 +1572,7 @@ pub fn bind_covers(root: &std::path::Path, covers: &mut [Cover], reads: &Reads) 
                 } else {
                     By::Definition
                 },
-                test: cv.case.clone(),
+                test: cv.case.clone().filter(|c| !c.is_empty()),
                 ..Bind::default().unbound(Reason::OutsideTree)
             });
             continue;
@@ -1528,7 +1603,11 @@ pub fn scan_bind(lines: &[&str], tag: usize, case: Option<&str>) -> Bind {
     let mut bind = Bind::default();
     if let Some(name) = case {
         bind.by = By::Case;
-        bind.test = Some(name.to_string());
+        if name.is_empty() {
+            bind.reason = Some(Reason::NoCase);
+        } else {
+            bind.test = Some(name.to_string());
+        }
         return bind;
     }
     let under = if tag < lines.len() {
@@ -1625,6 +1704,9 @@ fn unbound_text(at: &str, bind: &Bind) -> String {
         ),
         Some(Reason::Template) => format!(
             "the test under the tag at {at} has a template name; add `case:\"<name>\"` with one name of the report"
+        ),
+        Some(Reason::NoCase) if bind.by == By::Case && bind.test.is_none() => format!(
+            "the `case:` of the tag at {at} is not valid: write `case:\"<name>\"` with the whole name of a case between 2 double quotes, and no `\"` inside the name"
         ),
         Some(Reason::NoCase) if bind.by == By::Case => {
             let near = if bind.near.is_empty() {
@@ -2076,7 +2158,24 @@ mod tests {
         assert_eq!(h[0].case.as_deref(), Some("ValveTest#flushesFirst"));
         // No name, a quote that is not closed, and `case:` before an id.
         assert_eq!(t("# covers: a#b case:")[0].case, None);
-        assert_eq!(t("# covers: a#b case:\"open")[0].case, None);
+        // A quote that is not closed, or a `"` inside the name, is no name: the
+        // tag gets the empty name, which binds no case. It never falls back to
+        // the test under the tag.
+        assert_eq!(t("# covers: a#b case:\"open")[0].case.as_deref(), Some(""));
+        assert_eq!(
+            t("# covers: a#b case:\"say \"hi\" now\"")[0]
+                .case
+                .as_deref(),
+            Some("")
+        );
+        assert_eq!(
+            t("# covers: a#b case:\"fine\" */")[0].case.as_deref(),
+            Some("fine")
+        );
+        assert_eq!(
+            t("// covers: a#b case:\"fine\", c#d")[0].case.as_deref(),
+            Some("fine")
+        );
         assert!(t("# covers: case:x a#b").is_empty());
         // The ids of a tag with a name are the ids of 0.7.1.
         assert_eq!(ids("# covers: a#b case:x"), ["a#b"]);
@@ -2729,7 +2828,25 @@ mod tests {
         let rust = |n: &str| format!("// covers: a#b\n#[test]\nfn {n}() {{\n}}\n");
         let java = |n: &str| format!("// covers: a#b\n@Test\nvoid {n}() {{\n}}\n");
         let call = |n: &str| format!("// covers: a#b\nit('{n}', () => {{\n}});\n");
+        let kotlin = |n: &str| format!("// covers: a#b\n@Test fun `{n}`() {{\n}}\n");
+        let method = |n: &str| format!("// covers: a#b\nfunc (s *ValveSuite) {n}() {{\n}}\n");
         let rows: Vec<(String, &str, bool)> = vec![
+            // A Kotlin name with spaces, with and without the `()` of the report.
+            (kotlin("closes on timeout"), "closes on timeout()", true),
+            (kotlin("closes on timeout"), "closes on timeout", true),
+            (
+                kotlin("closes on timeout"),
+                "ValveTest closes on timeout()",
+                true,
+            ),
+            (kotlin("closes on timeout"), "closes on timeouts()", false),
+            // A Go method of a suite: the case is `<Test function>/<method>`.
+            (method("TestCloses"), "TestValveSuite/TestCloses", true),
+            (method("TestCloses"), "ValveSuite/TestCloses", true),
+            (method("TestCloses"), "TestCloses", true),
+            (method("TestCloses"), "TestValveSuite/TestOther", false),
+            (method("TestCloses"), "TestValveSuite", false),
+            (method("TestCloses"), "TestValveSuite/TestClosesLate", false),
             // Parameters, subtests, module paths, data sets and class paths.
             (def("test_closes"), "test_closes[1-2]", true),
             (def("test_closes"), "test_closes", true),
@@ -2777,6 +2894,7 @@ mod tests {
         TestName {
             name: name.to_string(),
             call,
+            sub: false,
         }
     }
 
@@ -2812,7 +2930,11 @@ mod tests {
             ),
             (
                 "// covers: a#b\nfunc (s *Suite) TestTimeout() {\n",
-                def("TestTimeout"),
+                Under::Test(TestName {
+                    name: "TestTimeout".into(),
+                    call: false,
+                    sub: true,
+                }),
             ),
             // The form call, with its suffixes.
             ("// covers: a#b\nit('closes', () => {\n", call("closes")),
@@ -2833,7 +2955,7 @@ mod tests {
             ("// covers: a#b\n@Test fun closes() {\n", def("closes")),
             (
                 "// covers: a#b\n@Test fun `closes on timeout`() {\n",
-                def("closes on timeout"),
+                call("closes on timeout"),
             ),
             (
                 "// covers: a#b\n[Fact] public void ClosesOnTimeout()\n",
@@ -2865,6 +2987,10 @@ mod tests {
                 "/**\n * covers: a#b\n */\n@Test\nvoid closes() {\n",
                 def("closes"),
             ),
+            // A byte order mark before the tag of line 1.
+            ("\u{feff}// covers: a#b\ndef test_x():\n", def("test_x")),
+            ("\u{feff}# covers: a#b\ndef test_x():\n", def("test_x")),
+            ("\u{feff}/* covers: a#b */\n@Test\nvoid x() {\n", def("x")),
             // A group.
             ("// covers: a#b\ndescribe('Valves', () => {\n", Under::Group),
             ("# covers: a#b\nclass TestValves:\n", Under::Group),
