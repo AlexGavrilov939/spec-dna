@@ -36,9 +36,13 @@ fn intent(status: &str, class: &str) -> String {
 
 fn plan(files: &[&str]) -> String {
     let items: Vec<String> = files.iter().map(|f| format!("- `{f}`")).collect();
+    plan_of(&items.join("\n"), "- Edit the code.")
+}
+
+/// A plan with the given text of `Files` and `Order`.
+fn plan_of(files: &str, order: &str) -> String {
     format!(
-        "---\nstatus: approved\n---\n# Plan\n\n## Files\n\n{}\n\n## Order\n\n- Edit the code.\n\n## Risks\n\n- None.\n\n## Proof\n\n- A test.\n",
-        items.join("\n")
+        "---\nstatus: approved\n---\n# Plan\n\n## Files\n\n{files}\n\n## Order\n\n{order}\n\n## Risks\n\n- None.\n\n## Proof\n\n- A test.\n"
     )
 }
 
@@ -56,6 +60,10 @@ struct Fx<'a> {
     /// The status of the decision `decisions/timer`, or `None` for no document.
     decision_doc: Option<&'a str>,
     files: &'a [&'a str],
+    /// The text of `Order` of the plan, or `None` for an item that is no task.
+    order: Option<&'a str>,
+    /// The text of `Files` of the plan, in place of the list of `files`.
+    files_text: Option<&'a str>,
 }
 
 impl Default for Fx<'_> {
@@ -68,6 +76,8 @@ impl Default for Fx<'_> {
             decisions: &[],
             decision_doc: None,
             files: &["src/dose.py"],
+            order: None,
+            files_text: None,
         }
     }
 }
@@ -98,15 +108,18 @@ impl Fx<'_> {
             "higher-risk"
         };
         r.write(INTENT, &intent(self.status, class));
+        let listed: Vec<String> = self
+            .files
+            .iter()
+            .copied()
+            .chain(["tests/test_valves.py"])
+            .map(|f| format!("- `{f}`"))
+            .collect();
         r.write(
             "docs/intent/dose/plan.md",
-            &plan(
-                &self
-                    .files
-                    .iter()
-                    .copied()
-                    .chain(["tests/test_valves.py"])
-                    .collect::<Vec<_>>(),
+            &plan_of(
+                &self.files_text.map_or(listed.join("\n"), str::to_string),
+                self.order.unwrap_or("- Edit the code."),
             ),
         );
         if !self.delta.is_empty() || !self.decisions.is_empty() {
@@ -344,6 +357,106 @@ fn a_routine_change_needs_a_changed_files_path_or_a_changed_hash() {
     finish(&r);
     let (_, out) = check(&r);
     assert!(!has(&out, "SD915"), "{out}");
+}
+
+// SD915: a change with no delta and a plan with tasks (D87)
+
+const DONE: &str = "- [x] t1: Edit the code. Files: `src/dose.py`.\n- [x] t2: Run the tests.";
+const OPEN: &str = "- [x] t1: Edit the code. Files: `src/dose.py`.\n- [ ] t2: Run the tests.";
+
+#[test]
+fn a_routine_change_finishes_in_a_pull_request_of_its_own() {
+    // The code merged before: the pull request of `finish` deletes the folder
+    // only, and each task of the plan is ticked.
+    let r = Fx {
+        order: Some(DONE),
+        ..Fx::default()
+    }
+    .start();
+    finish(&r);
+    let (code, out) = check(&r);
+    assert!(!has(&out, "SD915"), "{out}");
+    assert_eq!(code, 0, "{out}");
+    // A task that names `spec-dna finish <slug>` closes with `finish`, so it
+    // is no open task.
+    let r = Fx {
+        order: Some("- [x] t1: Edit the code.\n- [ ] t2: Run `spec-dna finish dose`."),
+        ..Fx::default()
+    }
+    .start();
+    finish(&r);
+    let (_, out) = check(&r);
+    assert!(!has(&out, "SD915"), "{out}");
+}
+
+#[test]
+fn a_plan_that_states_no_files_finishes() {
+    let r = Fx {
+        files_text: Some("- None: this change is research."),
+        order: Some("- [x] t1: Write the notes."),
+        ..Fx::default()
+    }
+    .start();
+    finish(&r);
+    let (code, out) = check(&r);
+    assert!(!has(&out, "SD915"), "{out}");
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn an_open_task_with_no_edit_gives_sd915_with_the_ids() {
+    let r = Fx {
+        order: Some(OPEN),
+        ..Fx::default()
+    }
+    .start();
+    finish(&r);
+    let (code, out) = check(&r);
+    let found = lines(&out, "SD915");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].contains("its plan has 1 open task(s) (t2)")
+            && found[0].contains("`Skip: <reason>`")
+            && found[0].contains("`spec-dna finish dose`"),
+        "{out}"
+    );
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn an_open_task_with_an_edit_of_files_passes_as_in_0_8_0() {
+    // Guard: the rule of 0.6 clears SD915 first.
+    let r = Fx {
+        order: Some(OPEN),
+        ..Fx::default()
+    }
+    .start();
+    r.write("src/dose.py", "x = 2\n");
+    finish(&r);
+    let (code, out) = check(&r);
+    assert!(!has(&out, "SD915"), "{out}");
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn a_person_task_ticked_in_the_branch_counts() {
+    let base = "- [x] t1: Edit the code. Files: `src/dose.py`.\n- [ ] t2: Review by the owner. By: the owner.";
+    let ticked = base.replace("- [ ] t2", "- [x] t2");
+    let r = Fx {
+        order: Some(base),
+        ..Fx::default()
+    }
+    .start();
+    // The person ticks the task in a commit of the branch.
+    r.write(
+        "docs/intent/dose/plan.md",
+        &plan_of("- `src/dose.py`\n- `tests/test_valves.py`", &ticked),
+    );
+    r.commit("tick the review");
+    finish(&r);
+    let (code, out) = check(&r);
+    assert!(!has(&out, "SD915"), "{out}");
+    assert_eq!(code, 0, "{out}");
 }
 
 // A close and a finish in one pull request

@@ -44,7 +44,7 @@ status: approved
 
 ## Order
 
-- [ ] t1: Make SD915 read the tasks of the newest plan for a change with no delta, with one shared filter of the open tasks and the message that names the open tasks (D87). Files: `src/change.rs`, `src/lifecycle.rs`, `tests/lifecycle_finished.rs`. Verify: `cargo test --test lifecycle_finished`. Hours: 4.
+- [x] t1: Make SD915 read the tasks of the newest plan for a change with no delta, with one shared filter of the open tasks and the message that names the open tasks (D87). Files: `src/change.rs`, `src/lifecycle.rs`, `tests/lifecycle_finished.rs`. Verify: `cargo test --test lifecycle_finished`. Hours: 4.
 - [ ] t2: Give SD401 the message and the fix of the rework for a spec or a plan that moves from approved to draft (D91). Files: `src/check.rs`, `src/diag.rs`, `tests/lifecycle_checks.rs`. Verify: `cargo test --test lifecycle_checks`. Hours: 2.
 - [ ] t3: Run SD913 only for a change of the diff whose folder the diff touches or that the branch added, with the new message (D92). Files: `src/lifecycle.rs`, `tests/lifecycle_checks.rs`, `docs/diagnostics.md`. Verify: `cargo test --test lifecycle_checks`. Hours: 2.
 - [ ] t4: Make `stats` bind the reports only when the working tree has the code tree of HEAD, and add the key reports_read (D92). Files: `src/sdlc.rs`, `src/tree.rs`, `tests/proof_debt.rs`. Verify: `cargo test --test proof_debt`. Hours: 3.

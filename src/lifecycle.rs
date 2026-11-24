@@ -1875,6 +1875,9 @@ struct BranchScope {
     /// branch declare. The base plan can lack a deviation that the work added, so
     /// SD938 reads these.
     declared: Result<crate::accept::Declared, String>,
+    /// The tasks of the plan of the branch. SD915 reads them for a change with
+    /// no delta.
+    tasks: Vec<change::PlanTask>,
 }
 
 impl DiffChange {
@@ -1905,6 +1908,7 @@ impl DiffChange {
                         &newest,
                         &corpus,
                     ),
+                    tasks: newest.tasks(&corpus),
                 })
             })
             .as_ref()
@@ -2739,7 +2743,7 @@ fn finished_checks(
             continue;
         }
         if on(Code::FinishIncomplete) {
-            out.extend(finish_incomplete(ctx, ch, sole));
+            out.extend(finish_incomplete(ctx, ch, sole, nc.on));
         }
         if on(Code::DeltaEvidenceMissing) || on(Code::ChangeUnproven) || on(Code::ProofNotReliable)
         {
@@ -3214,9 +3218,12 @@ fn record_checks(
 /// with a delta needs each line applied in the head (design, T3). The lines
 /// come from the base tree, so a correction in the same pull request does not
 /// count. A change with no delta needs a changed `Files` path or a changed
-/// requirement hash. A `REMOVE` line for a key that neither tree has is not
-/// reported: the head has no such key, and SD914 reported the line earlier.
-fn finish_incomplete(ctx: &Ctx, ch: &DiffChange, sole: bool) -> Vec<Diag> {
+/// requirement hash, or a newest plan with tasks and no open task (D87): the
+/// plan says that the work is done, and `finish` passed its step 0 on it. A
+/// `REMOVE` line for a key that neither tree has is not reported: the head has
+/// no such key, and SD914 reported the line earlier. `accept_on` is the rule of
+/// the need for the tasks that name `spec-dna accept`.
+fn finish_incomplete(ctx: &Ctx, ch: &DiffChange, sole: bool, accept_on: bool) -> Vec<Diag> {
     let c = &ch.change;
     let status = match c.intent_status() {
         "" => "none",
@@ -3275,10 +3282,36 @@ fn finish_incomplete(ctx: &Ctx, ch: &DiffChange, sole: bool) -> Vec<Diag> {
     let Some(anchor) = c.intent.as_ref().or(c.plan.as_ref()).or(c.spec.as_ref()) else {
         return Vec::new();
     };
-    // SD915 reads the base tree only, so the note is about its plan.
+    // The newest plan: the last text of the branch, else the plan of the base.
+    let tasks = match ch.branch(ctx).filter(|b| b.has_plan) {
+        Some(b) => b.tasks.clone(),
+        None => c.tasks(ctx.base),
+    };
+    let open = change::open_tasks(&tasks, &c.slug, accept_on);
+    if !tasks.is_empty() && open.is_empty() {
+        return Vec::new();
+    }
+    let anchor_doc = &ctx.base.docs[anchor.doc as usize];
+    if !open.is_empty() {
+        let ids: Vec<&str> = open.iter().map(|t| t.id.as_str()).collect();
+        return vec![crate::check::diag(
+            anchor_doc,
+            1,
+            Code::FinishIncomplete,
+            "",
+            format!(
+                "the diff deletes the change `{}`, its base status is `{status}`, the diff changes no `Files` path and no requirement hash, and its plan has {} open task(s) ({}); do each task, or close it with `Skip: <reason>`, and run `spec-dna finish {}`, or set the intent to `closed` in an earlier pull request",
+                c.slug,
+                ids.len(),
+                ids.join(", "),
+                c.slug
+            ),
+        )];
+    }
+    // The note on `Files` reads the plan of the base tree only.
     let cause = not_paths_cause(ch, None).unwrap_or_default();
     vec![crate::check::diag(
-        &ctx.base.docs[anchor.doc as usize],
+        anchor_doc,
         1,
         Code::FinishIncomplete,
         "",

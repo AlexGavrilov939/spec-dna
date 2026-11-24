@@ -668,6 +668,13 @@ impl PlanTask {
         self.closes_with_finish(slug) || (accept_on && names_command(&self.text, "accept", slug))
     }
 
+    /// True if the task is open: not closed, not a duplicate, and it does not
+    /// close with `finish` or `accept`. This is the one filter of the open
+    /// tasks. SD915 and `next` use it.
+    pub fn is_open(&self, slug: &str, accept_on: bool) -> bool {
+        !self.closed() && !self.duplicate && !self.closes_with_finish_or_accept(slug, accept_on)
+    }
+
     /// True if the text of the task names `spec-dna finish <word>` for any
     /// word, with a slug or none. A task of this kind that is not
     /// [`closes_with_finish`](Self::closes_with_finish) gets the hint of step 0
@@ -1027,9 +1034,7 @@ pub fn next_open_task_in<'a>(
     slug: &str,
     accept_on: bool,
 ) -> Option<&'a PlanTask> {
-    let mut open = tasks.iter().filter(|t| {
-        !t.closed() && !t.duplicate && !t.closes_with_finish_or_accept(slug, accept_on)
-    });
+    let mut open = tasks.iter().filter(|t| t.is_open(slug, accept_on));
     // A task of a person is not for an agent: the first open task of an agent
     // is the next task, if there is one (design 0.8.0, D64).
     let first = open.next()?;
@@ -1037,6 +1042,14 @@ pub fn next_open_task_in<'a>(
         return Some(first);
     }
     open.find(|t| !t.by_person()).or(Some(first))
+}
+
+/// The open tasks of `tasks` ([`PlanTask::is_open`]), in the order of the file.
+pub fn open_tasks<'a>(tasks: &'a [PlanTask], slug: &str, accept_on: bool) -> Vec<&'a PlanTask> {
+    tasks
+        .iter()
+        .filter(|t| t.is_open(slug, accept_on))
+        .collect()
 }
 
 impl Change {
