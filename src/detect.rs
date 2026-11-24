@@ -1595,7 +1595,7 @@ pub fn typos_unguarded(read: &dyn Fn(&str) -> Option<String>) -> bool {
 /// in a row. A word is a run of letters and digits, in lower case. The id of a
 /// hook is no command: the hook `name-tests-test` of pre-commit-hooks checks
 /// file names and runs no test.
-const TEST_COMMANDS: [&[&str]; 20] = [
+const TEST_COMMANDS: [&[&str]; 16] = [
     &["pytest"],
     &["unittest"],
     &["nextest"],
@@ -1604,10 +1604,6 @@ const TEST_COMMANDS: [&[&str]; 20] = [
     &["gotestsum"],
     &["rspec"],
     &["phpunit"],
-    &["mvn"],
-    &["mvnw"],
-    &["gradle"],
-    &["gradlew"],
     &["cargo", "test"],
     &["npm", "test"],
     &["npm", "run", "test"],
@@ -1618,6 +1614,35 @@ const TEST_COMMANDS: [&[&str]; 20] = [
     &["make", "test"],
 ];
 
+/// A build tool and the goals that run the tests, as words. The tool runs the
+/// tests only with such a goal after it: `mvn spotless:apply` and
+/// `./gradlew ktlintFormat` run none.
+const BUILD_TOOLS: [(&[&str], &[&str]); 2] = [
+    (
+        &["mvn", "mvnw"],
+        &[
+            "test",
+            "verify",
+            "install",
+            "package",
+            "surefire",
+            "failsafe",
+            "integrationtest",
+        ],
+    ),
+    (
+        &["gradle", "gradlew"],
+        &[
+            "test",
+            "check",
+            "build",
+            "connectedcheck",
+            "connectedandroidtest",
+            "integrationtest",
+        ],
+    ),
+];
+
 /// True if the entry of a hook runs the tests.
 fn runs_tests(entry: &str) -> bool {
     let words: Vec<String> = entry
@@ -1625,20 +1650,34 @@ fn runs_tests(entry: &str) -> bool {
         .filter(|w| !w.is_empty())
         .map(str::to_ascii_lowercase)
         .collect();
-    TEST_COMMANDS
+    let command = TEST_COMMANDS
         .iter()
-        .any(|cmd| words.windows(cmd.len()).any(|w| w == *cmd))
+        .any(|cmd| words.windows(cmd.len()).any(|w| w == *cmd));
+    let build = BUILD_TOOLS.iter().any(|(tools, goals)| {
+        words
+            .iter()
+            .position(|w| tools.contains(&w.as_str()))
+            .is_some_and(|at| words[at + 1..].iter().any(|w| goals.contains(&w.as_str())))
+    });
+    command || build
 }
 
-/// The text of a line of YAML without its comment (a `#` after a space).
+/// The text of a line of YAML without its comment: a `#` at the start, or after
+/// a space. A `#` in a quote is no comment.
 fn without_comment(line: &str) -> &str {
-    match line
-        .find(" #")
-        .or_else(|| line.trim_start().starts_with('#').then_some(0))
-    {
-        Some(at) => &line[..at],
-        None => line,
+    let mut quote = None;
+    let mut before = ' ';
+    for (i, c) in line.char_indices() {
+        match (quote, c) {
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), _) => {}
+            (None, '"' | '\'') => quote = Some(c),
+            (None, '#') if before.is_whitespace() => return &line[..i],
+            _ => {}
+        }
+        before = c;
     }
+    line
 }
 
 /// A value of YAML without its quotes.
@@ -1719,7 +1758,10 @@ pub fn test_hooks_without_stamp(pre_commit: &str) -> Vec<String> {
         while let Some(rest) = text.strip_prefix("- ") {
             text = rest.trim_start();
         }
-        if text.contains('{') {
+        // A flow mapping is a hook (`- {id: x, entry: pytest}`) or a list of
+        // hooks (`hooks: [{...}]`). A brace in another line is plain text.
+        let flow = text.starts_with('{') || (text.starts_with("hooks:") && text.contains('{'));
+        if flow {
             for group in flow_groups(text) {
                 if let Some(id) = flow_value(group, "id") {
                     hooks.push((
@@ -1733,8 +1775,17 @@ pub fn test_hooks_without_stamp(pre_commit: &str) -> Vec<String> {
             if dash || !open {
                 hooks.push((unquote(value).to_string(), String::new()));
                 open = true;
+            } else if let Some(h) = hooks.last_mut()
+                && h.0.is_empty()
+            {
+                h.0 = unquote(value).to_string();
             }
         } else if let Some(value) = text.strip_prefix("entry:") {
+            if dash {
+                // The entry is the first key of a hook: the id can follow.
+                hooks.push((String::new(), String::new()));
+                open = true;
+            }
             // The column of the key: the lines of a block are deeper than it.
             let key = raw.find("entry:").unwrap_or(0);
             let mut entry = value.trim().to_string();
@@ -1767,6 +1818,7 @@ pub fn test_hooks_without_stamp(pre_commit: &str) -> Vec<String> {
             runs_tests(entry) && !flat.contains("evidence stamp")
         })
         .map(|(id, _)| id)
+        .filter(|id| !id.is_empty())
         .collect()
 }
 
@@ -2325,5 +2377,52 @@ mod test_hook_tests {
         let yaml =
             "  - repo: local\n    hooks:\n      - {id: u, entry: cargo test, language: system}\n";
         assert_eq!(test_hooks_without_stamp(yaml), ["u"]);
+    }
+
+    #[test]
+    fn an_entry_that_is_the_first_key_of_a_hook_belongs_to_that_hook() {
+        let yaml = "      - id: lint\n        entry: rustfmt\n      - entry: pytest -q\n        id: tests\n";
+        assert_eq!(test_hooks_without_stamp(yaml), ["tests"]);
+        let yaml = "      - id: lint\n        entry: codespell\n      - entry: pytest -q\n        language: system\n";
+        assert!(test_hooks_without_stamp(yaml).is_empty());
+    }
+
+    #[test]
+    fn a_build_tool_runs_the_tests_only_with_a_goal_that_does() {
+        let hook = |entry: &str| format!("      - id: x\n        entry: {entry}\n");
+        for yes in [
+            "mvn test",
+            "mvn -q verify",
+            "./mvnw clean install",
+            "mvn surefire:test",
+            "mvn failsafe:integration-test",
+            "gradle test",
+            "./gradlew check",
+            "./gradlew build",
+            "./gradlew connectedCheck",
+        ] {
+            assert_eq!(test_hooks_without_stamp(&hook(yes)), ["x"], "{yes}");
+        }
+        for no in [
+            "mvn spotless:apply",
+            "./mvnw -q checkstyle:check",
+            "./gradlew ktlintFormat",
+            "gradle spotlessApply",
+        ] {
+            assert!(test_hooks_without_stamp(&hook(no)).is_empty(), "{no}");
+        }
+    }
+
+    #[test]
+    fn a_brace_in_a_block_line_is_no_flow_group_and_a_quote_hides_a_hash() {
+        let yaml = "      - id: x\n        entry: bash -c 'pytest {}'\n";
+        assert_eq!(test_hooks_without_stamp(yaml), ["x"]);
+        let yaml = "      - id: x\n        args: [--cov={src}]\n        entry: pytest\n";
+        assert_eq!(test_hooks_without_stamp(yaml), ["x"]);
+        // A `#` in a quote is no comment.
+        let yaml = "      - id: x\n        entry: \"sh -c 'echo # && pytest'\"\n";
+        assert_eq!(test_hooks_without_stamp(yaml), ["x"]);
+        let yaml = "      - id: x\n        entry: rustfmt  # pytest later\n";
+        assert!(test_hooks_without_stamp(yaml).is_empty());
     }
 }
