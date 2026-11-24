@@ -408,21 +408,24 @@ impl Plan {
     }
 
     /// The defaults of a profile for a new project: the change policy, the
-    /// gate, the answer to question 14 and the profile of the parts. A later
-    /// answer replaces each of them. `--reconfigure` keeps the current values,
-    /// so the call changes nothing for it. The skills, `review-md` and
-    /// `protect-tests` follow `preset` in `settle_parts`, and `strict` gets
-    /// `approval = "base"` and `protect-approvals` in `settle_approval` and
-    /// `settle_approvals_hook`.
+    /// gate, the answer to question 14, the role `advisor` and the profile of
+    /// the parts. A later answer replaces each of them. `--reconfigure` keeps
+    /// the current values, so the call changes only a role `advisor` that has
+    /// the default of the profile of the file (design 0.8.1, D97). The skills,
+    /// `review-md` and `protect-tests` follow `preset` in `settle_parts`, and
+    /// `strict` gets `approval = "base"` and `protect-approvals` in
+    /// `settle_approval` and `settle_approvals_hook`.
     fn apply_preset(&mut self, profile: Profile) {
-        if self.kind == "reconfigure" {
-            return;
-        }
-        // The role of the preset moves with the profile. A detected advisor
-        // is not the default of the old profile, so it stays.
+        // The move runs when question 1 sets the profile, so the answer to
+        // question 13 comes later and wins. A value that a person set, or a
+        // detected advisor, is not the default, so it stays. With
+        // `--reconfigure`, `preset` is the profile of the file.
         let advisor = self.harness.cfg_mut(Role::Advisor);
         if advisor.model == default_advisor_model(self.preset) {
             advisor.model = default_advisor_model(profile);
+        }
+        if self.kind == "reconfigure" {
+            return;
         }
         self.preset = profile;
         self.change_policy = match profile {
@@ -2716,7 +2719,7 @@ fn profile_notes(plan: &mut Plan, pack_exists: bool) {
     }
     if plan.kind == "reconfigure" && plan.profile != plan.preset {
         new.push(format!(
-            "the profile `{}` sets other defaults only for a new project; answer questions 4, 5, 12 and 14 to change them (docs/profiles.md)",
+            "the profile `{}` sets other defaults only for a new project; answer questions 4, 5, 12, 13 and 14 to change them (docs/profiles.md)",
             plan.profile.name()
         ));
     }

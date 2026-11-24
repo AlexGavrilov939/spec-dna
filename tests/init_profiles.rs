@@ -306,7 +306,7 @@ fn reconfigure_with_another_profile_keeps_the_values_and_prints_a_note() {
     );
     assert_eq!(code, 0, "{out}{err}");
     assert!(
-        out.contains("note: the profile `standard` sets other defaults only for a new project; answer questions 4, 5, 12 and 14 to change them (docs/profiles.md)"),
+        out.contains("note: the profile `standard` sets other defaults only for a new project; answer questions 4, 5, 12, 13 and 14 to change them (docs/profiles.md)"),
         "{out}"
     );
     let after = table(&r);
@@ -1328,4 +1328,152 @@ fn a_new_strict_project_has_the_advisor() {
     );
     let claude = r.read("CLAUDE.md");
     assert!(claude.contains("Consult the advisor only"), "{claude}");
+}
+
+/// A new project of `profile` at the level `lean`, in a commit.
+fn project_of(profile: &str) -> Repo {
+    let r = repo();
+    let (code, out, err) = init_with(&r, &format!("profile = \"{profile}\"\n"), &[]);
+    assert_eq!(code, 0, "{profile}: {out}{err}");
+    r.commit("adopt spec-dna");
+    r
+}
+
+/// `init --reconfigure` with the answers, then a commit. Returns the output.
+fn reconfigure(r: &Repo, answers: &str) -> String {
+    let (code, out, err) = init_with(r, answers, &["--reconfigure"]);
+    assert_eq!(code, 0, "{answers}: {out}{err}");
+    r.commit("reconfigure");
+    out
+}
+
+/// Asserts the row of the role `advisor` and the file of `fallback-advisor`.
+fn assert_row(r: &Repo, row: &str, what: &str) {
+    let cfg = r.read("spec-dna.toml");
+    assert!(cfg.contains(row), "{what}:\n{cfg}");
+    assert_eq!(r.dir.join(FALLBACK).exists(), row == ADVISOR_ROW, "{what}");
+}
+
+/// D97, item 3: the role stays, and a new answer to question 1 moves only a
+/// value that is the default of the old profile.
+#[test]
+fn reconfigure_moves_the_advisor_with_the_profile() {
+    let strict = "profile = \"strict\"\n";
+    let standard = "profile = \"standard\"\n";
+    let lite = "profile = \"lite\"\n";
+    let r = project_of("standard");
+    let out = reconfigure(&r, strict);
+    assert_row(&r, ADVISOR_ROW, "standard to strict");
+    assert!(
+        r.read(".claude/settings.json")
+            .contains("\"advisorModel\": \"fable\""),
+        "{out}"
+    );
+    assert!(
+        out.contains("answer questions 4, 5, 12, 13 and 14 to change them (docs/profiles.md)"),
+        "{out}"
+    );
+    // And back. `init` leaves the setting, as for each role that goes.
+    let out = reconfigure(&r, standard);
+    assert_row(&r, NO_ADVISOR_ROW, "strict to standard");
+    assert!(out.contains("kept advisorModel: "), "{out}");
+    // `lite` has the default of `standard`.
+    let r = project_of("lite");
+    reconfigure(&r, strict);
+    assert_row(&r, ADVISOR_ROW, "lite to strict");
+    reconfigure(&r, lite);
+    assert_row(&r, NO_ADVISOR_ROW, "strict to lite");
+    // A value that a person set stays.
+    let r = project_of("standard");
+    reconfigure(&r, "harness-models = [\"advisor=opus\"]\n");
+    let opus = "\nadvisor = { claude-code = \"opus\", agent = \"opus\", effort = \"xhigh\" }\n";
+    for profile in [strict, standard] {
+        reconfigure(&r, profile);
+        let cfg = r.read("spec-dna.toml");
+        assert!(cfg.contains(opus), "{profile}:\n{cfg}");
+    }
+    // The answer of question 13 wins over the move.
+    let r = project_of("standard");
+    reconfigure(
+        &r,
+        "profile = \"strict\"\nharness-models = [\"advisor=none\"]\n",
+    );
+    assert_row(&r, NO_ADVISOR_ROW, "the answer of question 13");
+    // The same profile moves nothing: `none` of `strict` stays.
+    reconfigure(&r, strict);
+    assert_row(&r, NO_ADVISOR_ROW, "strict to strict");
+    // With no answer, each project keeps its role.
+    let r = project_of("strict");
+    reconfigure(&r, "");
+    assert_row(&r, ADVISOR_ROW, "no answer");
+}
+
+/// Guard: under `--reconfigure`, a harness from the level `none`, or from a
+/// file with no table `[harness]`, is new. It takes the preset of the profile.
+#[test]
+fn reconfigure_gives_a_new_harness_the_advisor_of_the_profile() {
+    for (profile, row) in [("standard", NO_ADVISOR_ROW), ("strict", ADVISOR_ROW)] {
+        // From the level `none`.
+        let r = repo();
+        let answers = format!("profile = \"{profile}\"\nharness = \"none\"\n");
+        let (code, out, err) = init_with(&r, &answers, &[]);
+        assert_eq!(code, 0, "{profile}: {out}{err}");
+        r.commit("adopt spec-dna");
+        reconfigure(&r, "harness = \"lean\"\n");
+        assert_row(&r, row, &format!("{profile}: from none"));
+        // From a file with no table.
+        let r = repo();
+        r.write(
+            "spec-dna.toml",
+            &format!(
+                "spec-dna = \"{VERSION}\"\nprofile = \"{profile}\"\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n"
+            ),
+        );
+        r.write("docs/a.md", "# A\n\nText.\n");
+        r.commit("start");
+        reconfigure(&r, "harness = \"lean\"\n");
+        assert_row(&r, row, &format!("{profile}: no table"));
+    }
+    // A new harness and a new profile in one run: the new profile decides.
+    let r = repo();
+    let (code, out, err) = init_with(&r, "harness = \"none\"\n", &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    r.commit("adopt spec-dna");
+    reconfigure(&r, "profile = \"strict\"\nharness = \"lean\"\n");
+    assert_row(&r, ADVISOR_ROW, "from none to strict");
+}
+
+/// Guard (D97, item 2): `upgrade` applies no preset. A project keeps its
+/// advisor, also with a table that has no row `advisor`, which still reads as
+/// `fable`.
+#[test]
+fn upgrade_keeps_the_advisor_of_a_project_of_0_8_0() {
+    const ROW: &str =
+        "advisor = { claude-code = \"fable\", agent = \"opus\", effort = \"xhigh\" }\n";
+    for name in ["v061", "v070", "v071", "v071-lite", "v071-strict"] {
+        for keep_row in [true, false] {
+            let what = format!("{name}, row {keep_row}");
+            let r = Repo::from_fixture(name, &[]);
+            if !keep_row {
+                let cfg = r.read("spec-dna.toml");
+                assert_eq!(cfg.matches(ROW).count(), 1, "{what}\n{cfg}");
+                r.write("spec-dna.toml", &cfg.replace(ROW, ""));
+                r.commit("no row of the advisor");
+            }
+            let (code, out, err) = run(&r, &["upgrade"]);
+            assert_eq!(code, 0, "{what}: {out}{err}");
+            let cfg = r.read("spec-dna.toml");
+            assert!(cfg.contains(&format!("spec-dna = \"{VERSION}\"")), "{cfg}");
+            assert_eq!(cfg.contains(ROW), keep_row, "{what}\n{cfg}");
+            assert_eq!(cfg.contains("advisor = {"), keep_row, "{what}\n{cfg}");
+            let settings = r.read(".claude/settings.json");
+            assert!(
+                settings.contains("\"advisorModel\": \"fable\""),
+                "{what}\n{settings}"
+            );
+            assert!(r.dir.join(FALLBACK).exists(), "{what}");
+            let claude = r.read("CLAUDE.md");
+            assert!(claude.contains("The advisor (fable)"), "{what}\n{claude}");
+        }
+    }
 }
