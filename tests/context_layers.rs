@@ -1990,3 +1990,53 @@ fn a_changed_note_does_not_mark_the_summary_stale_in_the_chain() {
         "{out}"
     );
 }
+
+#[test]
+fn a_layer_with_decisions_and_notes_and_no_key_serves_the_chain_of_0_8_0() {
+    let head = "[layers.foundation]\ntypes = [\"product\", \"system\", \"terms\"]\nfiles = [\"product.md\", \"system.md\", \"terms.md\"]\n\n[layers.specs]\ntypes = [\"requirements\", \"decision\", \"research\"]\n\n[layers.summaries]\ntypes = [\"summary\"]\n\n";
+    let r = Repo::with(head, ROLL_ROOTS);
+    r.write(
+        "docs/specs/storage/closing.md",
+        "---\ntype: requirements\nstatus: active\n---\n# Closing\n\n## Requirements\n\n- **close-on-timeout**: The valve SHALL close.\n",
+    );
+    r.write(
+        "docs/specs/storage/use-sqlite.md",
+        &STORAGE_DECISION.replace("---\n", "---\ntype: decision\n"),
+    );
+    r.write(
+        "docs/specs/storage/use-files.md",
+        &STORAGE_DECISION
+            .replace("---\n", "---\ntype: decision\n")
+            .replace("accepted", "proposed"),
+    );
+    r.write(
+        "docs/specs/storage/write-load.md",
+        "---\ntype: research\n---\n# Write load\n\nOne writer is enough.\n",
+    );
+    summary(&r, "storage", "The valve closes.");
+    top(&r, "docs/system.md", "system", "System", "The system.");
+    let text = fs::read_to_string(r.dir.join("docs/summaries/storage.md")).unwrap();
+    assert!(
+        !text.contains("use-sqlite") && !text.contains("write-load"),
+        "{text}"
+    );
+    // A requirement, an accepted decision and a proposed decision of the layer
+    // reach the area, as in 0.8.0. The summary is current, so it is not stale.
+    for target in [
+        "specs/storage/closing",
+        "specs/storage/use-sqlite",
+        "specs/storage/use-files",
+    ] {
+        let (code, out, err) = r.run(&["context", target]);
+        assert_eq!(code, 0, "{out}{err}");
+        assert!(out.contains("summaries/storage"), "{target}: {out}");
+        assert!(
+            !header_of(&out, "summaries/storage").contains("stale"),
+            "{target}: {out}"
+        );
+        assert!(
+            !header_of(&out, "system").contains("stale"),
+            "{target}: {out}"
+        );
+    }
+}

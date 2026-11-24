@@ -223,12 +223,16 @@ fn is_item_doc(config: &Config, d: &Doc) -> bool {
         || (d.ty == DocType::Research && in_typed_layer(config, d))
 }
 
-/// True if the layer of the document holds the type of the document. A glob of
-/// `paths` can put a document in a layer of another type, and that is no source
-/// of a whole document.
+/// True if the document is a source of a whole document: the layer of the
+/// summaries has the key `rolls-up`, and the layer of the document holds the
+/// type of the document. With no key, a decision and a research document are no
+/// item, also in a layer that has their type: the roll-up is the roll-up of
+/// 0.8.0. A glob of `paths` can put a document in a layer of another type, and
+/// that is no source of a whole document.
 fn in_typed_layer(config: &Config, d: &Doc) -> bool {
-    crate::check::doc_layer(config, d)
-        .is_some_and(|l| config.layers.layers()[l].types.contains(&d.ty))
+    config.layers.rollup_keyed()
+        && crate::check::doc_layer(config, d)
+            .is_some_and(|l| config.layers.layers()[l].types.contains(&d.ty))
 }
 
 /// True for a document that holds roll-up pins by its type: a summary, or a
@@ -1041,6 +1045,31 @@ impl<'a> Rollup<'a> {
     }
 }
 
+/// True if `f` says that a pin target was removed, and `base` has a research
+/// document at that id. The tree of the head has no type for a removed document,
+/// so the base tells it (design 0.8.1, D84, item 3): the finding is then SD647,
+/// as for a note that left the frontier. With no base, only the place of the id
+/// tells it ([`Rollup::findings`]).
+pub fn removed_note_in(base: &Corpus, f: &Finding) -> bool {
+    f.kind == Kind::Stale
+        && f.message.contains(REMOVED)
+        && !f.target.contains('#')
+        && matches!(
+            resolve(
+                base,
+                &Pin {
+                    id: f.target.clone(),
+                    key: None,
+                    hash: String::new()
+                }
+            ),
+            Resolved::Item(Item::Doc(d)) if base.docs[d as usize].ty == DocType::Research
+        )
+}
+
+/// The words of the message of a pin whose target was removed.
+const REMOVED: &str = "the target was removed";
+
 /// The key of a pin for the compare of 2 trees (SD645): the target as the
 /// older tree names it, and the hash.
 type PinKey = (String, String);
@@ -1301,8 +1330,21 @@ pub fn select(config: &Config, c: &Corpus, ids: &[String]) -> Result<Vec<u32>, S
             )));
         }
         if !has_area(config, c, &c.docs[d as usize]) {
+            let folders = if only_requirements(config) {
+                "the layer `requirements`".to_string()
+            } else {
+                let dirs: Vec<String> = source_dirs(config)
+                    .iter()
+                    .map(|d| format!("`{d}`"))
+                    .collect();
+                if dirs.is_empty() {
+                    "a source layer of the roll-up (none has a folder)".to_string()
+                } else {
+                    format!("a source layer of the roll-up ({})", dirs.join(", "))
+                }
+            };
             return Err(SelectError::Usage(format!(
-                "`{}` names no area: a summary is the file `<summaries folder>/<area>.md` of a folder of the layer `requirements` (SD644), and no pin can fix its path",
+                "`{}` names no area: a summary is the file `<summaries folder>/<area>.md` of a folder of {folders} (SD644), and no pin can fix its path",
                 c.docs[d as usize].id
             )));
         }

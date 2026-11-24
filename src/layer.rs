@@ -348,6 +348,15 @@ impl Graph {
         Ok(g)
     }
 
+    /// True if the layer of the type `summary` has the key `rolls-up`. A decision
+    /// or a research document is a source of the roll-up only then (design
+    /// 0.8.1, D84): with no key, the roll-up is the roll-up of 0.8.0.
+    pub fn rollup_keyed(&self) -> bool {
+        self.layers
+            .iter()
+            .any(|l| l.types.contains(&DocType::Summary) && l.rolls_up.is_some())
+    }
+
     /// The positions of the source layers of the summaries (design 0.8.1,
     /// D84): the layers that the key `rolls-up` names, in the order of the key,
     /// or the layer of the type `requirements` when the layer of the type

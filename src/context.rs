@@ -261,8 +261,14 @@ impl Places {
                 None
             };
             let layer = crate::check::doc_layer(cfg, d).filter(|l| sources.contains(l));
+            // With the key `rolls-up`, a decision reaches its area only when it
+            // is accepted (design 0.8.1, D84, item 8), as it is an item of the
+            // frontier only then. With no key, the rule of 0.8.0 holds.
+            let proposed = cfg.layers.rollup_keyed()
+                && d.ty == DocType::Decision
+                && d.status_str() != "accepted";
             let area = match layer {
-                Some(l) if info.is_none() => {
+                Some(l) if info.is_none() && !proposed => {
                     let dir = cfg.layers.layers()[l].dir();
                     let rel = cfg
                         .roots
@@ -1088,12 +1094,8 @@ fn summary_chain(
     }
     let mut areas: Vec<&Vec<String>> = Vec::new();
     for &(d, _, _) in plan {
-        let doc = &c.docs[d as usize];
-        // A decision reaches its area only when it is accepted (design 0.8.1,
-        // D84, item 8), as it is an item of the frontier only then.
         if let Some(a) = &places.area[d as usize]
-            && !doc.is_inactive()
-            && (doc.ty != DocType::Decision || doc.status_str() == "accepted")
+            && !c.docs[d as usize].is_inactive()
             && !areas.contains(&a)
         {
             areas.push(a);

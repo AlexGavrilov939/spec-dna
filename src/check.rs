@@ -152,10 +152,31 @@ fn rollup_diags(config: &Config, c: &Corpus, base: Option<&Corpus>) -> Vec<Diag>
         return Vec::new();
     }
     let roll = crate::rollup::Rollup::build(config, c);
+    let keyed = config.layers.rollup_keyed();
+    let sources = config
+        .layers
+        .rollup_sources()
+        .into_iter()
+        .map(|i| format!("`{}`", config.layers.layers()[i].name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sources = if sources.is_empty() {
+        "none".to_string()
+    } else {
+        sources
+    };
     let mut out: Vec<Diag> = roll
         .all()
         .into_iter()
         .map(|(i, f)| {
+            // The base tells the type of a removed target (design 0.8.1, D84).
+            let mut f = f;
+            if base.is_some_and(|b| crate::rollup::removed_note_in(b, &f)) {
+                f.kind = Kind::Note;
+                f.message = f
+                    .message
+                    .replacen("the target was removed", "the note was removed", 1);
+            }
             let code = match f.kind {
                 Kind::Stale => Code::SummaryStale,
                 Kind::Incomplete => Code::SummaryIncomplete,
@@ -164,7 +185,18 @@ fn rollup_diags(config: &Config, c: &Corpus, base: Option<&Corpus>) -> Vec<Diag>
                 Kind::Note => Code::SummaryNoteChanged,
                 Kind::RestsOnNothing => Code::SummaryRestsOnNothing,
             };
-            diag(&c.docs[i as usize], f.line, code, f.target, f.message)
+            // With the key `rolls-up`, the message ends with the source layers,
+            // and the fix of the code names them (design 0.8.1, D84).
+            let message = if keyed
+                && matches!(
+                    code,
+                    Code::SummaryIncomplete | Code::PinInvalid | Code::SummaryNoArea
+                ) {
+                format!("{} {}{})", f.message, crate::diag::ROLLUP_KEY_MARK, sources)
+            } else {
+                f.message
+            };
+            diag(&c.docs[i as usize], f.line, code, f.target, message)
         })
         .collect();
     if let Some(base) = base {

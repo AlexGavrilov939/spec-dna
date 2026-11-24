@@ -793,3 +793,27 @@ fn a_move_of_a_decision_inside_one_area_names_no_summary() {
     let text = check_all(&r);
     assert!(!text.contains("SD64"), "{text}");
 }
+
+#[test]
+fn refresh_of_a_summary_with_no_area_names_the_source_folders() {
+    // A project with only decisions and research: the words name its folders.
+    let r = storage_project();
+    r.write("docs/summaries/nope.md", "# Nope\n\nText.\n");
+    let (code, out, err) = r.run(&["refresh", "summaries/nope"]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(
+        err.contains("`decisions`")
+            && err.contains("`research`")
+            && !err.contains("layer `requirements`"),
+        "{err}"
+    );
+    // The words of 0.8.0 stay for the layer `requirements`.
+    let r = project();
+    r.write("docs/summaries/nope.md", "# Nope\n\nText.\n");
+    let (code, out, err) = r.run(&["refresh", "summaries/nope"]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(
+        err.contains("of a folder of the layer `requirements` (SD644)"),
+        "{err}"
+    );
+}

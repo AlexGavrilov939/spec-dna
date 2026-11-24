@@ -1397,3 +1397,180 @@ fn a_system_with_no_pin_that_product_pins_gives_sd646_and_a_system_with_no_field
     assert!(!out.contains("SD646"), "{out}");
     assert_eq!(lines_of(&out, "SD641").len(), 1, "{out}");
 }
+
+// A layer with the types requirements, decision and research, and no key
+// `rolls-up`: the roll-up gives the result of 0.8.0 (design 0.8.1, D84, item 1).
+
+/// The project of one layer `specs` with 3 types, no key, the summary of the
+/// area `storage` and a `system` document. The pins follow the rules of 0.8.0.
+fn specs_project(profile: &str) -> Repo {
+    let r = Repo::with_config(&format!(
+        "profile = \"{profile}\"\n[layers.foundation]\ntypes = [\"product\", \"system\", \"terms\"]\nfiles = [\"product.md\", \"system.md\", \"terms.md\"]\n\n[layers.specs]\ntypes = [\"requirements\", \"decision\", \"research\"]\n\n[layers.summaries]\ntypes = [\"summary\"]\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n"
+    ));
+    r.write(
+        "docs/specs/storage/closing.md",
+        &format!("---\ntype: requirements\n{}", &CLOSING["---\n".len()..]),
+    );
+    r.write(
+        "docs/specs/storage/use-sqlite.md",
+        &USE_SQLITE.replace("---\n", "---\ntype: decision\n"),
+    );
+    r.write(
+        "docs/specs/storage/use-files.md",
+        &USE_SQLITE
+            .replace("---\n", "---\ntype: decision\n")
+            .replace("accepted", "proposed"),
+    );
+    r.write(
+        "docs/specs/storage/write-load.md",
+        &format!("---\ntype: research\n---\n{WRITE_LOAD}"),
+    );
+    r.write(
+        "docs/summaries/storage.md",
+        "---\nrests-on: []\n---\n# Storage\n\nThe valve closes after its sensor stops.\n",
+    );
+    r.write(
+        "docs/system.md",
+        "---\nrests-on: []\n---\n# System\n\n## Overview\n\nValves.\n\n## Constraints\n\n- None.\n",
+    );
+    for id in ["summaries/storage", "system"] {
+        let (code, out, err) = r.run(&["refresh", id, "--holds"]);
+        assert_eq!(code, 0, "{out}{err}");
+    }
+    r
+}
+
+#[test]
+fn a_layer_with_decisions_and_notes_and_no_key_gives_the_roll_up_of_0_8_0() {
+    for profile in ["standard", "strict"] {
+        let r = specs_project(profile);
+        // The pins are the pins of 0.8.0: the requirements of the layer only.
+        let text = r.read("docs/summaries/storage.md");
+        assert!(
+            text.contains("specs/storage/closing#close-on-timeout@"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("use-sqlite") && !text.contains("write-load"),
+            "{text}"
+        );
+        let (_, out) = check_all(&r);
+        assert!(
+            !out.contains("SD642") && !out.contains("SD647") && !out.contains("SD64"),
+            "{profile}: {out}"
+        );
+        assert!(!out.contains("error SD64"), "{profile}: {out}");
+        // `refresh --all` has nothing to do.
+        let (code, out, err) = r.run(&["refresh", "--all", "--dry-run"]);
+        assert_eq!(code, 0, "{out}{err}");
+        assert!(!out.contains("would refresh"), "{out}");
+        // A decision or a note does not make a pin stale.
+        edit(
+            &r,
+            "docs/specs/storage/write-load.md",
+            "200 writes",
+            "400 writes",
+        );
+        r.write(
+            "docs/specs/storage/use-sqlite.md",
+            &format!(
+                "{}\n## Amendments\n\n### 2026-11-24\n\nMore.\n",
+                r.read("docs/specs/storage/use-sqlite.md")
+            ),
+        );
+        let (_, out) = check_all(&r);
+        assert!(!out.contains("SD64"), "{profile}: {out}");
+    }
+}
+
+#[test]
+fn the_fix_texts_of_the_roll_up_are_the_texts_of_0_8_0_with_no_key() {
+    // The text of 0.8.0, byte for byte, for a project with no key.
+    let r = project("standard");
+    r.write("docs/summaries/nope.md", "# Nope\n\nText.\n");
+    r.write(
+        "docs/summaries/valves.md",
+        "---\nrests-on:\n  - requirements/valves/closing#max-angle@0000000000000000\n  - requirements/valves/closing@0000000000000000\n---\n# Valves\n\nText.\n",
+    );
+    let (_, out) = check_all(&r);
+    let fix = |code: &str| {
+        out.lines()
+            .find(|l| l.starts_with(&format!("{code} fix: ")))
+            .unwrap_or_else(|| panic!("no {code} fix: {out}"))
+            .to_string()
+    };
+    assert_eq!(
+        fix("SD642"),
+        "SD642 fix: An item of the frontier of the document has no pin: a new requirement, a requirement that became active, or a new summary of a sub-area. Read the item that the message names. Edit the text of the summary to cover it, then run `spec-dna refresh <id>`. If the text of the summary still holds, run `spec-dna refresh <id> --holds`."
+    );
+    assert_eq!(
+        fix("SD643"),
+        "SD643 fix: Fix the pin. Write `<doc-id>#<key>@<16 hex>` for a requirement, or `<doc-id>@<16 hex>` for a document, with the hash that `spec-dna show` prints. A pin names an item below its document: a summary pins the requirements and the summaries of its area, a `system` document pins the summaries, and a `product` document pins the `system` documents. An alias that names more than one document is ambiguous: use the full id. Put `rests-on` only in a summary, a `system` document or a `product` document. Run `spec-dna refresh <id>` to write the pins again."
+    );
+    assert_eq!(
+        fix("SD644"),
+        "SD644 fix: A summary is the file `<summaries folder>/<area>.md` of an area, and `<requirements folder>/<area>/` must be a folder of the layer `requirements`. Move the summary to the path of an existing area, or delete it. `spec-dna new summary <area>` writes a summary at the right path."
+    );
+}
+
+#[test]
+fn the_fix_texts_name_the_decisions_and_the_notes_only_with_the_key() {
+    let r = note_project("standard", "[\"requirements\", \"decisions\"]");
+    r.write("docs/summaries/nope.md", "# Nope\n\nText.\n");
+    r.write(
+        "docs/summaries/storage.md",
+        "---\nrests-on:\n  - requirements/valves/closing@0000000000000000\n---\n# Storage\n\nText.\n",
+    );
+    let (_, out) = check_all(&r);
+    for code in ["SD642", "SD643", "SD644"] {
+        assert!(out.contains(&format!("{code} fix: ")), "{code}: {out}");
+    }
+    let fix = |code: &str| {
+        out.lines()
+            .find(|l| l.starts_with(&format!("{code} fix: ")))
+            .unwrap()
+            .to_string()
+    };
+    assert!(
+        fix("SD642").contains("accepted decision"),
+        "{}",
+        fix("SD642")
+    );
+    assert!(fix("SD643").contains("`rolls-up`"), "{}", fix("SD643"));
+    assert!(fix("SD644").contains("`rolls-up`"), "{}", fix("SD644"));
+    // The text does not send a person to `show` for the hash of a whole document.
+    assert!(
+        !fix("SD643").contains("`spec-dna show` prints"),
+        "{}",
+        fix("SD643")
+    );
+}
+
+#[test]
+fn a_removed_note_of_a_layer_with_other_types_gives_sd647_when_the_base_has_the_note() {
+    let r = Repo::with_config(
+        "profile = \"standard\"\n[layers.specs]\ntypes = [\"requirements\", \"decision\", \"research\"]\n\n[layers.summaries]\ntypes = [\"summary\"]\nrolls-up = [\"specs\"]\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n",
+    );
+    r.write(
+        "docs/specs/storage/use-sqlite.md",
+        &USE_SQLITE.replace("---\n", "---\ntype: decision\n"),
+    );
+    r.write(
+        "docs/specs/storage/write-load.md",
+        &format!("---\ntype: research\n---\n{WRITE_LOAD}"),
+    );
+    let r = with_storage_summary(r);
+    r.commit("base");
+    std::fs::remove_file(r.dir.join("docs/specs/storage/write-load.md")).unwrap();
+    // With a base, the type of the removed document is known.
+    let (_, out, err) = r.run(&["check"]);
+    let out = format!("{out}{err}");
+    let found = lines_of(&out, "SD647");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].contains("`specs/storage/write-load`") && found[0].contains("removed"),
+        "{}",
+        found[0]
+    );
+    assert!(lines_of(&out, "SD641").is_empty(), "{out}");
+}
