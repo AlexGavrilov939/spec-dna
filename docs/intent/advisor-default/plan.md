@@ -1,5 +1,5 @@
 ---
-status: approved
+status: draft
 ---
 # A new project has no advisor, and the advisor is consulted only in a higher-risk change: plan
 
@@ -30,6 +30,7 @@ status: approved
 - `CHANGELOG.md` The entry of the change.
 - `tests/upgrade_cli.rs` The guard of the lite files of 0.7.1: it allows the one new consult sentence of the model-team line (D98).
 - `scripts/demo-replay.sh` The list of the files that the demo expects after init, with no fallback-advisor file.
+- `docs/glossary.md` The term that says when the main model consults the advisor.
 
 ## Order
 
