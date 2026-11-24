@@ -24,6 +24,10 @@ status: draft
 - `src/split.rs` The title of a split with the shared function.
 - `tests/lifecycle_finished.rs` The tests of SD915.
 - `tests/lifecycle_checks.rs` The tests of SD401 and SD913.
+- `tests/lifecycle_base.rs` The tests of the scope of SD913 that encode the rule of 0.8.0.
+- `tests/harness_skills.rs` The test that pins the text of step 5 of the skill execute.
+- `tests/init_graph.rs` The test that expected SD502 after layer add.
+- `docs/init.md` The line on init after a layer change.
 - `tests/proof_debt.rs` The test of stats on 2 trees.
 - `tests/accept_next.rs` The test of next before the acceptor.
 - `tests/accept_cmd.rs` The tests of the refusal of accept and of a squash commit.
@@ -46,7 +50,7 @@ status: draft
 
 - [x] t1: Make SD915 read the tasks of the newest plan for a change with no delta, with one shared filter of the open tasks and the message that names the open tasks (D87). Files: `src/change.rs`, `src/lifecycle.rs`, `tests/lifecycle_finished.rs`. Verify: `cargo test --test lifecycle_finished`. Hours: 4.
 - [x] t2: Give SD401 the message and the fix of the rework for a spec or a plan that moves from approved to draft (D91). Files: `src/check.rs`, `src/diag.rs`, `tests/lifecycle_checks.rs`. Verify: `cargo test --test lifecycle_checks`. Hours: 2.
-- [ ] t3: Run SD913 only for a change of the diff whose folder the diff touches or that the branch added, with the new message (D92). Files: `src/lifecycle.rs`, `tests/lifecycle_checks.rs`, `docs/diagnostics.md`. Verify: `cargo test --test lifecycle_checks`. Hours: 2.
+- [ ] t3: Run SD913 only for a change of the diff whose folder the diff touches or that the branch added, with the new message (D92). Files: `src/lifecycle.rs`, `tests/lifecycle_checks.rs`, `tests/lifecycle_base.rs`. Verify: `cargo test --test lifecycle_checks --test lifecycle_base`. Hours: 2.
 - [x] t4: Make `stats` bind the reports only when the working tree has the code tree of HEAD, and add the key reports_read (D92). Files: `src/sdlc.rs`, `src/tree.rs`, `tests/proof_debt.rs`. Verify: `cargo test --test proof_debt`. Hours: 3.
 - [x] t5: Make the item review of `next` run the checks of the sections before it names the acceptor (D88). Files: `src/acceptance.rs`, `src/stage.rs`, `tests/accept_next.rs`. Verify: `cargo test --test accept_next`. Hours: 3.
 - [x] t6: Make `accept` refuse an item that is not valid before any write, give SD939 the fix of a repeated id, and diff the fallback of `accept` from the first parent of the commit that added the plan (D88, Q8). Files: `src/accept.rs`, `src/change.rs`, `tests/accept_cmd.rs`. Verify: `cargo test --test accept_cmd` and `cargo test --bin spec-dna change::`. Hours: 4.
