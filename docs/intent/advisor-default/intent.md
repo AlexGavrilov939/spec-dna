@@ -1,5 +1,5 @@
 ---
-status: draft
+status: accepted
 class: higher-risk
 ---
 # A new project has no advisor, and the advisor is consulted only in a higher-risk change
