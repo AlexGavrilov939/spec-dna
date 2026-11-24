@@ -705,6 +705,7 @@ fn after(tree: &Tree, plan: &Plan) -> Result<After, Fatal> {
                     partial,
                     case: None,
                     proof: None,
+                    bind: None,
                 });
             }
         }

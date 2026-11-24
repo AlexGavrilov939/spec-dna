@@ -2373,6 +2373,7 @@ mod tests {
                 partial: false,
                 case: None,
                 proof: None,
+                bind: None,
             })
             .collect();
         let base = corpus(cfg, base_files);

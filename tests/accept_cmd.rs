@@ -393,6 +393,33 @@ fn a_proof_with_a_fresh_report_is_passed_once_and_names_its_case() {
 }
 
 #[test]
+fn a_tag_above_an_import_line_binds_no_case_and_its_proof_is_tagged() {
+    // The tag stands above an import line with the word `it`. The only case
+    // that ends with `it` is `Pumps stops it` of another file, and its
+    // `classname` is a path. The tag stands above no test, so it binds no case.
+    let evidence = "[evidence]\nreports = [\"reports/*\"]\n";
+    let r = built_with(&format!("{}\n{evidence}", config("standard", "")));
+    r.write(
+        TEST,
+        "# covers: requirements/valves#overflow\ndef test_overflow():\n    ...\n\n\n# covers: requirements/valves#sensor-timeout\nfrom valves import it\n",
+    );
+    r.commit("tags");
+    r.write(
+        "reports/junit.xml",
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?><testsuites><testsuite name=\"runner\" errors=\"0\" failures=\"0\" skipped=\"0\" tests=\"2\" time=\"0.1\"><testcase classname=\"tests.test_valves\" name=\"test_overflow\" time=\"0.01\"/><testcase classname=\"tests/test_pumps.py\" name=\"Pumps stops it\" time=\"0.01\"/></testsuite></testsuites>",
+    );
+    let (code, out, err) = r.run(&["evidence", "stamp"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let t = write_record(&r);
+    assert!(
+        t.contains(
+            "requirement = \"requirements/valves#sensor-timeout\"\nstate = \"tagged\"\ncases = []\n"
+        ),
+        "{t}"
+    );
+}
+
+#[test]
 fn a_requirement_in_the_tree_has_its_state_from_the_tree() {
     // The requirement is in the tree already (a change with no delta): its
     // `verified-by` gives the state `verified`.

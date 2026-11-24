@@ -39,6 +39,9 @@ pub struct Cover {
     /// The result of the bind of the tag to a test case of the reports.
     /// `None`: the reports are not read, so the tag counts as in 0.7.1.
     pub proof: Option<Proof>,
+    /// The detail of the bind: the test, the reason for no case, and the
+    /// strength. `None` when `proof` is `None`.
+    pub bind: Option<Bind>,
 }
 
 /// The result of the bind of a tag to the test cases of the reports.
@@ -54,6 +57,56 @@ pub enum Proof {
     Failed(String),
     /// No case of the reports binds to the tag.
     Unbound,
+}
+
+/// Why a tag binds no case (design 0.8.1, D82 item 3). A closed list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reason {
+    /// The tag stands above no test.
+    NoTest,
+    /// The tag stands above a group.
+    Group,
+    /// The test under the tag has a template name.
+    Template,
+    /// No case of the fresh reports names the test, in the file of the tag.
+    NoCase,
+    /// No report is fresh.
+    NoReport,
+}
+
+/// What the tag names: the test under it, or the case that `case:` names.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum By {
+    #[default]
+    Definition,
+    Case,
+}
+
+/// The detail of the bind of one tag (design 0.8.1, D82). The messages of SD616
+/// and SD617 use it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Bind {
+    /// The name of the test under the tag, or the value of `case:`. `None` for a
+    /// tag above no test or above a group.
+    pub test: Option<String>,
+    pub by: By,
+    /// The name of the case that decides the result.
+    pub case: Option<String>,
+    /// The number of bound cases.
+    pub cases: usize,
+    /// The reason for no bound case. `None` with a bound case.
+    pub reason: Option<Reason>,
+    /// The line (from 1) of the first line below the tag that is code and no
+    /// test: the line of the reason `no-test`.
+    pub line: Option<usize>,
+}
+
+impl Bind {
+    /// The bind of a tag with no bound case.
+    fn unbound(mut self, reason: Reason) -> Bind {
+        self.reason = Some(reason);
+        self
+    }
 }
 
 /// The proof state of a requirement, from the best to the worst (design 0.8.0,
@@ -343,15 +396,19 @@ pub fn load(
                 partial: t.partial,
                 case: t.case,
                 proof: None,
+                bind: None,
             });
         }
     }
     Ok(out)
 }
 
-/// The most lines that the block of a tag has, and the most lines that the
-/// search for its start reads.
-const BLOCK_LINES: usize = 20;
+/// The most lines that the scan below a tag reads (design 0.8.1, D82 item 1).
+const SCAN_LINES: usize = 50;
+
+/// The most lines above a tag that the search for the start of its `/* ... */`
+/// comment reads.
+const COMMENT_LINES: usize = 20;
 
 /// The width of the indent of a line: a space is 1, a tab is 4.
 fn indent(line: &str) -> usize {
@@ -384,7 +441,7 @@ fn comment_open(lines: &[&str], tag: usize) -> Option<usize> {
     if !t.starts_with('*') {
         return None;
     }
-    for k in (tag.saturating_sub(BLOCK_LINES)..tag).rev() {
+    for k in (tag.saturating_sub(COMMENT_LINES)..tag).rev() {
         let above = lines[k].trim();
         if above.starts_with("/*") {
             return Some(k);
@@ -396,132 +453,430 @@ fn comment_open(lines: &[&str], tag: usize) -> Option<usize> {
     None
 }
 
-/// The lines of the block of the tag at `lines[tag]`: the first code block
-/// after the tag. The block starts at the first line after the tag that is not
-/// blank and not a comment. It ends before the first later line whose indent
-/// is not deeper than the indent of the start line, after a deeper line. It
-/// also ends before a line with less indent than the tag line, before the next
-/// `covers:` line, and after 20 lines. The tag line of a `/* ... */` comment
-/// that spans lines has no indent of its own: the line that opens the comment
-/// gives it.
-fn block<'a>(lines: &[&'a str], tag: usize) -> Vec<&'a str> {
-    // A tag in the lines of a doc comment (`/**`, ` * covers: ...`, ` */`) has
-    // the indent of the comment lines, and the test below it has the indent of
-    // the line that opens the comment. So the opening line gives the scope of
-    // the tag. A tag in a comment of one line, or in a comment in the body of
-    // a test, keeps the indent of its own line.
-    let tag_indent =
-        comment_open(lines, tag).map_or_else(|| indent(lines[tag]), |k| indent(lines[k]));
-    let mut start = None;
-    for (k, line) in lines.iter().enumerate().skip(tag + 1).take(BLOCK_LINES) {
-        let t = line.trim();
-        if !t.is_empty() && !is_comment(t) {
-            start = Some(k);
-            break;
-        }
-    }
-    let Some(start) = start else {
-        return Vec::new();
-    };
-    let start_indent = indent(lines[start]);
-    if start_indent < tag_indent {
-        return Vec::new();
-    }
-    let mut out = Vec::new();
-    let mut deeper = false;
-    for (n, line) in lines.iter().enumerate().skip(start).take(BLOCK_LINES) {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let ind = indent(line);
-        if n > start && (ind < tag_indent || line.contains(TAG)) {
-            break;
-        }
-        if n > start && deeper && ind <= start_indent {
-            break;
-        }
-        if ind > start_indent {
-            deeper = true;
-        }
-        out.push(*line);
-    }
-    out
+/// The test that a tag stands above, or the reason why it stands above none
+/// (design 0.8.1, D82 items 1 to 3).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Under {
+    /// A test, with the name that a case must name.
+    Test(TestName),
+    /// A test with a template name: one literal gives many names. The data is
+    /// the literal, or empty when the line has none.
+    Template(String),
+    /// A group (`describe`, `class`, `mod`): it binds no test of its own.
+    Group,
+    /// No test. The data is the line (from 1) of the first line that is code
+    /// and no test, or `None` when no code line follows the tag.
+    NoTest(Option<usize>),
 }
 
-/// The words and the string literals of a block, in order. A word is a run of
-/// letters, digits, `_` and `$`. A string literal is a text in `"`, `'` or a
-/// backtick, and it is one item, with no words of its own.
-fn candidates(block: &[&str]) -> Vec<String> {
-    let mut out = Vec::new();
-    for line in block {
-        let chars: Vec<char> = line.chars().collect();
-        let mut i = 0;
-        while i < chars.len() {
-            let c = chars[i];
-            if matches!(c, '"' | '\'' | '`') {
-                let close = chars[i + 1..].iter().position(|x| *x == c);
-                match close {
-                    Some(n) => {
-                        let lit: String = chars[i + 1..i + 1 + n].iter().collect();
-                        if !lit.trim().is_empty() {
-                            out.push(lit);
-                        }
-                        i += n + 2;
+/// The name of a test, and the form that decides how a case names it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TestName {
+    pub name: String,
+    /// True for the form call (`it('<literal>', ...)`): the case name ends with
+    /// the literal. Else the name is one segment of the head of the case name.
+    pub call: bool,
+}
+
+/// The first byte index after the leading identifier of `s`: letters, digits,
+/// `_` and `$`.
+fn ident_end(s: &str) -> usize {
+    s.find(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+        .unwrap_or(s.len())
+}
+
+/// The position after the bracket that closes the one at byte `off` of
+/// `lines[line]`, as (line, byte). The count ignores the text in quotes. It
+/// reads the lines before `end` only.
+fn close_of(lines: &[&str], line: usize, off: usize, end: usize) -> Option<(usize, usize)> {
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut start = off;
+    for (l, text) in lines.iter().enumerate().take(end).skip(line) {
+        let mut chars = text[start..].char_indices();
+        while let Some((i, c)) = chars.next() {
+            if let Some(q) = quote {
+                if c == '\\' {
+                    chars.next();
+                } else if c == q {
+                    quote = None;
+                }
+                continue;
+            }
+            match c {
+                '"' | '\'' | '`' => quote = Some(c),
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        return Some((l, start + i + c.len_utf8()));
                     }
-                    None => i += 1,
                 }
-            } else if c.is_alphanumeric() || c == '_' || c == '$' {
-                let start = i;
-                while i < chars.len()
-                    && (chars[i].is_alphanumeric() || chars[i] == '_' || chars[i] == '$')
-                {
-                    i += 1;
-                }
-                out.push(chars[start..i].iter().collect());
-            } else {
-                i += 1;
+                _ => {}
             }
         }
+        // A quote does not go on in the next line.
+        quote = None;
+        start = 0;
     }
-    out
+    None
 }
 
-/// The name of a case without a final `[...]` or `(...)`.
-fn strip_params(name: &str) -> &str {
-    let t = name.trim_end();
-    for (open, close) in [('[', ']'), ('(', ')')] {
-        if t.ends_with(close)
-            && let Some(i) = t.rfind(open)
-            && i > 0
-        {
-            return t[..i].trim_end();
+/// The end of the item (a decorator, an annotation or an attribute) that starts
+/// at byte `off` of `lines[line]`, as (line, byte). The item is `@<name>` with
+/// an optional group `(...)`, `#[...]`, `#![...]` or `[...]`. It goes on in the
+/// next lines while one of its brackets stays open.
+fn skip_item(lines: &[&str], line: usize, off: usize, end: usize) -> Option<(usize, usize)> {
+    let text = lines[line];
+    let off = off + (text[off..].len() - text[off..].trim_start().len());
+    let s = &text[off..];
+    if let Some(r) = s.strip_prefix('@') {
+        let n = r
+            .find(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '.' | ':')))
+            .unwrap_or(r.len());
+        if n == 0 {
+            return None;
+        }
+        let after = off + 1 + n;
+        if text[after..].starts_with('(') {
+            return close_of(lines, line, after, end);
+        }
+        return Some((line, after));
+    }
+    let open = if s.starts_with("#![") {
+        off + 2
+    } else if s.starts_with("#[") {
+        off + 1
+    } else if s.starts_with('[') {
+        off
+    } else {
+        return None;
+    };
+    close_of(lines, line, open, end)
+}
+
+/// The first line below `from` that holds text after the items of its start.
+struct Def<'a> {
+    /// The index of the line that holds the text.
+    line: usize,
+    /// The index of the first line that is code. Its indent is the indent of the
+    /// definition.
+    first: usize,
+    /// The text of the definition line, after the items.
+    text: &'a str,
+    /// True when an item came before the text.
+    annotated: bool,
+}
+
+/// The definition line at or after `lines[from]`: the first line that is not
+/// blank, not a comment, and not only items (design 0.8.1, D82 item 1). It reads
+/// at most 50 lines. `annotated` says that an item came before `from`.
+fn definition<'a>(lines: &[&'a str], from: usize, mut annotated: bool) -> Option<Def<'a>> {
+    let end = (from + SCAN_LINES).min(lines.len());
+    let mut first = None;
+    let mut i = from;
+    while i < end {
+        let t = lines[i].trim();
+        if t.is_empty() || is_comment(t) {
+            i += 1;
+            continue;
+        }
+        let first = *first.get_or_insert(i);
+        let (mut line, mut off) = (i, 0);
+        while let Some((l, o)) = skip_item(lines, line, off, end) {
+            annotated = true;
+            (line, off) = (l, o);
+        }
+        let text = lines[line][off..].trim();
+        if text.is_empty() {
+            i = line + 1;
+            continue;
+        }
+        return Some(Def {
+            line,
+            first,
+            text,
+            annotated,
+        });
+    }
+    None
+}
+
+/// The words that can stand before the keyword of a definition.
+const MODIFIERS: &[&str] = &[
+    "pub",
+    "public",
+    "private",
+    "protected",
+    "internal",
+    "static",
+    "final",
+    "abstract",
+    "sealed",
+    "open",
+    "partial",
+    "export",
+    "default",
+    "async",
+    "const",
+    "unsafe",
+    "override",
+    "virtual",
+    "extern",
+    "data",
+    "inner",
+    "suspend",
+    "readonly",
+];
+
+/// The text without its leading modifiers.
+fn strip_modifiers(text: &str) -> &str {
+    let mut s = text.trim_start();
+    loop {
+        let n = ident_end(s);
+        if n == 0 || !MODIFIERS.contains(&&s[..n]) {
+            return s;
+        }
+        let rest = &s[n..];
+        if &s[..n] == "pub" && rest.starts_with('(') {
+            match rest.find(')') {
+                Some(c) => s = rest[c + 1..].trim_start(),
+                None => return s,
+            }
+        } else if rest.starts_with(char::is_whitespace) {
+            s = rest.trim_start();
+        } else {
+            return s;
         }
     }
-    t
 }
 
-/// True if the name of a case matches a word or a string of the block. The
-/// name, without a final `[...]` or `(...)`, equals the word, ends with the
-/// word after one of `.` `::` `/` `#` space `>` `›`, or starts with the word and
-/// `/`. The bind uses [`name_keys`], and the tests compare the two.
-#[cfg(test)]
-pub fn name_matches(name: &str, word: &str) -> bool {
-    if word.is_empty() {
-        return false;
+/// A literal in `'`, `"` or a backtick at the start of `s`: its text.
+fn literal(s: &str) -> Option<&str> {
+    let q = s.chars().next().filter(|c| matches!(c, '"' | '\'' | '`'))?;
+    let body = &s[1..];
+    let mut chars = body.char_indices();
+    while let Some((i, c)) = chars.next() {
+        if c == '\\' {
+            chars.next();
+        } else if c == q {
+            return Some(&body[..i]);
+        }
     }
-    let base = strip_params(name);
-    if base == word {
-        return true;
+    None
+}
+
+/// The form call: `it`, `test`, `specify`, `example` or `scenario`, with the
+/// suffixes `.only`, `.skip`, `.todo`, `.concurrent` and `.failing`, then `(` or
+/// a space, then a literal. `rest` starts after the word.
+fn call_form(rest: &str) -> Option<Under> {
+    let mut s = rest;
+    let mut each = false;
+    while let Some(r) = s.strip_prefix('.') {
+        let n = ident_end(r);
+        match &r[..n] {
+            "only" | "skip" | "todo" | "concurrent" | "failing" => {}
+            "each" => each = true,
+            _ => return None,
+        }
+        s = &r[n..];
     }
-    if let Some(prefix) = base.strip_suffix(word)
-        && [".", "::", "/", "#", " ", ">", "\u{203a}"]
-            .iter()
-            .any(|sep| prefix.ends_with(sep))
+    if each {
+        // The table comes first: `(rows)` or a template literal. The name is in
+        // the next group.
+        let table_end = s.strip_prefix('(').and_then(|_| {
+            let one = [s];
+            close_of(&one, 0, 0, 1).map(|(_, o)| o)
+        });
+        let after = match table_end {
+            Some(o) => &s[o..],
+            None => s,
+        };
+        let name = after
+            .trim_start()
+            .strip_prefix('(')
+            .map(str::trim_start)
+            .and_then(literal)
+            .unwrap_or("");
+        return Some(Under::Template(name.to_string()));
+    }
+    let s = match s.strip_prefix('(') {
+        Some(r) => r,
+        None if s.starts_with(char::is_whitespace) => s,
+        None => return None,
+    };
+    let name = literal(s.trim_start())?;
+    if name.trim().is_empty() {
+        return None;
+    }
+    if name.contains(['%', '$']) || name.contains("#{") {
+        return Some(Under::Template(name.to_string()));
+    }
+    Some(Under::Test(TestName {
+        name: name.to_string(),
+        call: true,
+    }))
+}
+
+/// The form method: a word and `(`, where an annotation or an attribute came
+/// before, or where the line has `void`, `fun`, `function` or `def` before the
+/// word. In Kotlin, ``fun `<text>`( `` names the test by its text.
+fn method_form(body: &str, annotated: bool) -> Option<Under> {
+    if let Some(r) = body.strip_prefix("fun ")
+        && let Some(q) = r.trim_start().strip_prefix('`')
     {
-        return true;
+        let (name, after) = q.split_once('`')?;
+        return (after.starts_with('(') && !name.is_empty()).then(|| {
+            Under::Test(TestName {
+                name: name.to_string(),
+                call: false,
+            })
+        });
     }
-    base.strip_prefix(word)
-        .is_some_and(|rest| rest.starts_with('/'))
+    let head = body[..body.find('(')?].trim_end();
+    let name_len = head.len()
+        - head
+            .trim_end_matches(|c: char| c.is_alphanumeric() || c == '_' || c == '$')
+            .len();
+    if name_len == 0 {
+        return None;
+    }
+    let (before, name) = head.split_at(head.len() - name_len);
+    let tokens: Vec<&str> = before.split_whitespace().collect();
+    let marker = tokens
+        .iter()
+        .any(|t| matches!(*t, "void" | "fun" | "function" | "def"));
+    (marker || (annotated && !tokens.is_empty())).then(|| {
+        Under::Test(TestName {
+            name: name.to_string(),
+            call: false,
+        })
+    })
+}
+
+/// The test of a definition line, as the first form of the closed list that
+/// matches (design 0.8.1, D82 items 2 and 3). `None`: the line is no test and
+/// no group.
+fn classify(text: &str, annotated: bool) -> Option<Under> {
+    let body = strip_modifiers(text);
+    let n = ident_end(body);
+    let (word, rest) = body.split_at(n);
+    if matches!(word, "describe" | "context" | "suite") && rest.starts_with(['(', ' ', '.']) {
+        return Some(Under::Group);
+    }
+    if matches!(
+        word,
+        "class" | "object" | "mod" | "impl" | "module" | "namespace"
+    ) && rest.starts_with(' ')
+    {
+        return Some(Under::Group);
+    }
+    let named = |name: &str| {
+        (!name.is_empty()).then(|| {
+            Under::Test(TestName {
+                name: name.to_string(),
+                call: false,
+            })
+        })
+    };
+    match word {
+        "def" if rest.starts_with(' ') => {
+            let r = rest.trim_start();
+            let m = ident_end(r);
+            let next = r[m..].chars().next();
+            if matches!(next, None | Some('(' | ' ')) {
+                return named(&r[..m]);
+            }
+        }
+        "fn" if rest.starts_with(' ') => {
+            let r = rest.trim_start();
+            let m = ident_end(r);
+            if r[m..].starts_with(['(', '<']) {
+                return named(&r[..m]);
+            }
+        }
+        "func" if rest.starts_with(' ') => {
+            let mut r = rest.trim_start();
+            if r.starts_with('(') {
+                let one = [r];
+                let (_, o) = close_of(&one, 0, 0, 1)?;
+                r = r[o..].trim_start();
+            }
+            let m = ident_end(r);
+            if r[m..].starts_with(['(', '[']) {
+                return named(&r[..m]);
+            }
+        }
+        "it" | "test" | "specify" | "example" | "scenario" => {
+            if let Some(u) = call_form(rest) {
+                return Some(u);
+            }
+        }
+        _ => {}
+    }
+    method_form(body, annotated)
+}
+
+/// The text of a line before the tag, without the opening of a comment.
+fn before_tag(prefix: &str) -> &str {
+    let mut s = prefix.trim_end();
+    loop {
+        let cut = ["<!--", "/*", "//", "--", "#", "*"]
+            .iter()
+            .find_map(|c| s.strip_suffix(c));
+        match cut {
+            Some(r) => s = r.trim_end(),
+            None => return s,
+        }
+    }
+}
+
+/// What a tag stands above (design 0.8.1, D82 items 1 to 3): the test on its
+/// own line, before `covers:`, or else the first definition line below it. A
+/// definition line with less indent than the tag ends the scope of the tag, so
+/// a tag in the body of a test stands above no test.
+pub fn under_tag(lines: &[&str], tag: usize) -> Under {
+    let tag_indent =
+        comment_open(lines, tag).map_or_else(|| indent(lines[tag]), |k| indent(lines[k]));
+    let mut annotated = false;
+    if let Some(pos) = lines[tag].find(TAG) {
+        let own = [before_tag(&lines[tag][..pos])];
+        let (mut off, mut any) = (0, false);
+        while let Some((_, o)) = skip_item(&own, 0, off, 1) {
+            (off, any) = (o, true);
+        }
+        annotated = any;
+        let text = own[0][off..].trim();
+        if !text.is_empty() {
+            return classify(text, annotated).unwrap_or(Under::NoTest(Some(tag + 1)));
+        }
+    }
+    match definition(lines, tag + 1, annotated) {
+        None => Under::NoTest(None),
+        Some(d) if indent(lines[d.first]) < tag_indent => Under::NoTest(Some(d.line + 1)),
+        Some(d) => classify(d.text, d.annotated).unwrap_or(Under::NoTest(Some(d.line + 1))),
+    }
+}
+
+/// The tests of a file, each at its definition line. It reads the file once.
+fn tests_of(lines: &[&str]) -> Vec<TestName> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let t = lines[i].trim();
+        if t.is_empty() || is_comment(t) {
+            i += 1;
+            continue;
+        }
+        let Some(d) = definition(lines, i, false) else {
+            break;
+        };
+        if let Some(Under::Test(t)) = classify(d.text, d.annotated) {
+            out.push(t);
+        }
+        i = d.line + 1;
+    }
+    out
 }
 
 /// The dotted path of a file: the path without its extension, with `.` for `/`.
@@ -563,67 +918,78 @@ fn same_file(case_file: &str, path: &str) -> bool {
     case_file == path || ends(case_file, path) || ends(path, case_file)
 }
 
-/// Words that start a test in many languages, and that are no name of a test.
-/// The bind tries them after each string literal and each other word.
-const KEYWORDS: &[&str] = &[
-    "it",
-    "test",
-    "tests",
-    "fn",
-    "def",
-    "func",
-    "fun",
-    "function",
-    "async",
-    "await",
-    "pub",
-    "public",
-    "private",
-    "protected",
-    "static",
-    "final",
-    "void",
-    "class",
-    "describe",
-    "suite",
-    "fact",
-    "theory",
-];
-
-/// True if a candidate is a keyword that starts a test.
-fn is_keyword(word: &str) -> bool {
-    KEYWORDS.iter().any(|k| k.eq_ignore_ascii_case(word))
-}
-
-/// The words that a name can match: the name without a final `[...]` or
-/// `(...)`, each part of it after one of the separators of [`name_matches`], and
-/// each part of it before a `/`. `name_matches(name, word)` is true exactly when
-/// `word` is one of these.
-fn name_keys(name: &str) -> Vec<&str> {
-    const SEPS: [&str; 7] = [".", "::", "/", "#", " ", ">", "\u{203a}"];
-    let base = strip_params(name);
-    let mut keys = vec![base];
-    for sep in SEPS {
-        for (i, _) in base.match_indices(sep) {
-            keys.push(&base[i + sep.len()..]);
+/// The segments of the head of a case name, each with the byte where it ends.
+/// The head is the part before the first `(`, `[`, `/` or space. `::` and `.`
+/// split it (design 0.8.1, D82 item 4).
+fn head_segments(name: &str) -> Vec<(&str, usize)> {
+    let head_end = name.find(['(', '[', '/', ' ']).unwrap_or(name.len());
+    let head = &name[..head_end];
+    let mut out = Vec::new();
+    let (mut start, mut i) = (0, 0);
+    while i < head.len() {
+        if head[i..].starts_with("::") {
+            out.push((&head[start..i], i));
+            i += 2;
+            start = i;
+        } else if head.as_bytes()[i] == b'.' {
+            out.push((&head[start..i], i));
+            i += 1;
+            start = i;
+        } else {
+            i += head[i..].chars().next().map_or(1, char::len_utf8);
         }
     }
-    for (i, _) in base.match_indices('/') {
-        keys.push(&base[..i]);
+    out.push((&head[start..], head.len()));
+    out.retain(|(s, _)| !s.is_empty());
+    out
+}
+
+/// Where the name of the test ends in the name of the case, or `None` when the
+/// case does not name the test (design 0.8.1, D82 item 4). The form call names
+/// the test when the case name equals the literal or ends with it after a space
+/// (` > ` and ` \u{203a} ` end with a space). The other forms name it when it is
+/// one segment of the head.
+fn name_end(case: &str, test: &TestName) -> Option<usize> {
+    if test.call {
+        let by_space = case
+            .strip_suffix(test.name.as_str())
+            .is_some_and(|p| p.ends_with(' '));
+        return (case == test.name || by_space).then_some(case.len());
     }
-    keys.retain(|k| !k.is_empty());
-    keys
+    head_segments(case)
+        .into_iter()
+        .filter(|(s, _)| *s == test.name)
+        .map(|(_, e)| e)
+        .max()
+}
+
+/// True if the case belongs to another test of the file than `ours`: that
+/// test names the case with an end nearer the end of the case name, and on a
+/// tie with a longer name (design 0.8.1, D82 item 5).
+fn belongs_elsewhere(case: &str, ours: &TestName, tests: &[TestName]) -> bool {
+    let Some(end) = name_end(case, ours) else {
+        return false;
+    };
+    let rank = (end, ours.name.len());
+    tests
+        .iter()
+        .filter(|t| t.name != ours.name)
+        .any(|t| name_end(case, t).is_some_and(|e| (e, t.name.len()) > rank))
 }
 
 /// The index of the cases of the reports, for the bind of many tags. It holds,
-/// once for all tags, what a bind needs about a case: the cases by the words
-/// that their names match, and the test files that each `classname` names. The
-/// cost of a bind is then the cost of its words, and not the number of cases
-/// times the number of test files.
+/// once for all tags, what a bind needs about a case: the cases by the names
+/// that they can have, and the test files that each `classname` names. The cost
+/// of a bind is then the cost of its test, and not the number of cases times
+/// the number of test files.
 pub struct Binder<'a> {
     cases: &'a [Case],
-    /// The word of a name, to the cases whose name it matches.
-    by_word: HashMap<&'a str, Vec<usize>>,
+    /// A segment of the head of a name, to the cases that have it.
+    by_segment: HashMap<&'a str, Vec<usize>>,
+    /// A name, and the part of a name after each space, to the cases that have it.
+    by_suffix: HashMap<&'a str, Vec<usize>>,
+    /// A whole name, to the cases that have it.
+    by_name: HashMap<&'a str, Vec<usize>>,
     /// For each case with a `classname` and no file: the keys of the
     /// `classname`, and true if a test file names it.
     class: Vec<Option<(Vec<&'a str>, bool)>>,
@@ -647,16 +1013,28 @@ impl<'a> Binder<'a> {
                 }
             }
         }
-        let mut by_word: HashMap<&str, Vec<usize>> = HashMap::new();
+        let mut by_segment: HashMap<&str, Vec<usize>> = HashMap::new();
+        let mut by_suffix: HashMap<&str, Vec<usize>> = HashMap::new();
+        let mut by_name: HashMap<&str, Vec<usize>> = HashMap::new();
         let mut class = Vec::with_capacity(cases.len());
         let mut file = Vec::with_capacity(cases.len());
         for (i, c) in cases.iter().enumerate() {
-            let mut keys = name_keys(&c.name);
+            let mut keys: Vec<&str> = head_segments(&c.name).into_iter().map(|s| s.0).collect();
             keys.sort_unstable();
             keys.dedup();
             for k in keys {
-                by_word.entry(k).or_default().push(i);
+                by_segment.entry(k).or_default().push(i);
             }
+            let name = c.name.as_str();
+            let mut keys = vec![name];
+            keys.extend(name.match_indices(' ').map(|(p, _)| &name[p + 1..]));
+            keys.retain(|k| !k.is_empty());
+            keys.sort_unstable();
+            keys.dedup();
+            for k in keys {
+                by_suffix.entry(k).or_default().push(i);
+            }
+            by_name.entry(name).or_default().push(i);
             file.push(c.file.as_ref().map(|f| {
                 let f = f.replace('\\', "/");
                 f.trim_start_matches("./").to_string()
@@ -672,7 +1050,9 @@ impl<'a> Binder<'a> {
         }
         Binder {
             cases,
-            by_word,
+            by_segment,
+            by_suffix,
+            by_name,
             class,
             file,
         }
@@ -694,48 +1074,82 @@ impl<'a> Binder<'a> {
         }
     }
 
-    /// The cases that a word names and that fit the test file.
-    fn named(&self, word: &str, path: &str, dotted_path: &str) -> Vec<&'a Case> {
-        self.by_word.get(word).map_or_else(Vec::new, |v| {
-            v.iter()
-                .filter(|i| self.fits(**i, path, dotted_path))
-                .map(|i| &self.cases[*i])
-                .collect()
-        })
+    /// The cases whose name the test has, by the name forms of the design.
+    fn named_by(&self, test: &TestName) -> Vec<usize> {
+        let index = if test.call {
+            &self.by_suffix
+        } else {
+            &self.by_segment
+        };
+        index.get(test.name.as_str()).cloned().unwrap_or_default()
     }
 
     /// Binds one tag to the cases of the reports. `lines` are the lines of the
     /// test file, and `tag` is the index of the line of the tag. With `case`,
-    /// the tag binds to the cases that this name gives. Else it binds to the
-    /// first string literal or word of the block of the tag that names a case.
-    /// A keyword like `it` or `def` is tried after all other candidates.
-    pub fn bind(&self, path: &str, lines: &[&str], tag: usize, case: Option<&str>) -> Proof {
+    /// the tag binds to the cases that have this name. Else it binds to the test
+    /// under it (design 0.8.1, D82): the cases that name that test, and no case
+    /// that belongs to another test of the file. It also gives the bind: the
+    /// test, the number of cases and the reason for no case.
+    pub fn bind(
+        &self,
+        path: &str,
+        lines: &[&str],
+        tag: usize,
+        case: Option<&str>,
+    ) -> (Proof, Bind) {
         let d = dotted(path);
-        let bound: Vec<&Case> = match case {
-            Some(name) => self.named(name, path, &d),
-            None if tag < lines.len() => {
-                let words = candidates(&block(lines, tag));
-                let (keywords, others): (Vec<String>, Vec<String>) =
-                    words.into_iter().partition(|w| is_keyword(w));
-                let mut found = Vec::new();
-                for word in others.iter().chain(keywords.iter()) {
-                    let hit = self.named(word, path, &d);
-                    if !hit.is_empty() {
-                        found = hit;
-                        break;
+        let mut bind = Bind::default();
+        let mut cand: Vec<usize>;
+        let mut ours: Option<TestName> = None;
+        match case {
+            Some(name) => {
+                bind.by = By::Case;
+                bind.test = Some(name.to_string());
+                cand = self.by_name.get(name).cloned().unwrap_or_default();
+            }
+            None => {
+                let under = if tag < lines.len() {
+                    under_tag(lines, tag)
+                } else {
+                    Under::NoTest(None)
+                };
+                match under {
+                    Under::NoTest(line) => {
+                        bind.line = line;
+                        return (Proof::Unbound, bind.unbound(Reason::NoTest));
+                    }
+                    Under::Group => return (Proof::Unbound, bind.unbound(Reason::Group)),
+                    Under::Template(name) => {
+                        bind.test = (!name.is_empty()).then_some(name);
+                        return (Proof::Unbound, bind.unbound(Reason::Template));
+                    }
+                    Under::Test(t) => {
+                        bind.test = Some(t.name.clone());
+                        cand = self.named_by(&t);
+                        ours = Some(t);
                     }
                 }
-                found
             }
-            None => Vec::new(),
-        };
+        }
+        if let Some(t) = &ours
+            && !cand.is_empty()
+        {
+            let tests = tests_of(lines);
+            cand.retain(|&i| !belongs_elsewhere(&self.cases[i].name, t, &tests));
+        }
+        let bound: Vec<&Case> = cand
+            .into_iter()
+            .filter(|&i| self.fits(i, path, &d))
+            .map(|i| &self.cases[i])
+            .collect();
+        bind.cases = bound.len();
         let named = |o: Outcome| {
             bound
                 .iter()
                 .find(|c| c.outcome == o)
                 .map(|c| c.name.clone())
         };
-        if let Some(n) = named(Outcome::Fail) {
+        let proof = if let Some(n) = named(Outcome::Fail) {
             Proof::Failed(n)
         } else if let Some(n) = named(Outcome::Pass) {
             let (name, runs) = least_passes(&bound).unwrap_or((n, 0));
@@ -743,8 +1157,13 @@ impl<'a> Binder<'a> {
         } else if let Some(n) = named(Outcome::Skip) {
             Proof::Skipped(n)
         } else {
-            Proof::Unbound
-        }
+            return (Proof::Unbound, bind.unbound(Reason::NoCase));
+        };
+        bind.case = match &proof {
+            Proof::Passed(n, _) | Proof::Skipped(n) | Proof::Failed(n) => Some(n.clone()),
+            Proof::Unbound => None,
+        };
+        (proof, bind)
     }
 }
 
@@ -786,6 +1205,15 @@ pub fn bind_covers(root: &std::path::Path, covers: &mut [Cover], reads: &Reads) 
     if reads.fresh == 0 {
         for cv in covers.iter_mut().filter(|c| !c.partial) {
             cv.proof = Some(Proof::Unbound);
+            cv.bind = Some(Bind {
+                by: if cv.case.is_some() {
+                    By::Case
+                } else {
+                    By::Definition
+                },
+                test: cv.case.clone(),
+                ..Bind::default().unbound(Reason::NoReport)
+            });
         }
         return;
     }
@@ -801,12 +1229,43 @@ pub fn bind_covers(root: &std::path::Path, covers: &mut [Cover], reads: &Reads) 
             .as_deref()
             .map(|t| t.lines().collect())
             .unwrap_or_default();
-        cv.proof = Some(binder.bind(
+        let (proof, bind) = binder.bind(
             &cv.path,
             &lines,
             (cv.line as usize).saturating_sub(1),
             cv.case.as_deref(),
-        ));
+        );
+        cv.proof = Some(proof);
+        cv.bind = Some(bind);
+    }
+}
+
+/// The text of the reason why a tag binds no case (design 0.8.1, D82, "Formats").
+/// `at` is `<path>:<line>` of the tag.
+fn unbound_text(at: &str, bind: &Bind) -> String {
+    let name = bind.test.as_deref().unwrap_or("");
+    match bind.reason {
+        Some(Reason::NoTest) => {
+            let place = match bind.line {
+                Some(n) => format!("line {n} is not a test"),
+                None => "no code line follows it".to_string(),
+            };
+            format!(
+                "the tag at {at} stands above no test ({place}); put the tag on the line above the test, or add `case:\"<name>\"`"
+            )
+        }
+        Some(Reason::Group) => format!(
+            "the tag at {at} stands above a group, not a test; put the tag above one test, or add `case:\"<name>\"`"
+        ),
+        Some(Reason::Template) => format!(
+            "the test under the tag at {at} has a template name; add `case:\"<name>\"` with one name of the report"
+        ),
+        Some(Reason::NoCase) => format!(
+            "no case of a fresh report names the test `{name}` of the tag at {at} in that file; check the name, or add `case:\"<name>\"`"
+        ),
+        _ => format!(
+            "no case of a fresh report binds to the tag at {at}: a missing, stale or unreadable report has no case (SD613 to SD615), or the tag is not above its test; put the tag above the test, or add `case:<name>` to the tag"
+        ),
     }
 }
 
@@ -822,6 +1281,8 @@ pub struct Evidence {
     /// For each requirement, the full tags with a result of the bind, as
     /// (`<path>:<line>`, result). Empty when the reports are not read.
     pub proofs: HashMap<(u32, usize), Vec<(String, Proof)>>,
+    /// The detail of each bind of `proofs`, in the same order.
+    pub binds: HashMap<(u32, usize), Vec<Bind>>,
 }
 
 impl Evidence {
@@ -849,6 +1310,10 @@ impl Evidence {
                                 .entry((d, r))
                                 .or_default()
                                 .push((at.clone(), p.clone()));
+                            ev.binds
+                                .entry((d, r))
+                                .or_default()
+                                .push(cv.bind.clone().unwrap_or_default());
                         }
                         map.entry((d, r)).or_default().push(at);
                         continue;
@@ -938,9 +1403,13 @@ impl Evidence {
             ));
         }
         let at = &proofs[0].0;
-        Some(format!(
-            "no case of a fresh report binds to the tag at {at}: a missing, stale or unreadable report has no case (SD613 to SD615), or the tag is not above its test; put the tag above the test, or add `case:<name>` to the tag"
-        ))
+        let bind = self
+            .binds
+            .get(&(di, r))
+            .and_then(|b| b.first())
+            .cloned()
+            .unwrap_or_default();
+        Some(unbound_text(at, &bind))
     }
 
     /// The reason of the debt of requirement `r`, if the marker `proof-owed` has
@@ -1188,7 +1657,9 @@ mod tests {
         let lines: Vec<&str> = text.lines().collect();
         let tag = lines.iter().position(|l| l.contains("covers:")).unwrap();
         let files: Vec<String> = files.iter().map(|f| f.to_string()).collect();
-        Binder::new(cases, &files).bind(path, &lines, tag, case_name)
+        Binder::new(cases, &files)
+            .bind(path, &lines, tag, case_name)
+            .0
     }
 
     #[test]
@@ -1478,20 +1949,243 @@ mod tests {
         );
     }
 
+    /// The table of the name forms (design 0.8.1, D82 item 4). Each row is the
+    /// text of a test, the name of a case and the result: true when the case
+    /// names the test under the tag.
     #[test]
-    fn a_case_name_matches_a_word_by_the_rule_of_the_design() {
-        assert!(name_matches("closes", "closes"));
-        assert!(name_matches("tests::closes", "closes"));
-        assert!(name_matches("a.b.closes", "closes"));
-        assert!(name_matches("Valves closes", "closes"));
-        assert!(name_matches("Suite > closes", "closes"));
-        assert!(name_matches("Suite \u{203a} closes", "closes"));
-        assert!(name_matches("test_closes[param-1]", "test_closes"));
-        assert!(name_matches("test_closes(int)", "test_closes"));
-        assert!(name_matches("TestTimeout/no_reply", "TestTimeout"));
-        assert!(!name_matches("test_closes_late", "test_closes"));
-        assert!(!name_matches("enclosed", "closed"));
-        assert!(!name_matches("x", ""));
+    fn the_name_forms_table_names_each_test_and_not_its_neighbor() {
+        let def = |n: &str| format!("# covers: a#b\ndef {n}():\n    pass\n");
+        let func = |n: &str| format!("// covers: a#b\nfunc {n}(t *testing.T) {{\n}}\n");
+        let rust = |n: &str| format!("// covers: a#b\n#[test]\nfn {n}() {{\n}}\n");
+        let java = |n: &str| format!("// covers: a#b\n@Test\nvoid {n}() {{\n}}\n");
+        let call = |n: &str| format!("// covers: a#b\nit('{n}', () => {{\n}});\n");
+        let rows: Vec<(String, &str, bool)> = vec![
+            // Parameters, subtests, module paths, data sets and class paths.
+            (def("test_closes"), "test_closes[1-2]", true),
+            (def("test_closes"), "test_closes", true),
+            (rust("closes"), "tests::closes", true),
+            (rust("closes"), "closes::case_1", true),
+            (func("TestTimeout"), "TestTimeout/no_reply", true),
+            (java("test1"), "test1(String) [1] a", true),
+            (java("testOne"), "testOne with data set #0", true),
+            (java("ClosesOnTimeout"), "ValveTest.ClosesOnTimeout", true),
+            // A name that only starts or ends like the test is not the test.
+            (def("test_x"), "test_x_slow", false),
+            (def("test_x"), "slow_test_x", false),
+            (rust("closes"), "tests::closes_late", false),
+            (rust("closes"), "Valves closes", false),
+            // The form call: the literal, after a space, `>` or `\u{203a}`.
+            (call("closes on timeout"), "closes on timeout", true),
+            (call("closes on timeout"), "Valves closes on timeout", true),
+            (
+                call("closes on timeout"),
+                "Valves > closes on timeout",
+                true,
+            ),
+            (
+                call("closes on timeout"),
+                "Valves \u{203a} closes on timeout",
+                true,
+            ),
+            (call("closes"), "Valves not closes", true),
+            (call("closes on timeout"), "closes on timeouts", false),
+            (call("closes on timeout"), "recloseson timeout", false),
+        ];
+        for (text, name, bound) in rows {
+            let cases = [case(name, None, None, Outcome::Pass)];
+            let got = proof("tests/x_test.src", &text, None, &cases, &[]);
+            let want = if bound {
+                Proof::Passed(name.to_string(), 1)
+            } else {
+                Proof::Unbound
+            };
+            assert_eq!(got, want, "{text:?} / {name}");
+        }
+    }
+
+    fn test_name(name: &str, call: bool) -> TestName {
+        TestName {
+            name: name.to_string(),
+            call,
+        }
+    }
+
+    /// What the first tag of a text stands above.
+    fn under(text: &str) -> Under {
+        let lines: Vec<&str> = text.lines().collect();
+        let tag = lines.iter().position(|l| l.contains("covers:")).unwrap();
+        under_tag(&lines, tag)
+    }
+
+    #[test]
+    fn the_scan_reads_the_test_under_a_tag_in_each_form() {
+        let def = |n: &str| Under::Test(test_name(n, false));
+        let call = |n: &str| Under::Test(test_name(n, true));
+        let rows: Vec<(&str, Under)> = vec![
+            // The form def.
+            ("# covers: a#b\ndef test_x():\n    pass\n", def("test_x")),
+            ("# covers: a#b\nasync def test_x(a):\n", def("test_x")),
+            // A multi-line decorator, and 2 decorators.
+            (
+                "# covers: a#b\n@pytest.mark.parametrize(\n    \"a, b\",\n    [(1, 2)],\n)\n@pytest.mark.slow\ndef test_x(a, b):\n",
+                def("test_x"),
+            ),
+            // The form fn, with attributes and modifiers.
+            (
+                "// covers: a#b\n#[test]\n#[should_panic(expected = \"x\")]\npub(crate) async fn closes() {\n",
+                def("closes"),
+            ),
+            // The form func, with a receiver.
+            (
+                "// covers: a#b\nfunc TestTimeout(t *testing.T) {\n",
+                def("TestTimeout"),
+            ),
+            (
+                "// covers: a#b\nfunc (s *Suite) TestTimeout() {\n",
+                def("TestTimeout"),
+            ),
+            // The form call, with its suffixes.
+            ("// covers: a#b\nit('closes', () => {\n", call("closes")),
+            (
+                "// covers: a#b\ntest.only(\"closes on timeout\", async () => {\n",
+                call("closes on timeout"),
+            ),
+            ("# covers: a#b\nit \"closes\" do\n", call("closes")),
+            (
+                "// covers: a#b\nit.skip(`closes`, () => {\n",
+                call("closes"),
+            ),
+            // The form method.
+            (
+                "// covers: a#b\n@Test\n@DisplayName(\"closes\")\nvoid flushesFirst() {\n",
+                def("flushesFirst"),
+            ),
+            ("// covers: a#b\n@Test fun closes() {\n", def("closes")),
+            (
+                "// covers: a#b\n@Test fun `closes on timeout`() {\n",
+                def("closes on timeout"),
+            ),
+            (
+                "// covers: a#b\n[Fact] public void ClosesOnTimeout()\n",
+                def("ClosesOnTimeout"),
+            ),
+            (
+                "// covers: a#b\n[Theory]\n[InlineData(1)]\npublic async Task Closes(int a)\n",
+                def("Closes"),
+            ),
+            (
+                "// covers: a#b\npublic function testClosesOnTimeout()\n",
+                def("testClosesOnTimeout"),
+            ),
+            // A definition on the line of the tag, before the text.
+            ("def test_x():  # covers: a#b\n    pass\n", def("test_x")),
+            ("@Test fun closes() { // covers: a#b\n}\n", def("closes")),
+            // A comment or blank lines between the tag and the test.
+            (
+                "# covers: a#b\n# more text\n\n# covers: c#d\ndef test_x():\n",
+                def("test_x"),
+            ),
+            (
+                "/**\n * covers: a#b\n */\n@Test\nvoid closes() {\n",
+                def("closes"),
+            ),
+            // A group.
+            ("// covers: a#b\ndescribe('Valves', () => {\n", Under::Group),
+            ("# covers: a#b\nclass TestValves:\n", Under::Group),
+            ("// covers: a#b\nmod tests {\n", Under::Group),
+            ("// covers: a#b\npublic class ValveTest {\n", Under::Group),
+            ("# covers: a#b\ncontext \"valves\" do\n", Under::Group),
+            // A template.
+            (
+                "// covers: a#b\nit.each(rows)('closes %s', (r) => {\n",
+                Under::Template("closes %s".into()),
+            ),
+            (
+                "// covers: a#b\ntest.each`\n",
+                Under::Template(String::new()),
+            ),
+            (
+                "// covers: a#b\nit('closes ${name}', () => {\n",
+                Under::Template("closes ${name}".into()),
+            ),
+            (
+                "# covers: a#b\nit \"closes #{name}\" do\n",
+                Under::Template("closes #{name}".into()),
+            ),
+            // No test.
+            (
+                "// covers: a#b\nimport { describe, it } from 'vitest'\n",
+                Under::NoTest(Some(2)),
+            ),
+            ("# covers: a#b\nx = 1\n", Under::NoTest(Some(2))),
+            ("# covers: a#b\n", Under::NoTest(None)),
+            (
+                "def test_a():\n    # covers: a#b\n    assert True\n\ndef test_b():\n",
+                Under::NoTest(Some(3)),
+            ),
+            // The body of a test, then a test with less indent.
+            (
+                "def test_a():\n    # covers: a#b\n\ndef test_b():\n",
+                Under::NoTest(Some(4)),
+            ),
+            ("# covers: a#b\n@Test\n", Under::NoTest(None)),
+        ];
+        for (text, want) in rows {
+            assert_eq!(under(text), want, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn the_scan_reads_at_most_50_lines() {
+        let far = format!("# covers: a#b\n{}def test_x():\n", "# text\n".repeat(60));
+        assert_eq!(under(&far), Under::NoTest(None));
+        let near = format!("# covers: a#b\n{}def test_x():\n", "# text\n".repeat(40));
+        assert_eq!(under(&near), Under::Test(test_name("test_x", false)));
+    }
+
+    #[test]
+    fn the_tests_of_a_file_are_the_definition_lines() {
+        let text = "import it\n\ndescribe('Valves', () => {\n  it('closes', () => {\n    expect(1);\n  });\n\n  it('never closes', () => {\n  });\n});\n";
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(
+            tests_of(&lines),
+            [test_name("closes", true), test_name("never closes", true)]
+        );
+    }
+
+    #[test]
+    fn the_end_of_a_name_in_a_case_depends_on_the_form_of_the_test() {
+        let call = test_name("closes", true);
+        let def = test_name("closes", false);
+        // The form call: the whole name, or the end of it after a space.
+        assert_eq!(name_end("closes", &call), Some(6));
+        assert_eq!(name_end("Valves > closes", &call), Some(15));
+        assert_eq!(name_end("Valves \u{203a} closes", &call), Some(17));
+        assert_eq!(name_end("Valves reopens", &call), None);
+        assert_eq!(name_end("Valves closes now", &call), None);
+        // The other forms: a segment of the head. The end is the end of the
+        // segment.
+        assert_eq!(name_end("closes", &def), Some(6));
+        assert_eq!(name_end("tests::closes", &def), Some(13));
+        assert_eq!(name_end("closes::case_1", &def), Some(6));
+        assert_eq!(name_end("closes[1-2]", &def), Some(6));
+        assert_eq!(name_end("closes/no_reply", &def), Some(6));
+        assert_eq!(name_end("closes(int) [1] a", &def), Some(6));
+        assert_eq!(name_end("Valves closes", &def), None);
+        assert_eq!(name_end("closes_late", &def), None);
+    }
+
+    #[test]
+    fn a_case_belongs_to_the_test_whose_name_ends_nearer_its_end() {
+        let tests = [test_name("closes", true), test_name("never closes", true)];
+        // A tie goes to the longer name.
+        assert!(belongs_elsewhere("Valves never closes", &tests[0], &tests));
+        assert!(!belongs_elsewhere("Valves never closes", &tests[1], &tests));
+        assert!(!belongs_elsewhere("Valves closes", &tests[0], &tests));
+        // A name that ends nearer the end wins over a longer name.
+        let rows = [test_name("closes", false), test_name("case_1", false)];
+        assert!(belongs_elsewhere("closes::case_1", &rows[0], &rows));
+        assert!(!belongs_elsewhere("closes::case_1", &rows[1], &rows));
     }
 
     #[test]
@@ -1550,7 +2244,7 @@ mod tests {
     }
 
     #[test]
-    fn a_string_literal_binds_before_a_keyword_like_word() {
+    fn the_literal_of_the_test_binds_and_a_keyword_of_the_line_does_not() {
         let text = "// covers: requirements/valves#flush\nit('closes on timeout', () => {\n  expect(1).toBe(1);\n});\n";
         let cases = [
             case("Widget renders it", None, None, Outcome::Pass),
@@ -1560,13 +2254,13 @@ mod tests {
             proof("tests/valves.test.js", text, None, &cases, &[]),
             Proof::Failed("closes on timeout".into())
         );
-        // A keyword still binds when no other candidate does.
+        // The word `it` is the keyword of the test, not its name.
         let cases = [case("Widget renders it", None, None, Outcome::Pass)];
         assert_eq!(
             proof("tests/valves.test.js", text, None, &cases, &[]),
-            Proof::Passed("Widget renders it".into(), 1)
+            Proof::Unbound
         );
-        // An identifier comes before `def`, `fn` and `func`.
+        // The name of the function binds, and `func` does not.
         let go = "// covers: requirements/valves#flush\nfunc TestTimeout(t *testing.T) {\n}\n";
         let cases = [
             case("func", None, None, Outcome::Pass),
@@ -1596,44 +2290,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_keys_of_a_name_are_the_words_that_name_matches() {
-        for name in [
-            "closes",
-            "tests::closes",
-            "a.b.closes",
-            "Valves closes on timeout",
-            "Suite \u{203a} closes[1]",
-            "TestTimeout/no_reply",
-            "A#b(int)",
-            "x/",
-        ] {
-            let keys = name_keys(name);
-            for word in [
-                "closes",
-                "closes on timeout",
-                "on timeout",
-                "timeout",
-                "b",
-                "Suite",
-                "TestTimeout",
-                "no_reply",
-                "tests",
-                "a",
-                "x",
-                "Valves",
-                "int",
-                "closes[1]",
-            ] {
-                assert_eq!(
-                    keys.contains(&word),
-                    name_matches(name, word),
-                    "{name} / {word}"
-                );
-            }
-        }
-    }
-
     /// A temporary folder with `n` pytest files, each with one tag above a
     /// test, and the cases of a pytest report for them.
     fn scale(n: usize) -> (std::path::PathBuf, Vec<Cover>, Reads) {
@@ -1656,6 +2312,7 @@ mod tests {
                 partial: false,
                 case: None,
                 proof: None,
+                bind: None,
             });
             for name in ["a", "b"] {
                 cases.push(case(
@@ -1721,6 +2378,7 @@ mod tests {
             partial,
             case: None,
             proof: None,
+            bind: None,
         };
         let mut covers = [mk(false), mk(true)];
         bind_covers(

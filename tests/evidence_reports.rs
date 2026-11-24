@@ -328,10 +328,12 @@ fn a_tag_with_no_case_in_the_report_is_not_bound_and_the_message_names_case() {
     let found = lines(&out, "SD617");
     assert_eq!(found.len(), 1, "{out}");
     assert!(
-        found[0].contains("binds to the tag at tests/test_valves.py:1"),
+        found[0].contains(
+            "names the test `test_closes_on_timeout` of the tag at tests/test_valves.py:1"
+        ),
         "{out}"
     );
-    assert!(found[0].contains("case:<name>"), "{out}");
+    assert!(found[0].contains("case:\"<name>\""), "{out}");
     assert_eq!(code, 1, "{out}");
 }
 
@@ -1636,14 +1638,14 @@ fn a_requirement_with_no_pass_gives_sd620_when_sd617_is_off() {
 
 #[test]
 fn the_message_of_sd620_names_the_case_with_the_fewest_passes() {
-    // `test_a` passed in 3 reports and `test_b` in 2: both bind to the tag by
-    // `case:` with the same word, and the case with 2 passes is named.
+    // `test_x[1]` passed in 3 reports and `test_x[2]` in 2: both bind to the
+    // tag above `test_x`, and the case with 2 passes is named.
     let r = pr_class_in(
         "higher-risk",
         &config_with("strict", "", &reliable(3, "all")),
         &[(
             "tests/test_valves.py",
-            "# covers: requirements/valves#flush case:test_x\ndef test_x():\n    assert True\n",
+            "# covers: requirements/valves#flush\ndef test_x():\n    assert True\n",
         )],
     );
     for (i, names) in [
@@ -1761,4 +1763,187 @@ fn finish_names_both_causes_when_sd617_and_sd620_stop_it() {
     assert_eq!(code, 1, "{out}{err}");
     assert!(out.contains("SD617") && out.contains("SD620"), "{out}");
     assert!(err.contains("SD617") && err.contains("SD620"), "{err}");
+}
+
+// The test under the tag (design 0.8.1, D82 items 1 to 5)
+
+/// One `strict` check of one tagged test file with one report. The report
+/// holds `cases` as (classname, name, child). Returns the exit code and the
+/// output.
+fn bind_check(path: &str, test: &str, cases: &[(&str, &str, &str)]) -> (i32, String) {
+    let r = pr("strict", REPORTS, &[(path, test)]);
+    r.write("reports/r.xml", &junit("runner", cases));
+    stamp(&r);
+    check(&r, &[])
+}
+
+/// The tag of the examples, as a line comment of JavaScript and Rust.
+const SLASH_TAG: &str = "// covers: requirements/valves#flush\n";
+
+#[test]
+fn a_tag_above_an_import_line_binds_no_case_of_another_file() {
+    // The defect (E22): the line below the tag is an import with the word
+    // `it`, and the only passed case is `Pumps > stops it` of another file.
+    let valves = format!(
+        "{SLASH_TAG}import {{ describe, it, expect }} from 'vitest'\n\ndescribe('Valves', () => {{\n  it('closes on timeout', () => {{\n    expect(1).toBe(1);\n  }});\n}});\n"
+    );
+    let (code, out) = bind_check(
+        "tests/valves.test.ts",
+        &valves,
+        &[("tests/pumps.test.ts", "Pumps > stops it", "")],
+    );
+    let found = lines(&out, "SD617");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(found[0].contains("stands above no test"), "{out}");
+    assert!(found[0].contains("tests/valves.test.ts:1"), "{out}");
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn a_tag_above_a_group_binds_no_test_of_the_group() {
+    let text = format!(
+        "{SLASH_TAG}describe('Valves', () => {{\n  it('closes on timeout', () => {{\n    expect(1).toBe(1);\n  }});\n}});\n"
+    );
+    let (code, out) = bind_check(
+        "tests/valves.test.ts",
+        &text,
+        &[("tests/valves.test.ts", "Valves > closes on timeout", "")],
+    );
+    let found = lines(&out, "SD617");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(found[0].contains("stands above a group"), "{out}");
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn a_tag_above_a_test_with_a_template_name_binds_no_case() {
+    let text = format!(
+        "{SLASH_TAG}it.each(rows)('closes %s', (row) => {{\n  expect(row).toBe(1);\n}});\n"
+    );
+    let (code, out) = bind_check(
+        "tests/valves.test.ts",
+        &text,
+        &[("tests/valves.test.ts", "closes a", "")],
+    );
+    let found = lines(&out, "SD617");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(found[0].contains("has a template name"), "{out}");
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn a_case_that_names_2_tests_belongs_to_the_test_with_the_nearer_name() {
+    // The case `Valves > never closes` ends with both names. It belongs to
+    // `never closes`, so the tag above `closes` has no case.
+    let text = format!(
+        "describe('Valves', () => {{\n  {SLASH_TAG}  it('closes', () => {{\n    expect(1).toBe(1);\n  }});\n\n  it('never closes', () => {{\n    expect(1).toBe(1);\n  }});\n}});\n"
+    );
+    let (code, out) = bind_check(
+        "tests/valves.test.ts",
+        &text,
+        &[("tests/valves.test.ts", "Valves > never closes", "")],
+    );
+    let found = lines(&out, "SD617");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(found[0].contains("names the test `closes`"), "{out}");
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn a_tag_in_the_body_of_a_test_stands_above_no_test() {
+    let text = "def test_a():\n    # covers: requirements/valves#flush\n    assert True\n\n\ndef test_b():\n    assert True\n";
+    let (code, out) = bind_check(
+        "tests/test_valves.py",
+        text,
+        &[
+            ("tests.test_valves", "test_a", ""),
+            ("tests.test_valves", "test_b", ""),
+        ],
+    );
+    let found = lines(&out, "SD617");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(found[0].contains("stands above no test"), "{out}");
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn a_tag_above_a_multi_line_decorator_binds_the_test_below_it() {
+    // The 0.8.0 block ends at the line `)`, before the definition.
+    let text = "# covers: requirements/valves#flush\n@pytest.mark.parametrize(\n    \"a, b\",\n    [(1, 2), (3, 4)],\n)\ndef test_x(a, b):\n    assert a < b\n";
+    let case = |child| [("tests.test_valves", "test_x[1-2]", child)];
+    let (code, out) = bind_check("tests/test_valves.py", text, &case(""));
+    assert!(!has(&out, "SD617"), "{out}");
+    assert_eq!(code, 0, "{out}");
+    let (code, out) = bind_check("tests/test_valves.py", text, &case(SKIPPED));
+    let found = lines(&out, "SD617");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(found[0].contains("`test_x[1-2]` was skipped"), "{out}");
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn a_tag_on_the_line_of_the_definition_binds_that_test() {
+    // The 0.8.0 block starts at the line below the tag.
+    let text = "def test_x():  # covers: requirements/valves#flush\n    assert True\n\n\ndef test_y():\n    assert True\n";
+    let case = |child| [("tests.test_valves", "test_x", child)];
+    let (code, out) = bind_check("tests/test_valves.py", text, &case(""));
+    assert!(!has(&out, "SD617"), "{out}");
+    assert_eq!(code, 0, "{out}");
+    let (code, out) = bind_check("tests/test_valves.py", text, &case(SKIPPED));
+    let found = lines(&out, "SD617");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(found[0].contains("`test_x` was skipped"), "{out}");
+    assert_eq!(code, 1, "{out}");
+}
+
+/// Guard: each layout binds to its case, and a skipped case names itself.
+#[test]
+fn a_tag_binds_the_test_under_its_attributes_and_annotations() {
+    let layouts: [(&str, &str, &str, &str); 5] = [
+        // Rust attributes.
+        (
+            "tests/valves.rs",
+            "// covers: requirements/valves#flush\n#[test]\n#[should_panic(expected = \"x\")]\nfn closes() {\n    panic!(\"x\");\n}\n",
+            "app::valves",
+            "closes",
+        ),
+        // Java annotations.
+        (
+            "src/test/java/com/example/ValveTest.java",
+            "class ValveTest {\n    // covers: requirements/valves#flush\n    @Test\n    @DisplayName(\"closes\")\n    void flushesFirst() {\n        assertTrue(true);\n    }\n}\n",
+            "com.example.ValveTest",
+            "flushesFirst",
+        ),
+        // Kotlin: the annotation and the function on one line.
+        (
+            "src/test/kotlin/com/example/ValveTest.kt",
+            "class ValveTest {\n    // covers: requirements/valves#flush\n    @Test fun closes() {\n        assertTrue(true)\n    }\n}\n",
+            "com.example.ValveTest",
+            "closes",
+        ),
+        // C#: the attribute and the method on one line.
+        (
+            "Tests/ValveTest.cs",
+            "public class ValveTest {\n    // covers: requirements/valves#flush\n    [Fact] public void ClosesOnTimeout() {\n    }\n}\n",
+            "Tests.ValveTest",
+            "ClosesOnTimeout",
+        ),
+        // A Go test with a comment line between the tag and the function.
+        (
+            "valves/sensor_test.go",
+            "package valves\n\n// covers: requirements/valves#flush\n// More text.\nfunc TestTimeout(t *testing.T) {\n}\n",
+            "example.org/valves",
+            "TestTimeout",
+        ),
+    ];
+    for (path, text, classname, name) in layouts {
+        let (code, out) = bind_check(path, text, &[(classname, name, "")]);
+        assert!(!has(&out, "SD617"), "{path}: {out}");
+        assert_eq!(code, 0, "{path}: {out}");
+        let (code, out) = bind_check(path, text, &[(classname, name, SKIPPED)]);
+        let found = lines(&out, "SD617");
+        assert_eq!(found.len(), 1, "{path}: {out}");
+        assert!(found[0].contains("was skipped"), "{path}: {out}");
+        assert_eq!(code, 1, "{path}: {out}");
+    }
 }
