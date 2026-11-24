@@ -62,6 +62,10 @@ Report: the documents that you changed, and the output of `spec-dna check`. Do n
 <!-- spec-dna harness v0.5.0 h:13263900c4a2a0bc -->
 ";
 
+/// The answer of question 13 of a test that reads the files of the advisor. A
+/// new project of `lite` or `standard` has no advisor (D97).
+const ADVISOR: &str = "harness-models = [\"advisor=fable\"]\n";
+
 /// Runs `init` with an answers file and the other arguments. The answers file
 /// is outside the repository.
 fn init_with(r: &Repo, answers: &str, extra: &[&str]) -> (i32, String, String) {
@@ -81,7 +85,7 @@ fn golden(name: &str) -> String {
 
 fn full_repo() -> Repo {
     let r = Repo::new();
-    let (code, out, err) = init_with(&r, "harness = \"full\"\n", &[]);
+    let (code, out, err) = init_with(&r, &format!("harness = \"full\"\n{ADVISOR}"), &[]);
     assert_eq!(code, 0, "{out}{err}");
     r
 }
@@ -96,7 +100,7 @@ fn project_with(harness: &str) -> Repo {
 #[test]
 fn lean_writes_the_verifier_and_no_checker() {
     let r = Repo::new();
-    let (code, out, err) = r.run(&["init", "--non-interactive"]);
+    let (code, out, err) = init_with(&r, ADVISOR, &[]);
     assert_eq!(code, 0, "{out}{err}");
     for f in LEAN_FILES {
         assert!(r.dir.join(f).exists(), "{f}");
@@ -609,7 +613,7 @@ fn lite_writes_the_agent_files_of_0_7_1_at_each_level() {
     ];
     for (level, want) in [("none", &[][..]), ("lean", &LEAN[..]), ("full", &FULL[..])] {
         let r = Repo::new();
-        let answers = format!("profile = \"lite\"\nharness = \"{level}\"\n");
+        let answers = format!("profile = \"lite\"\nharness = \"{level}\"\n{ADVISOR}");
         let (code, out, err) = init_with(&r, &answers, &[]);
         assert_eq!(code, 0, "{level}: {out}{err}");
         for name in FULL {
@@ -638,7 +642,7 @@ fn lite_writes_the_agent_files_of_0_7_1_at_each_level() {
     // The other profiles keep the text of this release.
     for profile in ["standard", "strict"] {
         let r = Repo::new();
-        let answers = format!("profile = \"{profile}\"\nharness = \"full\"\n");
+        let answers = format!("profile = \"{profile}\"\nharness = \"full\"\n{ADVISOR}");
         let (code, out, err) = init_with(&r, &answers, &[]);
         assert_eq!(code, 0, "{profile}: {out}{err}");
         for name in FULL {
