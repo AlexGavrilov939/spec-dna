@@ -124,7 +124,7 @@ The command needs the table `[evals]`. A pin that differs from the version of th
 7. The copy uses the list of git, so it does not copy a file that git ignores. It copies no symbolic link, and a warning names it.
 8. It starts a git repository in the folder. The base commit has the author `spec-dna <eval@spec-dna.invalid>`, the date `2000-01-01T00:00:00Z`, no signature and no hook. If `branch` is set and is not `main`, it switches to a new branch of that name. If `change` is set, it copies the files of that folder over the copy. It makes one commit "spec-dna eval change" on that branch (the same author and date as the base commit, no signature, no hook).
 9. It starts `claude` in the folder, and it reads the `result` events of the output. It takes `total_cost_usd`, `subtype` and `modelUsage` from the last event, and `num_turns` from each event. [A limit of a segment](#a-limit-and-a-run-that-is-not-whole) replaces the subtype. It measures the wall time of the process of `claude`. If the cost is absent, the spend counts `max-budget-usd` for the run. [A run that is not whole](#a-limit-and-a-run-that-is-not-whole) has no cost.
-10. It runs each check with `sh -c` in the folder. The checks also run when `claude` failed. A run passes when `claude` exits with code 0, no segment stopped at a limit and each check passes.
+10. It runs each check with `sh -c` in the folder. The checks also run when `claude` failed. A run passes when `claude` exits with code 0, no segment stopped at a limit, [the stream is not cut](#a-limit-and-a-run-that-is-not-whole) and each check passes.
 11. It deletes the folder, also after an error. It adds the cost to the spend. If the spend is above `max-total-usd` and a run remains, it stops.
 12. An eval passes when its passed runs are at least `min(pass-at, runs)`. The pass rate is the share of the evals that pass, not of the runs. The suite passes when the pass rate is at least `min-pass-rate`.
 
@@ -150,7 +150,9 @@ If a segment of a run has the subtype `error_max_turns` or `error_max_budget_usd
 A run is not whole in these cases:
 
 - A time limit or a signal ended `claude`.
-- Work follows the last `result` event: another event, a JSON object with no end (a cut line) or a line of more than 16 MiB.
+- The stream is cut. After the last `result` event, it has an `assistant` or `user` event (a segment in flight), a JSON object with no end (a cut line) or a line of more than 16 MiB. Another event, such as a `system` event of a hook, does not cut the stream.
+
+A cut run failed, also when `claude` exits with code 0 and each check passes ([ADR 0033](adr/0033-protocol-2-of-the-model-team-measurement.md) scores an error and a limit as 0). Its `subtype` stays that of the last `result` event, so read `passed` for the result of the run.
 
 The last `result` event of such a run does not give the cost of the run. Thus `cost_usd` and `turns` are `null`, and the spend counts `max-budget-usd` for the run. `segments` is the number of `result` events that the runner read. `tokens` and `models` come from the last of them, so they can be lower than the totals of the run. A run that a time limit killed has the subtype `timeout`, also after a limit.
 

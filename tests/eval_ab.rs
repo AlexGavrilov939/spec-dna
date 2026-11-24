@@ -134,7 +134,7 @@ case "$mode" in
     refusedcut)
         # A refusal that reports its cost, and an event after it.
         printf '{"type":"result","subtype":"success","is_error":true,"api_error_status":503,"result":"x","total_cost_usd":0.5}\n'
-        printf '{"type":"system","subtype":"after"}\n'
+        printf '{"type":"assistant","message":{}}\n'
         exit 1 ;;
     limitrefused)
         # A segment that stops at the turn limit, and then a refusal of the API.
@@ -766,9 +766,11 @@ fn a_cut_run_of_ab_and_arms_counts_its_budget() {
     let with = &pair[..pair.find("\"without\":").unwrap()];
     assert!(with.contains("\"cost_usd\":null,"), "{with}");
     assert!(with.contains("\"turns\":null,\"segments\":1,"), "{with}");
-    // The arm counts the budget too, as for a run with no cost.
+    // The cut run failed, and its arm counts the budget too, as for a run
+    // with no cost.
+    assert!(with.contains("\"passed\":false"), "{with}");
     assert!(
-        out.contains("\"with\":{\"runs\":5,\"passes\":5,\"pass_rate\":1,\"cost_usd\":1.4,"),
+        out.contains("\"with\":{\"runs\":5,\"passes\":4,\"pass_rate\":0.8,\"cost_usd\":1.4,"),
         "{out}"
     );
     let fx = Fx::new(&["brainstorm"], &["tdd"], 1);

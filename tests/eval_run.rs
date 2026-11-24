@@ -53,7 +53,7 @@ elif [ "$STUB_SHAPE" = big ]; then
     line="{\"type\":\"assistant\",\"message\":{\"content\":\"$(printf 'x%.0s' $(seq 1 1000))\"}}"
     yes "$line" | head -n 17500
     printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":%s,"num_turns":4}\n' "$STUB_COST"
-elif [ "$STUB_SHAPE" = hung ] || [ "$STUB_SHAPE" = signal ] || [ "$STUB_SHAPE" = cut ] || [ "$STUB_SHAPE" = cutline ] || [ "$STUB_SHAPE" = inflight ] || [ "$STUB_SHAPE" = noise ]; then
+elif [ "$STUB_SHAPE" = hung ] || [ "$STUB_SHAPE" = signal ] || [ "$STUB_SHAPE" = cut ] || [ "$STUB_SHAPE" = cutline ] || [ "$STUB_SHAPE" = inflight ] || [ "$STUB_SHAPE" = inflightuser ] || [ "$STUB_SHAPE" = trailing ] || [ "$STUB_SHAPE" = noise ]; then
     # One finished segment, and then the end that the shape names.
     printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":%s,"num_turns":40}\n' "$STUB_COST"
     case "$STUB_SHAPE" in
@@ -62,6 +62,10 @@ elif [ "$STUB_SHAPE" = hung ] || [ "$STUB_SHAPE" = signal ] || [ "$STUB_SHAPE" =
         cut) printf '{"type":"result","subtype":"succ' ;;
         cutline) printf '{"type":"assistant","message":{"conte\n' ;;
         inflight) printf '{"type":"assistant","message":{}}\n' ;;
+        inflightuser) printf '{"type":"user","message":{}}\n' ;;
+        trailing)
+            printf '{"type":"system","subtype":"hook_response","hook_event":"SessionEnd"}\n'
+            printf '{"type":"stream_event","event":{}}\n' ;;
         noise) printf 'a plain line of a hook\n\n' ;;
     esac
 elif [ "$STUB_SHAPE" = limitfirst ]; then
@@ -475,16 +479,38 @@ fn a_run_killed_at_the_time_limit_counts_its_budget_after_a_finished_segment() {
 }
 
 #[test]
-fn a_cut_stream_counts_the_budget_of_the_run() {
+fn a_cut_stream_counts_the_budget_of_the_run_and_fails_it() {
     // A last line that is cut (with and with no end of line), and a segment in
-    // flight: an event after the last result event. `claude` exits with 0.
-    for shape in ["cut", "cutline", "inflight"] {
+    // flight: an `assistant` or `user` event after the last result event.
+    // `claude` exits with 0 and the check passes, but the run failed.
+    for shape in ["cut", "cutline", "inflight", "inflightuser"] {
         let fx = Fx::with(&[ev("example")]);
         let (code, out, err) =
             fx.run_env(&["--json"], &[("STUB_SHAPE", shape), ("STUB_COST", "0.2")]);
-        assert_eq!(code, 0, "{shape}: {out}{err}");
+        assert_eq!(code, 1, "{shape}: {out}{err}");
+        assert!(out.contains("\"claude_exit\":0,"), "{shape}: {out}");
+        assert!(out.contains("\"passed_runs\":0"), "{shape}: {out}");
+        assert!(
+            out.contains("\"name\":\"notes-done\",\"passed\":true"),
+            "{shape}: {out}"
+        );
         assert_counts_its_budget(&out, shape);
     }
+}
+
+#[test]
+fn a_system_event_after_the_last_result_keeps_the_cost() {
+    // An event that is no message of a segment can follow the last result.
+    let fx = Fx::with(&[ev("example")]);
+    let (code, out, err) = fx.run_env(
+        &["--json"],
+        &[("STUB_SHAPE", "trailing"), ("STUB_COST", "0.2")],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("\"cost_usd\":0.2"), "{out}");
+    assert!(out.contains("\"turns\":40,\"segments\":1,"), "{out}");
+    assert!(out.contains("\"passed_runs\":1"), "{out}");
+    assert!(out.contains("\"spend_usd\":0.2,\"stopped\""), "{out}");
 }
 
 #[test]

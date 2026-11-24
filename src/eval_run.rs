@@ -1071,7 +1071,8 @@ pub(crate) fn one_attempt(
         checks.push((c.name.clone(), ended == Ended::Exited(0)));
     }
     drop(temp);
-    let passed = claude_exit == 0 && !limited && checks.iter().all(|c| c.1);
+    // A cut run failed, also when `claude` exits with 0 (ADR 0033).
+    let passed = claude_exit == 0 && !limited && !cut && checks.iter().all(|c| c.1);
     Ok(RunResult {
         claude_exit,
         subtype,
@@ -1493,10 +1494,11 @@ fn line_kind(line: &[u8]) -> Line {
 struct Stream {
     /// The `result` events, one on each line, and the text.
     out: Vec<u8>,
-    /// True if work followed the last `result` event: another event (a segment
-    /// in flight), an object with no end (a cut line), or a line that the
-    /// reader discarded. The last result then does not give the cost of the
-    /// run.
+    /// True if work followed the last `result` event: a message of a segment
+    /// in flight (an `assistant` or `user` event), an object with no end (a cut
+    /// line), or a line that the reader discarded. The last result then does
+    /// not give the cost of the run, and the run failed. Another event, such as
+    /// a `system` event of a hook, can follow the last result.
     cut: bool,
 }
 
@@ -1529,7 +1531,12 @@ fn read_events(r: impl Read) -> Stream {
         match line_kind(&line) {
             Line::Event(kind) => {
                 let keep = kind == "result" && events + line.len() < MAX_STDOUT as usize;
-                stream.cut = !keep;
+                match kind.as_str() {
+                    // A result that the limit drops is lost, so the run is cut.
+                    "result" => stream.cut = !keep,
+                    "assistant" | "user" => stream.cut = true,
+                    _ => {}
+                }
                 if keep {
                     events += line.len() + 1;
                     // A text that the limit cut has no end of line.
@@ -2277,11 +2284,18 @@ mod tests {
             format!("{RESULT}\n{{\"type\":\"assistant\"}}\n{RESULT}\n"),
             format!("{{\"type\":\"assist\n{RESULT}\n"),
             String::new(),
+            // An event that is no message of a segment cuts nothing.
+            format!("{RESULT}\n{{\"type\":\"system\",\"subtype\":\"init\"}}\n"),
+            format!("{RESULT}\n{{\"type\":\"stream_event\"}}\n{{\"type\":\"new_kind\"}}\n"),
+            "{\"type\":\"system\"}\n".to_string(),
         ] {
             assert!(!cut(whole.clone()), "{whole}");
         }
         for broken in [
-            format!("{RESULT}\n{{\"type\":\"system\",\"subtype\":\"init\"}}\n"),
+            format!("{RESULT}\n{{\"type\":\"assistant\"}}\n"),
+            format!("{RESULT}\n{{\"type\":\"user\"}}\n"),
+            // A later event of another kind does not close the segment.
+            format!("{RESULT}\n{{\"type\":\"assistant\"}}\n{{\"type\":\"system\"}}\n"),
             format!("{RESULT}\n{{\"type\":\"result\",\"total_cos"),
             format!("{RESULT}\n{{\"type\":\"assist\n"),
             format!("{RESULT}\n{{\"type\":\"assist\na plain line\n"),
