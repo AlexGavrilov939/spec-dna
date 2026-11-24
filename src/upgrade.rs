@@ -1343,16 +1343,41 @@ fn output_text(plan: &Plan, files: &[Entry], proof: &Proof, report: &Report, dry
     for n in &report.notes {
         out.push_str(&format!("note: {n}\n"));
     }
+    // The person reads the last line, so it names the count of the items of the
+    // report (D93, item 1).
+    let read = match report.item_count() {
+        0 => String::new(),
+        1 => "; read the 1 item of `report:` above".to_string(),
+        n => format!("; read the {n} items of `report:` above"),
+    };
     out.push_str(&if dry {
-        "spec-dna upgrade: dry run; nothing written\n".to_string()
+        format!("spec-dna upgrade: dry run; nothing written{read}\n")
     } else {
         format!(
-            "spec-dna upgrade: {} path{} changed; nothing is committed\n",
+            "spec-dna upgrade: {} path{} changed; nothing is committed{read}\n",
             add_paths(plan).len(),
             if add_paths(plan).len() == 1 { "" } else { "s" }
         )
     });
     out
+}
+
+impl Report {
+    /// The count of the items that the block `report:` shows: each entry of its
+    /// lists, each warning, each code with errors of `check --all`, and the note
+    /// on `[spec-dna-sha256]`. The lines `changes of behavior` are no item.
+    fn item_count(&self) -> usize {
+        self.proposals.len()
+            + self.no_status.len()
+            + self.locked_cites.len()
+            + self.ended_roles.len()
+            + self.outside_links.len()
+            + self.folder_links.len()
+            + self.edits.len()
+            + self.warnings.len()
+            + self.errors.len()
+            + usize::from(self.sums_added)
+    }
 }
 
 /// The line `next:` after `to commit:`. SD503 does not count `spec-dna.toml`
@@ -1561,6 +1586,24 @@ mod tests {
 
     fn fixtures() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/upgrade")
+    }
+
+    #[test]
+    fn the_items_of_the_report_are_the_entries_the_warnings_the_error_codes_and_the_note() {
+        // A report with no item keeps the last line of 0.8.0 (D93, item 1).
+        assert_eq!(Report::default().item_count(), 0);
+        let r = Report {
+            proposals: vec!["a".into()],
+            ended_roles: vec![("x".into(), "y".into())],
+            outside_links: vec![("a".into(), "b".into()); 7],
+            warnings: vec!["w".into()],
+            errors: vec![("SD502".into(), 3), ("SD101".into(), 1)],
+            sums_added: true,
+            from_old: true,
+            ..Report::default()
+        };
+        // 1 + 1 + 7 + 1 + 2 + 1: the lines of the changes of behavior are no item.
+        assert_eq!(r.item_count(), 13);
     }
 
     fn walk(dir: &Path, rel: &str, out: &mut HashMap<String, Vec<u8>>) {
