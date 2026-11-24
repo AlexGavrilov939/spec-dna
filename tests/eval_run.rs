@@ -441,6 +441,9 @@ fn a_disk_below_the_floor_stops_before_a_run() {
     assert!(out.contains("\"stopped\":\"disk-space\""), "{out}");
     assert!(out.contains("\"pass_rate\":null,\"passed\":false"), "{out}");
     assert!(out.contains("\"results\":[]"), "{out}");
+    // No run spent anything. A sum of no floats must not print `-0`.
+    assert!(out.contains("\"spend_usd\":0,\"stopped\""), "{out}");
+    assert!(!out.contains("\"spend_usd\":-0"), "{out}");
     let tmp = fx.tmp().to_string_lossy().into_owned();
     assert!(
         err.contains(&format!(
@@ -456,6 +459,7 @@ fn a_disk_below_the_floor_stops_before_a_run() {
         "{out}"
     );
     assert!(!out.contains("pass rate"), "{out}");
+    assert!(out.contains("spend 0.00 USD\n"), "{out}");
     assert!(fx.task_calls().is_empty());
     fx.assert_clean();
 }

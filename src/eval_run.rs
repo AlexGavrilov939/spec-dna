@@ -193,7 +193,8 @@ impl Outcome {
     }
 
     fn spend(&self) -> f64 {
-        self.results.iter().map(|r| r.charged).sum()
+        // `sum` of no floats is -0.0, and the output would show `-0`.
+        self.results.iter().fold(0.0, |sum, r| sum + r.charged)
     }
 
     /// An eval passes when its passed runs are at least the pass-at. An eval
@@ -240,7 +241,7 @@ struct Report {
 
 impl Report {
     fn spend(&self) -> f64 {
-        self.outcomes.iter().map(Outcome::spend).sum()
+        self.outcomes.iter().fold(0.0, |sum, o| sum + o.spend())
     }
 
     fn passed_evals(&self) -> usize {

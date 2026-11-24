@@ -2812,6 +2812,43 @@ fn a_disk_below_the_floor_stops_before_the_second_pair_and_resume_goes_on() {
 }
 
 #[test]
+fn a_stop_before_the_first_run_of_ab_and_arms_prints_no_negative_zero() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM[..1]);
+    for json in [false, true] {
+        let mut args = vec!["--max-total-usd", "100"];
+        if json {
+            args.push("--json");
+        }
+        let (code, out, err) = fx.arms("none,lean", &args, &[("STUB_DF_LOW_AFTER", "0")]);
+        assert_eq!(code, 3, "{out}{err}");
+        // A number only: the id `team-01` also has the bytes `-0`.
+        assert!(
+            !out.contains("-0.00") && !out.contains(":-0"),
+            "arms: {out}"
+        );
+        let mut full = vec!["tdd"];
+        full.extend_from_slice(&args);
+        let (code, out, err) = fx.run_env(&full, &[("STUB_DF_LOW_AFTER", "0")]);
+        assert_eq!(code, 3, "{out}{err}");
+        // The text of a skill with no complete pair has no negative number.
+        assert!(!out.contains("-0.00") && !out.contains(":-0"), "ab: {out}");
+    }
+    assert!(fx.calls().is_empty(), "no run started");
+    for name in fx.results() {
+        let text: String = fs::read_to_string(fx.repo.dir.join("evals/results").join(&name))
+            .unwrap()
+            .split_whitespace()
+            .collect();
+        assert!(!text.contains(":-0"), "{name}: {text}");
+        assert!(
+            text.contains("\"stopped\":\"disk-space\""),
+            "{name}: {text}"
+        );
+    }
+}
+
+#[test]
 fn the_free_space_is_read_again_after_a_refusal_of_the_api() {
     let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
     // The first attempt is refused (503), and the disk is low when the retry

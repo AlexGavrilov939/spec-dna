@@ -2390,7 +2390,8 @@ fn arms_text(
     for (i, arm) in meta.arms.iter().enumerate() {
         let sides: Vec<&Side> = runs.iter().filter_map(|r| r.sides[i].as_ref()).collect();
         let passed = sides.iter().filter(|s| s.passed).count();
-        let cost: f64 = sides.iter().map(|s| s.cost.unwrap_or(0.0)).sum();
+        // Not `sum`: of no floats it is -0.0.
+        let cost = sides.iter().fold(0.0, |sum, s| sum + s.cost.unwrap_or(0.0));
         lines.push(format!(
             "{}: {passed} of {} runs passed, {cost:.2} USD",
             arm.name(),
