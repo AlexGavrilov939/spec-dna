@@ -62,9 +62,9 @@ A case names the test when the name of the test is a whole segment of the name o
 - The form call. The name of the test is the literal. A segment that equals it, or the whole case name, is a strong match. A case name that only ends with the literal after a space is a weak match, because jest-junit and RSpec join the titles with a space. A weak match is the expected name when the titles of the groups above the test (`describe`) and the literal, joined with a space, give the whole case name. A case name that has a segment of ` > ` never matches by its last word. Examples: `closes on timeout`, `Valves closes on timeout` (jest-junit, RSpec) and `Valves > closes on timeout` (Vitest). A Kotlin test with a name in backticks has this form, and its name is whole: parentheses and brackets are part of it. The report can add the parameters of the method after it: the cases `closes on timeout()` and `closes on timeout(int) [1] 3` have the name `closes on timeout`. For another language the name is the literal, so `it('flushes')` does not bind the case `flushes (slow)` of a table.
 - A word of the line that is not the name of the test never binds. In particular, the word `it` of an import line binds no case.
 
-A test with a template name (`it.each(rows)('%s opens')`, a name with `${}` or `#{}`, `it_behaves_like`) is a test of the file too, but no tag binds to it. The fixed parts of its name claim the cases that they can give. A table with a name on more than one line claims each weak match of the file.
+No case hides another case. A tag binds each case of the reports that fits its test file and that the name rules above link to the name of the test, and the worst of them decides. These tests have more than one case: a test of one name that the file defines twice, a template with the same literal (`it.each(rows)('closes')`), a group with the title of the test, a Go test with a suite method and a subtest of one name, and the cases of the rows of a table. A shared example (`it_behaves_like`) or a template (`it.each(rows)('%s opens')`) gives cases that end with the name of the test: they are weak matches, so they bind too. Thus the failed or skipped case of the test under the tag is always in the set, and a case of another test never takes its place. RSpec reads `RSpec.describe` as a group, and it joins the title of a group that starts with `#` or `.` to the title before it with no space (`Valve#open closes`).
 
-A case can name 2 tests of the file. Example: `Valves never closes` ends with `closes` and with `never closes`. The case belongs to the test with the stronger match, then to the test whose name ends nearer the end of the case name, and on a tie to the test with the longer name. Thus a tag above `it('closes', ...)` does not bind it, and a tag above `it('opens')` does not bind the case `Valves fast opens` of the template `%s opens`. The expected name of a test is always its own case.
+A case can name 2 tests of the file. Example: `Valves never closes` ends with `closes` and with `never closes`. The case binds to the tag above `it('closes', ...)` as a weak match. If it failed, the requirement is unproven, and SD621 says that the bind is by the end of a name.
 
 ### The file of the case
 
@@ -80,13 +80,13 @@ A case fits the test file of the tag by the first row that applies:
 
 When the row names no test file of the tree, the case fits by its name only. A case with no `file` and no `classname` also fits by its name only (a line of the line format with `-`). A case with a `file` that is not the file of the tag does not fit.
 
-A Rust file is special. A file of `tests/` is a binary of its own, so only the binary id (`<crate>::<name>`) fits it, and the `classname` of the unit tests of the library (the crate) does not. A file of `src/` fits the unit tests of the library by the module path of its name: the case `valves::tests::closes` fits `src/valves.rs`, as a bind by name only.
+A Rust file is special. A file of `tests/` is a binary of its own, so only the binary id (`<crate>::<name>`) fits it. The name is the stem of the file, or the name of its folder when the stem is `main`. A file in a folder of `tests/` (`tests/it/valves.rs`) is a module of the binary of that folder, so it fits the id `<crate>::it` too, and the case name has the module path (`valves::closes`). The `classname` of the unit tests of the library (the crate) fits a file of `tests/` by its name only (SD621), unless the crate has the name of a test file: then it does not fit. A file of `src/` fits the unit tests of the library by the module path of its name: the case `valves::tests::closes` fits `src/valves.rs`, as a bind by name only.
 
-The precedence: when a case fits by `file` or by `classname`, and its name is a strong match, the other cases do not bind the tag. Thus a passed case of an unknown file never hides a skipped case of the file of the tag.
+The precedence: when a case fits by `file` or by `classname`, the cases that fit by their name only do not bind the tag. Thus a passed case of an unknown file never hides a skipped case of the file of the tag. No other rule leaves a case out of the set: a case with a strong name never hides a case with a weak name.
 
 ### Shared cases
 
-The cases of a tag are shared in 2 cases: 2 tests of the file have the name of the test, or the cases are a weak set (see the strength of a bind) that is not one case. One case has one name, one `classname` and one `file`, and it appears once in each report. A shared set proves the requirement only when each of its cases passed. Thus a skipped twin never hides behind a passed twin. The message names the tests and the case: ``the tests of the name `<name>` in <path> share their cases, and the case `<case>` was skipped``.
+The worst case decides in each set that is not one case. A set is not one case when 2 tests of the file have the name of the test, or more than one case fits. One case has one name, one `classname` and one `file`, and it appears once in each report. A set of more than one case proves the requirement only when each of its cases passed. Thus a skipped twin never hides behind a passed twin, and a skipped row of a table or a failed subtest leaves the requirement unproven. The message names the tests and the case: ``the tests of the name `<name>` in <path> share their cases, and the case `<case>` was skipped``.
 
 ### The name of a case with `case:`
 
@@ -96,7 +96,7 @@ A case with a `file` binds only when the file is the file of the tag. For a case
 
 ### The strength of a bind
 
-A bind is exact when a bound case fits by `file` or by `classname` and its name is a strong match, or when `case:` names it and the fresh reports have one case of that name. If any case is exact, only the exact cases bind. Else the cases are one weak set: it is a bind by name, and SD621 reports the tag. A weak set proves the requirement when exactly one case fits. When more than one case fits, the worst of them decides: a failed case, then a skipped case, then a passed case. A bind by name counts: the requirement is proven when its cases passed. SD621 makes the weak link visible. The fix is `case:"<name>"` with the name of the case, or a runner that writes the `file` of each case: for jest-junit, set `addFileAttribute: "true"` once.
+A bind is exact when one case fits by `file` or by `classname`, and its name is a strong match (a whole segment of the name of the case, or the expected name), or the cases are the subtests and the rows of one test (they differ only after the name of the test), or when `case:` names it and the fresh reports have one case of that name. Else SD621 reports the tag: a case fits by its name only, a case names the test only by the end of its name, or more than one test of the reports fits (the cases differ before the end of the name of the test, or in `classname` or `file`, or one name is in one report more than once). The cases of a test that the file defines twice are no cause. The worst of all cases decides: a failed case, then a skipped case, then a passed case. A bind by name counts: the requirement is proven when its cases passed. SD621 makes the weak link visible. The fix is `case:"<name>"` with the name of the case, or a runner that writes the `file` of each case: for jest-junit, set `addFileAttribute: "true"` once.
 
 ### The proof
 
@@ -111,6 +111,7 @@ When a tag binds no passed case, SD616 or SD617 gives one reason. The list is cl
 | `template` | The test under the tag has a template name |
 | `no-case` | No case of a fresh report names the test in the file of the tag. For `case:`, no case has the name |
 | `outside-tree` | The test file of the tag is not in the code tree ([The code tree and the stamp](#the-code-tree-and-the-stamp)) |
+| `long-name` | No case names the test, and a case of the reports has a name with more than 256 characters or more than 32 separators. Such a case has no key but its whole name: add `case:"<name>"` |
 | `no-report` | No report is fresh |
 
 A failed case, a skipped case and a shared set give their own text, with the name of the case.
@@ -123,8 +124,8 @@ The shapes below come from the documentation or the source of each runner. The t
 | --- | --- | --- | --- | --- | --- |
 | pytest, `junit_family = xunit2` (the default) | `tests.test_valves`, or `tests.test_valves.TestValves` in a class | `test_closes_on_timeout`, `test_closes[1-2]` | none | `def`, parameters in `[...]` | `classname`: exact |
 | pytest, `junit_family = xunit1` | the same | the same | `tests/test_valves.py` | `def` | `file`: exact |
-| cargo-nextest, an integration test `tests/valves.rs` | `<crate>::valves` | `closes`, or `<module>::closes` | none | `fn` | `classname` (binary id): exact |
-| cargo-nextest, a unit test of a library | `<crate>` | `<module>::tests::closes` | none | `fn` | a file of `src/` by the module path of the name, as a bind by name only (SD621). A file of `tests/` never fits it. Add `case:` for another layout |
+| cargo-nextest, an integration test `tests/valves.rs` | `<crate>::valves` | `closes`, or `<module>::closes` | none | `fn` | `classname` (binary id): exact. A file in a folder of `tests/` (`tests/it/valves.rs`) fits the id of the folder (`<crate>::it`) too |
+| cargo-nextest, a unit test of a library | `<crate>` | `<module>::tests::closes` | none | `fn` | a file of `src/` by the module path of the name, as a bind by name only (SD621). A file of `tests/` fits it by its name only, and gives SD621, unless the crate has the name of a test file (it does not fit then). A `src/lib.rs` fits any case by the weak end of its name, and gives SD621. Add `case:` for another layout |
 | Jest, jest-junit, the defaults | `Valves closes on timeout` | `Valves closes on timeout` | none | call | by name only (SD621) |
 | Jest, jest-junit, `addFileAttribute: "true"` | as above | as above | `tests/valves.test.js` | call | `file`: exact |
 | Vitest, `--reporter=junit` | `tests/valves.test.ts` | `Valves > closes on timeout` | none | call | `classname` (path): exact |
@@ -135,7 +136,7 @@ The shapes below come from the documentation or the source of each runner. The t
 | Ruby, rspec_junit_formatter | `spec.valve_spec` | `Valve closes on timeout` | `./spec/valve_spec.rb` | call | `file`: exact |
 | .NET, JunitXml.TestLogger | `Valves.Tests.ValveTest` | `ClosesOnTimeout`, `ClosesOnTimeout(seconds: 30)` | none | method | `classname`: exact when the folders follow the namespace. Else by name only |
 
-Two limits. A nextest report has no skipped test by default, so the tag of a skipped test finds no case (`no-case`), and the requirement stays unproven. Surefire with the phrased names on writes the display names, so the name of the method is not a segment of the case name, and the tag needs `case:`.
+Two limits. A nextest report has no skipped test by default, so the tag of a skipped test finds no case of its own (`no-case`). A case of another test that ends with the name can bind by name only, and SD621 reports it. Surefire with the phrased names on writes the display names, so the name of the method is not a segment of the case name, and the tag needs `case:`.
 
 ### The limits of the bind
 
@@ -143,6 +144,8 @@ Two limits. A nextest report has no skipped test by default, so the tag of a ski
 - A helper function with a name that no case has gives `no-case`.
 - A bind by name can bind a case of another file with the same name. A shared set catches 2 such cases in one report, but not a case of a file that the runner did not run.
 - A tag above a group (`describe`, `class`) binds no test of the group. A class line in a file whose name is not the class (Kotlin), and a Rust unit test in `src/`, bind by name only.
+- A case with a name of more than 256 characters or more than 32 separators has no key but its whole name, so only `case:` binds it (the reason `long-name`).
+- Not read, and not changed in 0.8.1: 2 test files with one name in 2 packages of pytest (the `classname` of one segment binds both, and SD621 shows it when a case has no `file`); .NET names that start with an upper case letter after the namespace (the rule strips a trailing class by its case); a nextest crate whose name is not the stem of a test file; the weak end of the name for a root package of Go and for an RSpec file in the root. Each of them gives SD621 where the bind is by the end of a name, and `case:` is the way out.
 
 ## The code tree and the stamp
 

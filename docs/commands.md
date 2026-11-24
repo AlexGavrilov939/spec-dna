@@ -323,7 +323,7 @@ With `--json`, each item of `evidence` has the field `binds`: one object for eac
 | `fit` | `"file"`, `"classname"` or `"name"`. `null` with no bound case |
 | `shared` | `true` for a shared set: the tag proves only when each case passed |
 | `result` | `"passed"`, `"failed"`, `"skipped"`, `"unbound"`, or `"not-read"` without `--reports` |
-| `reason` | `null`, or one of `"no-test"`, `"group"`, `"template"`, `"no-case"`, `"outside-tree"`, `"no-report"` |
+| `reason` | `null`, or one of `"no-test"`, `"group"`, `"template"`, `"no-case"`, `"long-name"`, `"outside-tree"`, `"no-report"` |
 
 For example: `{"tag":"tests/test_loans.py:12","test":"test_period","by":"definition","case":"test_period","cases":1,"fit":"classname","shared":false,"result":"passed","reason":null}`. `check --reports --json` gives the same object for each tag, with the field `requirement` first.
 
