@@ -1,5 +1,5 @@
 ---
-status: approved
+status: draft
 ---
 # The context meter reads the last executor iteration, and the briefs name sections: plan
 
@@ -9,6 +9,7 @@ status: approved
 - `src/hook.rs` The reading of a transcript line in the hook context-meter, and its unit tests.
 - `tests/hook.rs` The 3 tests of the meter of D94.
 - `docs/harness.md` The section of the hook context-meter in the section Hooks.
+- `docs/commands.md` The hook section: the rule of the meter, which the fix changed.
 - `.claude/agents/core-engineer.md` The line Read first and the line Reads.
 - `.claude/agents/diagnostics-engineer.md` The line Read first and the line Reads.
 - `.claude/agents/context-engineer.md` The line Read first and the line Reads.
