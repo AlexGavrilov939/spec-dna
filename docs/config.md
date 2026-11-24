@@ -63,6 +63,7 @@ dir = "evals"                   # the folder of the evals (default "evals")
 min-pass-rate = 0.8             # the share of evals that must pass, from 0 to 1 (default 0.8)
 runs = 3                        # the runs of an eval that sets no `runs`, from 1 to 100 (default 3)
 max-total-usd = 20              # the maximum spend of `eval run`, above 0 (default 20)
+min-free-mib = 2048             # the free space that each run needs, in MiB; 0 turns the check off (default 2048)
 
 [[roots]]                       # required: one table per document root
 path = "docs"
@@ -212,6 +213,7 @@ sonnet = "high"
 | `evals.min-pass-rate` | number | `0.8` | The share of evals that must pass, from 0 to 1. The integers 0 and 1 are valid. |
 | `evals.runs` | integer | `3` | The runs of an eval that sets no `runs`, from 1 to 100. |
 | `evals.max-total-usd` | number | `20` | The maximum spend of `eval run`, in USD. A number above 0. |
+| `evals.min-free-mib` | integer | `2048` | The free space, in MiB, that each run of `eval run` needs. An integer of 0 or more. `0` turns the check off. `init` does not write the key. See [evals.md](evals.md#free-space). |
 | `conventions` | table | `{}` | For each type, pointers to the sections of project documents that state the conventions for documents of that type. See [Conventions](#conventions). |
 | `harness` | table | none | The agent harness. No table is the same as level `none`. See [The table `harness`](#the-table-harness). |
 | `harness.level` | string | required in the table | `none` installs nothing. `lean` installs the orchestrator, the advisor (unless its role is `none`), the verifier, the researcher and the helper, and the acceptor when `skills` has `review` (the profile `lite` has no acceptor). `full` also installs the implementer and the code-simplifier. With `none`, spec-dna reads the other keys and ignores them. |
@@ -539,6 +541,7 @@ dir = "evals"
 min-pass-rate = 0.8
 runs = 3
 max-total-usd = 20
+min-free-mib = 2048
 ```
 
 An eval is a task with checks that tests the agent setup of a project ([ADR 0008](adr/0008-harness-and-evals.md)). An eval is a file `<dir>/<id>.json`. The table is optional: with no table, there are no evals. The table enables `spec-dna eval run`, SD506 and SD918. `init` writes the table for a new project, unless the harness level or the answer to question 14 is `none`. [evals.md](evals.md) gives the eval file and the runner.
@@ -547,6 +550,7 @@ An eval is a task with checks that tests the agent setup of a project ([ADR 0008
 - `dir` and `templates.dir` must not overlap: one folder is not the other folder, and it is not inside the other folder. If they overlap, the exit code is 3.
 - The folder is never part of a root, also for a root `.`. `check` does not read a file there as a document, so you need no `exclude`. For the same reason, `REVIEW.md` and the skills that `[harness]` writes are never part of a root.
 - `min-pass-rate`, `runs` and `max-total-usd` are the defaults of a run. An eval file can set `runs`. The command `eval run` can replace each of them. `pass-at` is a key of an eval file only. In `[evals]` it is an unknown key.
+- `min-free-mib` is an integer of 0 or more. Another value gives exit code 3. [evals.md](evals.md#free-space) gives the check.
 
 ## The table `harness`
 
