@@ -31,13 +31,14 @@
 //! `product`, `system`, then the summaries from the shallow folder to the deep
 //! one, with the title section of each document first. The tier, in full text
 //! and in stubs together, uses at most a half of the budget, and never the
-//! room that the entry and the citing sections need in full (design 0.8.1,
-//! D83). It is filled in its own order: the title section of each document
-//! first, from the deepest summary up to `product`, then the other sections in
-//! the same order of the documents. The first sections are in full, the next
-//! ones are stubs, and the last ones are cut. The output keeps the order from
-//! the top down. The packing order puts the tier after the sections of the
-//! entry and of the citing documents, so it never takes their room. A document
+//! room that the entry and the citing sections need in full, nor the room of
+//! the stub lines of the sections after the tier (design 0.8.1, D83). It is
+//! filled in its own order: the title section of each document first, from
+//! the deepest summary up to `product`, then the other sections in the same
+//! order of the documents. The first sections are in full, the next ones are
+//! stubs, and the last ones are cut. The output keeps the order from the top
+//! down. The packing order puts the tier after the sections of the entry and
+//! of the citing documents, and `room_without_tier` keeps their room. A document
 //! of the tier is in no other tier, but a target or a convention can name it.
 //! A stale document (SD641 or SD642) has the word `stale` after the tier. A
 //! tree with no roll-up document has no tier, and the output is the output of
@@ -514,7 +515,8 @@ const CITING_SUMMARIES: usize = 5;
 /// `budget / SUMMARY_SHARE` characters (D83): a half, 4,000 of the 8,000 of
 /// the default. A summary at its soft budget of 3,000 characters fits. The
 /// half is a cap: the tier also leaves the room that the sections before it
-/// need in full (`room_before_tier`).
+/// need in full, and the room of the stub lines of the other sections
+/// (`room_without_tier`).
 const SUMMARY_SHARE: u32 = 2;
 
 /// Plans and packs the sections for the targets and the code paths. `cited`
@@ -943,13 +945,19 @@ pub fn assemble(
         .filter(|&i| plan[i].2 == Tier::Summary)
         .collect();
     // The half is a cap, not a promise: the tier never takes the room that the
-    // sections before it need in full (the entry and the citing sections).
-    let before: Vec<usize> = order
+    // sections before it need in full (the entry and the citing sections),
+    // and it leaves the stub lines of the sections after it too. The tree
+    // with no summary gives them this room.
+    let others: Vec<usize> = order
         .iter()
         .copied()
-        .take_while(|&i| plan[i].2 != Tier::Summary)
+        .filter(|&i| plan[i].2 != Tier::Summary)
         .collect();
-    let reserve = room_before_tier(&before, &costs, &eligible, &file_costs, budget);
+    let n_before = order
+        .iter()
+        .take_while(|&&i| plan[i].2 != Tier::Summary)
+        .count();
+    let reserve = room_without_tier(&others, n_before, &costs, &eligible, &file_costs, budget);
     let (tier_full, tier_listed) = tier_share(
         &tier.iter().map(|&i| costs[i]).collect::<Vec<_>>(),
         (budget / SUMMARY_SHARE).min(budget.saturating_sub(reserve)),
@@ -1157,13 +1165,18 @@ fn summary_fill_key(
     (heading != 0, class, shallow, doc.id.clone(), heading, at)
 }
 
-/// The characters that the packing gives to the convention files and to the
-/// sections before the tier `summary` in the packing order, without the tier:
-/// their stub lines (the map pass), then their full text, as far as it fits
-/// in the budget. The tier gets at most `budget - reserve`, so its stub lines
+/// The characters that the packing gives to the other sections when the tier
+/// `summary` is not there. `order` has the sections that are not in the tier,
+/// in the packing order, and the first `n_before` of them come before the
+/// tier. The map pass lists the stub lines of the convention files and of all
+/// these sections, also of the tiers after the tier, because the map pass
+/// comes before the full text. Then the full pass gives the full text of the
+/// convention files and of the first `n_before` sections, as far as it fits in
+/// the budget. The tier gets at most `budget - reserve`, so its stub lines
 /// never push a full section of the entry or of a citing document out.
-fn room_before_tier(
-    before: &[usize],
+fn room_without_tier(
+    order: &[usize],
+    n_before: usize,
     costs: &[(u32, u32)],
     eligible: &[bool],
     file_costs: &[(u32, u32)],
@@ -1177,8 +1190,8 @@ fn room_before_tier(
             file_listed[k] = true;
         }
     }
-    let mut listed = vec![false; before.len()];
-    for (k, &i) in before.iter().enumerate() {
+    let mut listed = vec![false; order.len()];
+    for (k, &i) in order.iter().enumerate() {
         if used + costs[i].1 <= budget / 2 {
             used += costs[i].1;
             listed[k] = true;
@@ -1194,7 +1207,7 @@ fn room_before_tier(
             used += extra;
         }
     }
-    for (k, &i) in before.iter().enumerate() {
+    for (k, &i) in order.iter().enumerate().take(n_before) {
         let (f, stub) = costs[i];
         let extra = if listed[k] { f.saturating_sub(stub) } else { f };
         if eligible[i] && used + extra <= budget {

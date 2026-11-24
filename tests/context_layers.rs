@@ -1356,8 +1356,8 @@ fn a_planned_document_that_is_not_active_reaches_no_area() {
 fn under_a_query_the_tier_follows_the_entry_and_keeps_its_order() {
     // The rule `watering` has 1,500 characters and the words of the query.
     // The entry matches too. The tier never takes the room of the entry: the
-    // sections of the entry are in full, and the tier has at most a quarter
-    // of 4,000 characters.
+    // sections of the entry are in full, and the tier has at most a half of
+    // 4,000 characters.
     let r = rollup();
     let big = "The motor spin full speed rule. ".repeat(45);
     r.write(
@@ -1381,7 +1381,10 @@ fn under_a_query_the_tier_follows_the_entry_and_keeps_its_order() {
             .any(|i| i.starts_with("requirements/valves/drives/motor#requirements")),
         "{out}"
     );
-    assert!(tier_total(&out) <= 1000, "{out}");
+    // The tier has at most a half of the budget, and with the entry in full
+    // the whole output stays in the budget.
+    assert!(tier_total(&out) <= 2000, "{out}");
+    assert!(used_of(&out) <= 4000, "{out}");
     let docs = docs_of(&ids);
     let at = |d: &str| docs.iter().position(|x| x == d);
     assert!(at("product").is_some(), "{docs:?}");
@@ -1807,8 +1810,8 @@ fn the_title_sections_of_d83_come_before_the_other_sections_in_the_fill_order() 
 
 #[test]
 fn the_summary_of_3000_bytes_is_in_full_at_8000_and_a_listed_stub_at_4000() {
-    // The summary is over a quarter of 8,000 characters, so the new order
-    // alone does not serve it in full.
+    // The summary is over a quarter of 8,000 characters, the old share. The
+    // new order alone does not serve it in full, and the half share does.
     let r = d83(56);
     let m = measure(&r, "src/motor.rs", 8_000);
     let line = m.line(56, 8_000);
@@ -1818,4 +1821,90 @@ fn the_summary_of_3000_bytes_is_in_full_at_8000_and_a_listed_stub_at_4000() {
     let line = m.line(56, 4_000);
     assert!(m.has("summaries/valves#valves"), "{line}");
     assert!(!m.is_full("summaries/valves#valves"), "{line}");
+}
+
+/// Gives the requirement `valves/drives/motor` a long section `Requirements`
+/// (about 5,900 characters) and a section `Links` with 10 links to new active
+/// requirement documents. The links give the plan 10 documents of the tiers
+/// after the summary tier, and each of them has a stub line in the map pass.
+fn crowd_motor(r: &Repo) {
+    let long = "The motor SHALL keep a steady speed. ".repeat(160);
+    let links: String = (1..=10)
+        .map(|n| format!("- [[requirements/links/l{n}]]\n"))
+        .collect();
+    r.write(
+        "docs/requirements/valves/drives/motor.md",
+        &format!(
+            "---\nstatus: active\n---\n# Motor\n\n## Requirements\n\n- **spin-up**: The motor SHALL reach full speed in 2 seconds. See `src/motor.rs`. {long}\n- **spin-down**: The motor SHALL stop in 1 second.\n\n## Links\n\n{links}"
+        ),
+    );
+    for n in 1..=10 {
+        r.write(
+            &format!("docs/requirements/links/l{n}.md"),
+            &requirements(
+                &format!("Link {n}"),
+                "only",
+                &format!("The link {n} part SHALL work."),
+            ),
+        );
+    }
+}
+
+/// The fixture of D83 with the crowded entry, and the same documents in a tree
+/// with no summary and no `rests-on`.
+fn d83_crowded() -> (Repo, Repo) {
+    let with = d83(8);
+    crowd_motor(&with);
+    for id in [
+        "summaries/valves/drives",
+        "summaries/valves",
+        "system",
+        "product",
+    ] {
+        let (code, out, err) = with.run(&["refresh", id, "--holds"]);
+        assert_eq!(code, 0, "{out}{err}");
+    }
+    let plain = Repo::with(
+        &D83_HEAD.replace("[layers.summaries]\ntypes = [\"summary\"]\n\n", ""),
+        ROLL_ROOTS,
+    );
+    plain.write("src/motor.rs", "pub fn spin_up() {}\n");
+    crowd_motor(&plain);
+    (with, plain)
+}
+
+#[test]
+fn the_tier_never_pushes_out_the_full_entry_that_a_tree_with_no_summary_serves() {
+    // The sections of the tiers `linked` and `more` come after the summary
+    // tier in the packing order, but their stub lines are in the map pass, and
+    // the map pass comes before the full text of the entry. The room of the
+    // tier must leave the room of these stub lines too.
+    let (with, plain) = d83_crowded();
+    let entry = "requirements/valves/drives/motor#requirements";
+    let full_entry = |r: &Repo, budget: u32| -> bool {
+        let b = budget.to_string();
+        let (code, json, err) = r.run(&[
+            "context",
+            "requirements/valves/drives/motor",
+            "--budget",
+            &b,
+            "--json",
+        ]);
+        assert_eq!(code, 0, "{json}{err}");
+        parse_units(&json)
+            .iter()
+            .any(|(id, _, full)| id == entry && *full)
+    };
+    let mut served_by_plain = 0;
+    for budget in (6_000..=10_000).step_by(50) {
+        if full_entry(&plain, budget) {
+            served_by_plain += 1;
+            assert!(
+                full_entry(&with, budget),
+                "the tree with no summary serves the entry in full at {budget}, the tree with the roll-up does not"
+            );
+        }
+    }
+    // The sweep is not empty: the entry is in full for some budgets.
+    assert!(served_by_plain > 10, "{served_by_plain}");
 }
