@@ -11,7 +11,7 @@ The harness is optional. `init` asks for a level.
 | Level | What `init` writes |
 | --- | --- |
 | `none` | Nothing |
-| `lean` | The main model and its effort, the advisor, `verifier`, `Explore`, `fallback-advisor`, the default model of other subagents, 2 hooks, a model-team line in `CLAUDE.md` and a page for people. The keys `skills`, `review-md` and `protect-tests` add the skills, `REVIEW.md` and a third hook. A new configuration sets all 3 keys. It proposes the skills that are on by default (`spec-dna skill list`; [ADR 0023](adr/0023-default-skills-from-the-release-table.md)) |
+| `lean` | The main model and its effort, `verifier`, `Explore`, the default model of other subagents, 2 hooks, a model-team line in `CLAUDE.md` and a page for people. With [the advisor](#the-advisor-of-the-team) on, also the advisor and `fallback-advisor`. The keys `skills`, `review-md` and `protect-tests` add the skills, `REVIEW.md` and a third hook. A new configuration sets all 3 keys. It proposes the skills that are on by default (`spec-dna skill list`; [ADR 0023](adr/0023-default-skills-from-the-release-table.md)) |
 | `full` | `lean`, and `implementer` and `code-simplifier`. It proposes the 11 skills, also the skills that are off by default. The profile `lite` writes no agent `acceptor` at any level |
 
 A new configuration gets `lean` by default. A configuration from spec-dna 0.4 or older has no `[harness]` table, so an upgrade adds no harness. Run `spec-dna init --reconfigure` to add it.
@@ -21,7 +21,7 @@ A new configuration gets `lean` by default. A configuration from spec-dna 0.4 or
 | Role | Purpose | Default model, effort | Claude Code file | Levels |
 | --- | --- | --- | --- | --- |
 | `orchestrator` | The main session. It builds, delegates and runs checks | `opus`, `xhigh`; fallback `opus`, `sonnet` | `.claude/settings.json` | `lean`, `full` |
-| `advisor` | Advice at a decision point. It writes no code | `fable` | `advisorModel` in `.claude/settings.json` | `lean`, `full` |
+| `advisor` | Advice at a decision point. It writes no code | `fable`. A new project of `lite` or `standard` has `none` ([The advisor of the team](#the-advisor-of-the-team)) | `advisorModel` in `.claude/settings.json` | `lean`, `full` |
 | | The advisor when the advisor tool is not available | `opus`, `xhigh` | `.claude/agents/fallback-advisor.md` | `lean`, `full` |
 | `verifier` | Runs the tests and checks on finished work and reports defects. It fixes nothing | `opus`, `high` | `.claude/agents/verifier.md` | `lean`, `full` |
 | `acceptor` | Tries to break a finished change from the brief of `spec-dna accept --brief`, and writes its acceptance record. It edits no code | `opus`, `high` | `.claude/agents/acceptor.md`, only with the skill `review` | `lean`, `full` |
@@ -41,6 +41,18 @@ Notes:
 - The model of a role is a default. An Agent tool call with a `model` parameter overrides it.
 - The `helper` default is `haiku`. The `CLAUDE.md` line tells the main session to give `sonnet` or `opus` to a subagent that writes code or reviews work.
 - spec-dna 0.6 renames the role `reviewer` to `verifier`, and its file `checker.md` to `verifier.md`. The role `spec-writer` ended, and `code-simplifier` is new at level `full`. [Upgrade from 0.5](#upgrade-from-05) gives the steps.
+
+### The advisor of the team
+
+A new project of `lite` or `standard` has no advisor. A new project of `strict` has it ([init.md](init.md#the-preset-of-a-profile)). To turn it on later, run `spec-dna init --reconfigure` and answer `advisor=fable` to question 13. A person can set `advisorModel` in the user settings. Thus a session of a project with no advisor can still have one.
+
+If the role is on, the model-team line of `CLAUDE.md` has these sentences:
+
+```text
+Consult the advisor only in a change of class `higher-risk` (the `class` of its `intent.md`): before you choose an approach, before you say that a task is done, and when the same error occurs twice. In other work, do not consult it. This rule is text: no gate checks it. Each consult sends the whole context at the advisor price, so consult before the context grows large.
+```
+
+This is a rule of text: no hook and no check enforces it. Claude Code 2.1.330 runs no hook on the advisor tool ([The advisor of the acceptor](#the-advisor-of-the-acceptor)). Each subagent gets the advisor of its session. In `standard` and `strict`, the section "Advisor" of `model-team.md` says the same. In `lite`, that page keeps the text of 0.7.1, and the line of `CLAUDE.md` has the sentences above. A project that has the older line gets SD502 until `init` or `upgrade` writes the line again.
 
 ### The advisor of the acceptor
 
@@ -370,9 +382,9 @@ An eval tests the agent setup of a project: its instruction files, skills, agent
 ## Cost and requirements
 
 - The main model sets the cost of each request. `opus` at `xhigh` costs more than `sonnet` at `high`.
-- The advisor sends the whole context to the advisor model at each consult, at the price of that model. The default advisor (Fable) is an experimental feature. It needs the Anthropic API or Claude Platform on AWS, access to Fable and, on some plans, a one-time approval of billing to usage credits. To get access, run `/model fable` and approve. Then run `/model opus` to select the main model again. Without access, Claude Code shows a notice, and the main session briefs `fallback-advisor`.
+- With [the advisor](#the-advisor-of-the-team) on, it sends the whole context to the advisor model at each consult, at the price of that model. The advisor model `fable` is an experimental feature. It needs the Anthropic API or Claude Platform on AWS, access to Fable and, on some plans, a one-time approval of billing to usage credits. To get access, run `/model fable` and approve. Then run `/model opus` to select the main model again. Without access, Claude Code shows a notice, and the main session briefs `fallback-advisor`.
 - `verifier`, `acceptor`, `Explore`, `implementer` and `code-simplifier` cost nothing until the main session uses them. Their descriptions are part of each request. A run of the `acceptor` is the review of a change that needs a record. A run on a slice of this repository took 13 to 25 minutes and about 190,000 to 250,000 tokens, and a `routine` change in `standard` has none. [evals.md](evals.md#the-measured-cost-of-one-acceptance-pass) gives the measured cost of one pass and its limits.
-- The `CLAUDE.md` line is part of each request (about 200 tokens). The line of `AGENTS.md` has 400 bytes or fewer, so it adds about 100 tokens.
+- The `CLAUDE.md` line is part of each request. In a `standard` project at the level `lean`, the model-team line has about 500 bytes with no advisor and about 1,100 bytes with it. The line of `AGENTS.md` has 400 bytes or fewer, so it adds about 100 tokens.
 - The descriptions of the skills are part of each request. They have 1,250 bytes or fewer for the 7 skills of the design (D2), and 1,900 bytes or fewer for the 11 skills. The body of a skill loads only when Claude Code uses the skill. `REVIEW.md` adds nothing to a request.
 - `init` prints the bytes that the harness adds to each request, with the skill descriptions in the sum.
 
@@ -385,10 +397,11 @@ These options make each request smaller. `init` does not write them, because the
 
 1. Start a new session. Do not resume an old session: it keeps the model of its transcript.
 2. Read the header. It shows the main model.
-3. Run `/advisor`. It shows the advisor model.
-4. Type `@`. The list shows `verifier`, `Explore` and `fallback-advisor`. If the configuration has skills, type `/`. The list shows the skills `spec-dna-...`.
+3. With the advisor on, run `/advisor`. It shows the advisor model.
+4. Type `@`. The list shows `verifier` and `Explore`, and `fallback-advisor` with the advisor on. If the configuration has skills, type `/`. The list shows the skills `spec-dna-...`.
 5. While a subagent runs, run `/tasks`. Its row shows its model.
-6. When Claude consults the advisor, an `Advising` line appears. Press `Ctrl+O` to read the advice. Run `/usage` to see the cost.
+6. With the advisor on, an `Advising` line appears when Claude consults it. Press `Ctrl+O` to read the advice.
+7. Run `/usage` to see the cost.
 
 ## Change, upgrade and removal
 
