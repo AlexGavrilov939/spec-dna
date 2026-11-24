@@ -1,5 +1,5 @@
 ---
-status: approved
+status: draft
 ---
 # The roll-up reads interfaces, rules, decisions and research, and an old plan gets one note: plan
 
@@ -27,6 +27,7 @@ status: approved
 - `tests/context_layers.rs` The test of the chain of a decision.
 - `tests/acceptance_need.rs` The tests of the note and of the opt-in at finish.
 - `tests/acceptance_checks.rs` The text of the note of finish, and the record of an old plan.
+- `tests/finish_sd913.rs` The test that reads the last line of next, which is now the note of an old plan.
 - `tests/accept_next.rs` The tests of the note of next.
 - `docs/config.md` The key rolls-up, and the opt-in in the section of the acceptance record.
 - `docs/types.md` The summary of decisions and its example, and the link of the heading of the roll-up.
