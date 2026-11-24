@@ -1311,6 +1311,19 @@ fn init_gives_no_test_hook_note_for_a_hook_that_stamps() {
         !out.contains("runs the tests. If it writes a report"),
         "{out}"
     );
+    // A hook whose id has the word `test` and whose entry runs no tests (it is
+    // `name-tests-test` of pre-commit-hooks, which checks file names): no note.
+    let r = Repo::empty();
+    r.write(
+        ".pre-commit-config.yaml",
+        &hooks(&[("name-tests-test", "name-tests-test")]),
+    );
+    r.commit("start");
+    let (_, out, _) = r.run(&["init", "--dry-run"]);
+    assert!(
+        !out.contains("runs the tests. If it writes a report"),
+        "{out}"
+    );
     // A hook that is not about tests: no note. A project with no pre-commit
     // file: no note.
     let r = Repo::empty();

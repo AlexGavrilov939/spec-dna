@@ -1591,74 +1591,182 @@ pub fn typos_unguarded(read: &dyn Fn(&str) -> Option<String>) -> bool {
             .any(|f| read(f).is_some_and(|t| t.contains(TYPOS_GUARD)))
 }
 
-/// The words that make a pre-commit hook a hook that runs the tests (design
-/// 0.8.1, D89). A word is a run of letters and digits of the `id:` or of the
-/// `entry:`, in any case.
-const TEST_WORDS: [&str; 12] = [
-    "test",
-    "tests",
-    "pytest",
-    "nextest",
-    "jest",
-    "vitest",
-    "gotestsum",
-    "junit",
-    "junitxml",
-    "phpunit",
-    "rspec",
-    "unittest",
+/// The commands that run the tests (design 0.8.1, D89): the words of an entry,
+/// in a row. A word is a run of letters and digits, in lower case. The id of a
+/// hook is no command: the hook `name-tests-test` of pre-commit-hooks checks
+/// file names and runs no test.
+const TEST_COMMANDS: [&[&str]; 20] = [
+    &["pytest"],
+    &["unittest"],
+    &["nextest"],
+    &["jest"],
+    &["vitest"],
+    &["gotestsum"],
+    &["rspec"],
+    &["phpunit"],
+    &["mvn"],
+    &["mvnw"],
+    &["gradle"],
+    &["gradlew"],
+    &["cargo", "test"],
+    &["npm", "test"],
+    &["npm", "run", "test"],
+    &["yarn", "test"],
+    &["pnpm", "test"],
+    &["go", "test"],
+    &["dotnet", "test"],
+    &["make", "test"],
 ];
 
-/// The id of each hook of a `.pre-commit-config.yaml` text that runs the tests
-/// and does not run `spec-dna evidence stamp` in its entry, in the order of the
-/// file (design 0.8.1, D89). The scan reads lines, as `typos_hook` does: a line
-/// `- id: <name>` starts a hook, and the lines `id:` and `entry:` of the hook
-/// give its words. A hook whose `entry:` has `evidence stamp` is no finding.
-pub fn test_hooks_without_stamp(pre_commit: &str) -> Vec<String> {
-    // (id, runs the tests, stamps)
-    let mut hooks: Vec<(String, bool, bool)> = Vec::new();
-    let mut open = false;
-    for line in pre_commit.lines() {
-        let mut text = line;
-        if let Some(at) = text
-            .find(" #")
-            .or_else(|| text.trim_start().starts_with('#').then_some(0))
-        {
-            text = &text[..at];
+/// True if the entry of a hook runs the tests.
+fn runs_tests(entry: &str) -> bool {
+    let words: Vec<String> = entry
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect();
+    TEST_COMMANDS
+        .iter()
+        .any(|cmd| words.windows(cmd.len()).any(|w| w == *cmd))
+}
+
+/// The text of a line of YAML without its comment (a `#` after a space).
+fn without_comment(line: &str) -> &str {
+    match line
+        .find(" #")
+        .or_else(|| line.trim_start().starts_with('#').then_some(0))
+    {
+        Some(at) => &line[..at],
+        None => line,
+    }
+}
+
+/// A value of YAML without its quotes.
+fn unquote(value: &str) -> &str {
+    value.trim().trim_matches(['"', '\''])
+}
+
+/// The groups `{...}` of a line, without their braces. A brace in a quote does
+/// not count.
+fn flow_groups(line: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let (mut depth, mut start, mut quote) = (0usize, 0, None);
+    for (i, c) in line.char_indices() {
+        match (quote, c) {
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), _) => {}
+            (None, '"' | '\'') => quote = Some(c),
+            (None, '{') => {
+                if depth == 0 {
+                    start = i + 1;
+                }
+                depth += 1;
+            }
+            (None, '}') if depth > 0 => {
+                depth -= 1;
+                if depth == 0 {
+                    out.push(&line[start..i]);
+                }
+            }
+            _ => {}
         }
-        let mut text = text.trim();
+    }
+    out
+}
+
+/// The value of `key` in the text of a group `{a: 1, b: 2}`. A comma in a quote
+/// does not end the value.
+fn flow_value<'a>(group: &'a str, key: &str) -> Option<&'a str> {
+    let (mut start, mut quote) = (0, None);
+    let mut items = Vec::new();
+    for (i, c) in group.char_indices() {
+        match (quote, c) {
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), _) => {}
+            (None, '"' | '\'') => quote = Some(c),
+            (None, ',') => {
+                items.push(&group[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    items.push(&group[start..]);
+    items
+        .into_iter()
+        .find_map(|item| item.trim().strip_prefix(key)?.strip_prefix(':'))
+        .map(unquote)
+}
+
+/// The id of each hook of a `.pre-commit-config.yaml` text whose entry runs the
+/// tests and does not run `spec-dna evidence stamp`, in the order of the file
+/// (design 0.8.1, D89). The scan reads lines, as `typos_hook` does. A line
+/// `- id: <name>` starts a hook, and its `entry:` is the command: one line, a
+/// block (`|` or `>`) or a flow group `{id: <name>, entry: <command>}`. The id
+/// is a name, not a command, so a hook with no `entry:` is no finding.
+pub fn test_hooks_without_stamp(pre_commit: &str) -> Vec<String> {
+    let lines: Vec<&str> = pre_commit.lines().collect();
+    // (id, entry)
+    let mut hooks: Vec<(String, String)> = Vec::new();
+    let mut open = false;
+    let mut i = 0;
+    while i < lines.len() {
+        let raw = lines[i];
+        i += 1;
+        let line = without_comment(raw);
+        let mut text = line.trim();
         let dash = text.starts_with("- ");
         while let Some(rest) = text.strip_prefix("- ") {
             text = rest.trim_start();
         }
-        let words = |value: &str| -> bool {
-            value
-                .split(|c: char| !c.is_ascii_alphanumeric())
-                .any(|w| TEST_WORDS.contains(&w.to_ascii_lowercase().as_str()))
-        };
-        if let Some(value) = text.strip_prefix("id:") {
-            let id = value.trim().trim_matches(['"', '\'']).to_string();
+        if text.contains('{') {
+            for group in flow_groups(text) {
+                if let Some(id) = flow_value(group, "id") {
+                    hooks.push((
+                        id.to_string(),
+                        flow_value(group, "entry").unwrap_or("").to_string(),
+                    ));
+                }
+            }
+            open = false;
+        } else if let Some(value) = text.strip_prefix("id:") {
             if dash || !open {
-                hooks.push((id.clone(), words(&id), false));
+                hooks.push((unquote(value).to_string(), String::new()));
                 open = true;
-            } else if let Some(h) = hooks.last_mut() {
-                h.1 |= words(&id);
+            }
+        } else if let Some(value) = text.strip_prefix("entry:") {
+            // The column of the key: the lines of a block are deeper than it.
+            let key = raw.find("entry:").unwrap_or(0);
+            let mut entry = value.trim().to_string();
+            let block = entry.starts_with(['|', '>']);
+            if block || entry.is_empty() {
+                entry.clear();
+                while i < lines.len() {
+                    let next = lines[i];
+                    let deeper = next.len() - next.trim_start().len() > key;
+                    if !next.trim().is_empty() && !deeper {
+                        break;
+                    }
+                    entry.push(' ');
+                    entry.push_str(next.trim());
+                    i += 1;
+                }
+            }
+            if open && let Some(h) = hooks.last_mut() {
+                h.1 = entry;
             }
         } else if dash {
             // Another list item, such as `- repo:`, ends the hook.
             open = false;
-        } else if let Some(value) = text.strip_prefix("entry:")
-            && open
-            && let Some(h) = hooks.last_mut()
-        {
-            h.1 |= words(value);
-            h.2 |= value.contains("evidence stamp");
         }
     }
     hooks
         .into_iter()
-        .filter(|(_, runs, stamps)| *runs && !*stamps)
-        .map(|(id, ..)| id)
+        .filter(|(_, entry)| {
+            let flat = entry.split_whitespace().collect::<Vec<_>>().join(" ");
+            runs_tests(entry) && !flat.contains("evidence stamp")
+        })
+        .map(|(id, _)| id)
         .collect()
 }
 
@@ -2144,14 +2252,78 @@ mod test_hook_tests {
     fn a_hook_that_runs_the_tests_and_does_not_stamp_is_named() {
         let yaml = "repos:\n  - repo: local\n    hooks:\n      - id: tests\n        entry: pytest -q\n      - id: format\n        entry: rustfmt\n      - id: slow\n        entry: cargo nextest run  # all\n      - id: stamped\n        entry: sh -c 'jest && spec-dna evidence stamp'\n  - repo: https://example.test/x\n    hooks:\n      - id: lint\n";
         assert_eq!(test_hooks_without_stamp(yaml), ["tests", "slow"]);
-        // The words come from the id too, and a part of a word is no word.
-        let yaml = "- id: run-unit-tests\n  entry: make\n- id: attest\n  entry: make\n- id: contest-docs\n";
-        assert_eq!(test_hooks_without_stamp(yaml), ["run-unit-tests"]);
+        // The id is no command, and a part of a word is no word.
+        let yaml = "- id: run-unit-tests\n  entry: make\n- id: attest\n  entry: attest\n- id: contest-docs\n";
+        assert!(test_hooks_without_stamp(yaml).is_empty());
         // A comment does not count, and an empty file has no hook.
         assert!(test_hooks_without_stamp("      # - id: tests\n").is_empty());
         assert!(test_hooks_without_stamp("").is_empty());
         // The entry of the hook before is not the entry of the next hook.
         let yaml = "- id: a\n  entry: sh -c 'pytest && spec-dna evidence stamp'\n- id: tests\n  entry: pytest\n";
         assert_eq!(test_hooks_without_stamp(yaml), ["tests"]);
+    }
+
+    #[test]
+    fn a_hook_runs_the_tests_when_its_entry_does_and_not_when_its_id_says_test() {
+        let hook = |id: &str, entry: &str| format!("      - id: {id}\n        entry: {entry}\n");
+        // The id of a hook of pre-commit-hooks that checks file names.
+        assert!(test_hooks_without_stamp(&hook("name-tests-test", "name-tests-test")).is_empty());
+        assert!(test_hooks_without_stamp("      - id: name-tests-test\n").is_empty());
+        assert!(test_hooks_without_stamp(&hook("tests", "codespell")).is_empty());
+        // Each entry that runs the tests.
+        for entry in [
+            "pytest -q",
+            "python -m pytest tests",
+            "cargo test --all",
+            "cargo nextest run",
+            "npm test",
+            "npm run test",
+            "npx jest --ci",
+            "npx vitest run",
+            "go test ./...",
+            "gotestsum --junitfile out.xml",
+            "mvn -q verify",
+            "./gradlew check",
+            "gradle test",
+            "bundle exec rspec",
+            "vendor/bin/phpunit",
+            "dotnet test",
+            "sh -c 'pytest -q'",
+        ] {
+            assert_eq!(
+                test_hooks_without_stamp(&hook("x", entry)),
+                ["x"],
+                "{entry}"
+            );
+        }
+        // An entry that only names a test word, or another tool, runs no tests.
+        for entry in ["make lint", "echo testing", "rustfmt --check", "attest"] {
+            assert!(
+                test_hooks_without_stamp(&hook("x", entry)).is_empty(),
+                "{entry}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_block_and_the_flow_forms_of_an_entry_are_read() {
+        // A literal block.
+        let yaml = "      - id: tests\n        entry: |\n          pytest -q\n          echo done\n        language: system\n      - id: other\n        entry: codespell\n";
+        assert_eq!(test_hooks_without_stamp(yaml), ["tests"]);
+        // A folded block whose next line stamps: no note.
+        let yaml = "      - id: tests\n        entry: >\n          sh -c 'pytest -q &&\n          spec-dna evidence stamp'\n        language: system\n";
+        assert!(test_hooks_without_stamp(yaml).is_empty());
+        // A literal block that stamps on its own line: no note.
+        let yaml = "      - id: tests\n        entry: |-\n          pytest -q\n          spec-dna evidence stamp\n";
+        assert!(test_hooks_without_stamp(yaml).is_empty());
+        // The block ends at the next key.
+        let yaml = "      - id: a\n        entry: |\n          make lint\n        name: pytest\n";
+        assert!(test_hooks_without_stamp(yaml).is_empty());
+        // The flow form.
+        let yaml = "repos:\n  - repo: local\n    hooks: [{id: x, entry: pytest -q}, {id: y, entry: \"sh -c 'jest && spec-dna evidence stamp'\"}, {id: z, entry: rustfmt}]\n";
+        assert_eq!(test_hooks_without_stamp(yaml), ["x"]);
+        let yaml =
+            "  - repo: local\n    hooks:\n      - {id: u, entry: cargo test, language: system}\n";
+        assert_eq!(test_hooks_without_stamp(yaml), ["u"]);
     }
 }
