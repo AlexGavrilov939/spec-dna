@@ -1,5 +1,5 @@
 ---
-status: approved
+status: draft
 ---
 # The eval runner counts each segment, runs one arm alone, and keeps a floor of free space: plan
 
@@ -12,7 +12,10 @@ status: approved
 - `src/verdict.rs` The join of the result files in the comparison.
 - `src/main.rs` The help text of eval, and the files of the option compare.
 - `src/config.rs` The function of the table evals with the default values, and the key min-free-mib.
-- `src/init.rs` The default table evals of init uses the new function.
+- `src/init.rs` The default table evals of init uses the new function, and init --reconfigure keeps the key min-free-mib.
+- `src/eval_records.rs` The reader accepts a result file with 1 arm.
+- `tests/eval_records.rs` The test of a result file with 1 arm.
+- `tests/init_profiles.rs` The test that init --reconfigure keeps the key min-free-mib.
 - `src/evals.rs` The table of the unit tests uses the new function.
 - `src/eval_pack.rs` The table of the unit tests uses the new function.
 - `schema/spec-dna.schema.json` The key min-free-mib.
