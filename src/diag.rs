@@ -25,14 +25,15 @@ macro_rules! codes {
 
         impl Code {
             pub const ALL: &[Code] = &[$(Code::$variant),*];
-            /// The codes of the test reports (SD613 to SD617). They run only
-            /// with `[evidence] reports`.
+            /// The codes of the test reports (SD613 to SD617 and SD621). They
+            /// run only with `[evidence] reports`.
             pub const REPORT_CODES: &[Code] = &[
                 Code::ReportMissing,
                 Code::ReportStale,
                 Code::ReportUnreadable,
                 Code::RequirementUnproven,
                 Code::ChangeUnproven,
+                Code::CaseBoundByName,
             ];
             /// The codes of the proof levels and the proof debt (SD618 to
             /// SD620). SD618 and SD619 run on a marker `proof-owed`, and SD620
@@ -52,7 +53,7 @@ macro_rules! codes {
             /// the diff. It is never "new" against the base, and `check --all`
             /// and `status` show it (design 0.6.0, K4, D35).
             pub fn is_state(self) -> bool {
-                matches!(self.code(), "SD911" | "SD616" | "SD618")
+                matches!(self.code(), "SD911" | "SD616" | "SD618" | "SD621")
             }
             /// The prose lint of requirement sentences (SD801-SD805). The
             /// human output of `check` gives one count for each code.
@@ -112,6 +113,7 @@ codes! {
     ProofOwed = "SD618", "proof-owed", Warning, "The requirement has a proof debt and no evidence. Pay the debt: add a test with a `covers:` tag, or a `<!-- verified-by: <path> -->` marker, and remove the marker `proof-owed`. A debt is no proof, so `finish` still needs evidence for a requirement that the change adds or changes.";
     ProofOwedInvalid = "SD619", "proof-owed-invalid", Warning, "Write `<!-- proof-owed: <reason> -->` with one reason: manual, environment, external or pending. Remove the marker from a requirement that has evidence.";
     ProofNotReliable = "SD620", "proof-not-reliable", Warning, "A requirement of the change needs the level `reliable`: each bound case must pass `[evidence] reliable-runs` times on one code tree. Run the tests that many times, write one report for each run, then run `spec-dna evidence stamp`.";
+    CaseBoundByName = "SD621", "case-bound-by-name", Warning, "A `covers:` tag binds a case by its name only: the case has no `file`, and its `classname` names no test file. The bind counts, but a case of another file with the same name can take its place. If the case is the test under the tag, add `case:\"<case>\"` to the tag. As an alternative, make the runner write the file of each case (jest-junit: `addFileAttribute: \"true\"`).";
     BudgetSoft = "SD701", "budget-soft", Warning, "As a warning, it needs no change in this task. Do not split the document for a warning.";
     BudgetHard = "SD702", "budget-hard", Error, "The document is new and too large, or it went over the hard budget, or it grew by more than `[budgets] growth` characters. Put the new text into a new document and link it, or move sections out with `spec-dna mv`.";
     BudgetGrew = "SD703", "budget-grew", Warning, "The document is over a budget and it grew a little. Add only the text that the task needs. Do not split the document for a warning.";
@@ -295,6 +297,18 @@ mod tests {
     }
 
     #[test]
+    fn the_code_sd621_is_a_state_code_with_a_fix_for_the_bind_by_name() {
+        let c = Code::from_code("SD621").expect("the code SD621 exists");
+        assert_eq!(c.name(), "case-bound-by-name");
+        assert_eq!(c.severity(), Severity::Warning);
+        assert!(c.is_state());
+        assert!(Code::REPORT_CODES.contains(&c));
+        let fix = c.fix();
+        assert!(fix.contains("case:\"<case>\""), "{fix}");
+        assert!(fix.contains("addFileAttribute"), "{fix}");
+    }
+
+    #[test]
     fn codes_are_unique_and_well_formed() {
         let mut seen = std::collections::HashSet::new();
         for c in Code::ALL {
@@ -303,7 +317,7 @@ mod tests {
             assert!(c.code().starts_with("SD") && c.code().len() == 5);
             assert_eq!(
                 c.is_state(),
-                matches!(c.code(), "SD911" | "SD616" | "SD618")
+                matches!(c.code(), "SD911" | "SD616" | "SD618" | "SD621")
             );
             // Codes from 600 up are warnings. SD702 became an error by a decision at
             // checkpoint 2. SD507 is a warning, because ADR 0016 says that it is
