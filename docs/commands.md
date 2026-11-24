@@ -252,7 +252,9 @@ The tier `summary` ([design](design/0.8.0.md#d56-context-the-tier-summary)) exis
 - The summary of the area of each active `requirements` document that the plan serves, and the summaries of the areas above it. A document that the plan only links does not count. A requirements document outside the folder of an area is in the root area: it reaches only the `product` and `system` documents.
 - The order is top down: `product`, `system`, then the summaries from the shallow folder to the deep one. For each document, the title section comes first, then the other sections in heading order.
 
-The tier, in full text and in stubs together, uses at most a quarter of the budget: 2,000 of the 8,000 characters of the default. It is filled in order. The first sections are in full, the next ones are stubs, and the last ones are not listed. The tier comes after the sections of the entry and of the citing documents in the packing order, so it never takes their room.
+The tier fills its sections in this order: first the title section of each document, from the deepest summary up to `product`, then the other sections in the same order of the documents. The first sections of this order are in full, the next ones are stubs, and the last ones are not listed. The output keeps the order from the top down.
+
+The tier, in full text and in stubs together, uses at most a half of the budget: 4,000 of the 8,000 characters of the default. It never takes the room that the entry and the citing sections need in full: the tier comes after them in the packing order, and a half is a cap, not a promise. A summary of 3,000 characters, its soft budget, fits at the default budget. A summary of 6,000 characters, its hard budget, is in full from a budget of about 12,200 characters.
 
 A document of the tier is in no other tier. A target that names the document makes it an entry, and `[conventions]` can name a section of it. If the layer of the summaries has `context = "on-request"`, `context` counts the summaries and does not serve them.
 
