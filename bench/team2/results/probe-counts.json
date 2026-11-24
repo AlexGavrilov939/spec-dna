@@ -1,0 +1,59 @@
+{
+  "about": "Counts of the 3 probes of 2026-11-23, from their transcripts (transcript_counts.py --copy). The probes had no tap log, so the copy folder names map to the arms by the turns of the result file (none 93, lean 98) and by the advisor calls (lean 6). Counts only: no text, no command and no path.",
+  "runs": [
+    {
+      "arm": "none",
+      "task": "t2-05-approver-hook",
+      "epoch": 0,
+      "turns": 93,
+      "assistant_messages": 175,
+      "tool_uses": 92,
+      "hidden_in_results": 5,
+      "hidden_touches": 1,
+      "advisor_calls": 0,
+      "advisor_results": 0,
+      "subagent_starts": 0,
+      "strict_touches": 0,
+      "files": 1,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "lean-no-advisor",
+      "task": "t2-05-approver-hook",
+      "epoch": 0,
+      "turns": 152,
+      "assistant_messages": 435,
+      "tool_uses": 210,
+      "hidden_in_results": 18,
+      "subagent_starts": 1,
+      "hidden_touches": 5,
+      "advisor_calls": 0,
+      "advisor_results": 0,
+      "strict_touches": 0,
+      "files": 2,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "lean",
+      "task": "t2-05-approver-hook",
+      "epoch": 0,
+      "turns": 98,
+      "assistant_messages": 382,
+      "tool_uses": 158,
+      "hidden_in_results": 9,
+      "advisor_calls": 6,
+      "advisor_results": 5,
+      "hidden_touches": 1,
+      "subagent_starts": 2,
+      "strict_touches": 0,
+      "files": 3,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    }
+  ]
+}
