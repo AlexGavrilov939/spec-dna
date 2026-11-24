@@ -226,4 +226,4 @@ A debt has no date and no expiry, because a check reads no clock. `status` and `
 - A definition line is not proof that the runner collects the test. A helper function with a name that no case has gives `no-case`, which is the correct result.
 - Without `--reports`, `check` keeps the rule of 0.7.1, so the hook `check --staged` needs no report.
 
-[Diagnostics](diagnostics.md#test-reports-sd613-to-sd617) lists the codes, and [commands](commands.md) gives `check --reports`, `show --reports` and the field `binds`.
+[Diagnostics](diagnostics.md#test-reports-sd613-to-sd617-and-sd621) lists the codes, and [commands](commands.md) gives `check --reports`, `show --reports` and the field `binds`.

@@ -145,7 +145,7 @@ spec-dna check [--base <rev>] [--all] [--lint] [--staged] [--reports]
 - With `--base`, it reads only tracked files, as CI does.
 - With `--staged`, the head tree is the git index: the tree that the next commit records. `check` reads `spec-dna.toml`, the documents, the test files, the code and the harness files (SD501, SD502, SD504, SD505) from the index. Untracked files and edits that are not staged do not count. `--staged` works with `--base` and `--all`, and the base does not change. `check` stops with exit code 4 for an unmerged path in the index, and with exit code 3 if `spec-dna.toml` is not in the index.
 
-- With `--reports` and a `[evidence] reports` list that is not empty, `check` also reads the test reports from the disk, also when git ignores them ([Test reports](config.md#test-reports)). It reports a missing, stale or unreadable report (SD613 to SD615). It reports a requirement whose tag binds to no passed test case (SD616 with `--all`, SD617 for a change that the diff finishes). It also reports a requirement of a finished change that passed fewer times than `[evidence] reliable-runs`, when `[evidence] reliable-for` covers the change (SD620). `--reports` does not combine with `--staged` (exit code 2), because the hook of a commit needs no report. With no key, or with an empty list, `--reports` changes nothing. `--reports` is an option of `check` only. The codes of the reports are off in `lite`.
+- With `--reports` and a `[evidence] reports` list that is not empty, `check` also reads the test reports from the disk, also when git ignores them ([Test reports](test-report.md)). It reports a missing, stale or unreadable report (SD613 to SD615). It reports a requirement whose tag binds to no passed test case (SD616 with `--all`, SD617 for a change that the diff finishes). It also reports a tag that binds a case by its name only (SD621, with `--all` and for a change that the diff finishes). It also reports a requirement of a finished change that passed fewer times than `[evidence] reliable-runs`, when `[evidence] reliable-for` covers the change (SD620). `--reports` does not combine with `--staged` (exit code 2), because the hook of a commit needs no report. With no key, or with an empty list, `--reports` changes nothing. `--reports` is an option of `check` and `show`. The codes of the reports are off in `lite`.
 
 The hook that `init` writes runs `spec-dna check --staged`. A commit records the index, so a check of the working tree can pass while the committed tree fails (SD101).
 
@@ -210,13 +210,15 @@ The JSON output lists each diagnostic. It also lists each document with its numb
 
 In the JSON output, the `path` of SD705 to SD707 is a folder, not a file, for an area that has no summary.
 
+With `--reports`, where `check` read the reports, the JSON output also has the top-level field `binds`, after `approvals`. It lists one object for each full tag that names a requirement, in the order of the tags. The field `requirement` (`<doc-id>#<key>`) comes first, then the fields of [the bind](#show). The field is not in the output without `--reports`, with no `[evidence] reports` key, or when each code of the reports is off, because then `check` reads no report. The text output has no line for each tag: the messages of SD616, SD617 and SD621 name the test and the case of each tag that needs work.
+
 ## evidence
 
 ```text
 spec-dna evidence stamp [--json]
 ```
 
-`evidence stamp` binds the test reports to the code tree ([Test reports](config.md#test-reports)). It reads each file that `[evidence] reports` matches, and it writes `<report>.stamp` next to it:
+`evidence stamp` binds the test reports to the code tree ([Test reports](test-report.md)). It reads each file that `[evidence] reports` matches, and it writes `<report>.stamp` next to it:
 
 ```text
 spec-dna-stamp 1
@@ -297,7 +299,7 @@ With `--query` (the task in plain words), the sections that match its words come
 ## show
 
 ```text
-spec-dna show <id>[#<anchor>]
+spec-dna show <id>[#<anchor>] [--reports] [--json]
 spec-dna show --conventions <type>
 ```
 
@@ -305,6 +307,25 @@ spec-dna show --conventions <type>
 
 - the number of recognized requirements (`--json`: their keys);
 - the evidence of each requirement: its `verified-by` paths and the full `covers:` tags of the tests. The partial tags (`covers: partial <doc-id>#<key>`) follow after `partial:`, as in `- loans#fines: none; partial: tests/test_fines.py:1`. `--json` gives each item of `evidence` the field `sources` (the full evidence) and the field `partial` (a list of `<path>:<line>`, empty if there is none).
+- the test under each full tag, in a bracket after the tag: `- loans#loan-period: tests/test_loans.py:12 [test test_period]`. A tag that stands above no test shows its reason: `[no test: no-test]` (the reasons are `no-test`, `group` and `template`). A `verified-by` source and a partial tag get no bracket.
+
+`--reports` makes `show` read the test reports as `check --reports` does: it computes the hash of the code tree, and it reads the reports ([Test reports](test-report.md)). It changes nothing when `[evidence] reports` has no key or an empty list. The bracket of a full tag then gives the result and the case: `[passed test_period]`, `[failed test_period]`, `[skipped test_period]`, or `[passed Valves closes on timeout, by name]` for a bind by name only (SD621). A tag that binds no case shows the reason: `[unbound: no-case]`, `[unbound: outside-tree]` or `[unbound: no-report]`. `--reports` with `--conventions` is a usage error (exit code 2).
+
+With `--json`, each item of `evidence` has the field `binds`: one object for each full tag, in the order of `sources`. It is an empty list when the requirement has no full tag. The object has these fields:
+
+| Field | Value |
+| --- | --- |
+| `tag` | `<path>:<line>` of the tag, the string of `sources` |
+| `test` | the name of the test under the tag, or the value of `case:`. `null` for the reasons `no-test` and `group` |
+| `by` | `"definition"` (the test under the tag) or `"case"` (the value of `case:`) |
+| `case` | the name of the case that decides the result, as SD616 and SD617 name it. `null` with no bound case, or without `--reports` |
+| `cases` | the number of bound cases. `0` without `--reports` |
+| `fit` | `"file"`, `"classname"` or `"name"`. `null` with no bound case |
+| `shared` | `true` for a shared set: the tag proves only when each case passed |
+| `result` | `"passed"`, `"failed"`, `"skipped"`, `"unbound"`, or `"not-read"` without `--reports` |
+| `reason` | `null`, or one of `"no-test"`, `"group"`, `"template"`, `"no-case"`, `"outside-tree"`, `"no-report"` |
+
+For example: `{"tag":"tests/test_loans.py:12","test":"test_period","by":"definition","case":"test_period","cases":1,"fit":"classname","shared":false,"result":"passed","reason":null}`. `check --reports --json` gives the same object for each tag, with the field `requirement` first.
 
 `show --conventions <type>` prints the conventions for documents of the type. These are the sections of project documents that `[conventions]` in `spec-dna.toml` names. The output also gives the names of the amendment and live sections of the type. When a target of `context` is a document of that type, `context` serves the same sections first.
 
@@ -677,7 +698,7 @@ spec-dna finish <slug> [--holds <id>]... [--dry-run] [--base <rev>] [--json]
     - A relative link of a delta line moves to the path of the target document.
     - The result keeps CRLF, a BOM and the final newline of each file.
     - A line that the tree applies already is skipped, so a second run changes nothing.
-6. Step 5: each requirement that the delta adds or changes has evidence (SD916). A partial `covers:` tag alone is not evidence. For a change with no delta, each requirement whose hash differs from the base has it. The result may add no error. The only exceptions are SD305 for a new document, and SD641 and SD642 for a roll-up document that `finish` leaves stale (see the roll-up, below). With `[evidence] reports`, step 5 has 2 more parts, and the numbers of the steps stay. Step 5.1 runs first: each test report must be present, readable and fresh (SD613 to SD615). Step 5.4 is the check of the evidence: a requirement that has a tag also needs a bound test case that passed in the reports (SD617). With `[evidence] reliable-for`, a requirement of a covered change that passed fewer times than `[evidence] reliable-runs` stops step 5.4 with SD620 ([Proof levels and the proof debt](config.md#proof-levels-and-the-proof-debt)). A proof debt (`proof-owed`) is no evidence for SD916, SD617 and SD620. Run the tests and `spec-dna evidence stamp` before `finish`, in the same checkout ([Test reports](config.md#test-reports)). The steps are off in `lite`.
+6. Step 5: each requirement that the delta adds or changes has evidence (SD916). A partial `covers:` tag alone is not evidence. For a change with no delta, each requirement whose hash differs from the base has it. The result may add no error. The only exceptions are SD305 for a new document, and SD641 and SD642 for a roll-up document that `finish` leaves stale (see the roll-up, below). With `[evidence] reports`, step 5 has 2 more parts, and the numbers of the steps stay. Step 5.1 runs first: each test report must be present, readable and fresh (SD613 to SD615). Step 5.4 is the check of the evidence: a requirement that has a tag also needs a bound test case that passed in the reports (SD617). With `[evidence] reliable-for`, a requirement of a covered change that passed fewer times than `[evidence] reliable-runs` stops step 5.4 with SD620 ([Proof levels and the proof debt](config.md#proof-levels-and-the-proof-debt)). A proof debt (`proof-owed`) is no evidence for SD916, SD617 and SD620. Run the tests and `spec-dna evidence stamp` before `finish`, in the same checkout ([Test reports](test-report.md)). The steps are off in `lite`.
 7. Steps 5.2 and 5.5: the acceptance record ([accept](#accept)). They run in `standard` and `strict`, and in `lite` only with a rule that turns the group `acceptance` on. A change needs a record when `[change] acceptance-for` asks for it, or a role of [`[owners]`](config.md#the-table-owners) matches a role path of the change, and its plan is new: the branch added it, or the commit that added it on the base pinned 0.8.0 or later ([diagnostics.md](diagnostics.md#the-acceptance-record-sd927-to-sd935)). A closed change and a change with no plan need none. For a plan of an older pin, `finish` prints on stderr ``note: `<plan>` was added when spec-dna.toml pinned <pin>, before 0.8.0, so the change needs no acceptance record; to opt in, start one agent `acceptor` with the prompt `cd '<root>' && spec-dna accept <slug> --brief`: its record ends the exemption``, and it runs no step 5.2. When the folder of the change has `acceptance.toml`, the change opted in: it needs its record as a change of 0.8.0 does, step 5.2 checks the record (SD927 to SD933 and SD941), and `finish` prints no note.
 
     Step 5.2 comes after step 5.1 and before the evidence (step 5.4). It reads `<folder>/acceptance.toml` of `HEAD`. It stops at the first code that is not off, in this order:
