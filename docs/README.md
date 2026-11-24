@@ -38,9 +38,12 @@ This page lists each page of the documentation. The [README](../README.md) gives
 
 - [Evidence](evidence.md): the experiments and their limits.
 - [Model team measurement](team-measurement.md): the pilot of the measurement of the model team, and why the batch did not run.
-- [Model team measurement, protocol 2](team-measurement-2.md): the 3 probes on real slices from the history, and why the gate stopped the batch.
+- [Model team measurement, protocol 2](team-measurement-2.md): the probes and the batch on real slices from the history, and the result.
 - [Decisions](adr/): the ADRs of the project.
 - [Designs](design/): the design of a version, with the deviations of each step.
 - [Design note of 0.8.1](design/0.8.1-note.md): the start of the design of 0.8.1, with the parts that moved from the design of 0.8.0.
+- [Design of 0.8.1, part A: evidence and context](design/0.8.1-a-evidence-and-context.md): the binding of a test tag, the summary tier of `context`, the pins of the roll-up and the untracked tests.
+- [Design of 0.8.1, part A: lifecycle and harness](design/0.8.1-a-lifecycle-and-harness.md): the friction of the change process, the context meter, the default harness and the eval runner.
+- [Harness additions of 0.8.1](design/0.8.1-harness-additions.md): the design of 5 harness additions: the subagent card, the limit of failed fixes, lessons, the cost report and `outline`.
 - [Research matrix](research/matrix.md): standards and prior art.
 - [Changelog](../CHANGELOG.md), [Contributing](../CONTRIBUTING.md), [Security](../SECURITY.md).

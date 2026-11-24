@@ -126,3 +126,13 @@ ADR 0001 and ADR 0006 are accepted and locked, so this ADR does not edit them. W
 - ADR 0006, "Context and Problem Statement", the constraint "A gate MUST run from the repository with only spec-dna and git": as in the first item.
 
 ## Amendments
+
+### 2026-11-24: the bind of a tag and the code tree (0.8.1)
+
+Status: accepted by the owner's word of 2026-11-24. The design is D82 and D85 of [part A of 0.8.1, evidence and context](../design/0.8.1-a-evidence-and-context.md).
+
+These rules apply in place of the named text.
+
+- "The bind of a tag", each item: A tag binds to the test that it stands directly above: the first test definition after the tag, after blank lines, comments, decorators, annotations and attributes, or a definition on the line of the tag or after an annotation on its line. The forms of a test are a closed list of line patterns, so the rule needs no parser and no language detection. A case names the test only in the closed list of name forms of the design (parameters, subtests, module paths, data sets, and the titles of groups). A tag above no test, above a group or above a test with a template name binds no case. `case:<name>` binds the cases whose name equals the value. A case fits the test file of the tag by its `file`, or by a `classname` that names test files: a dotted path, a path, a folder of a package or the binary id of a test. A case that names no file fits by its name only, and SD621 reports the bind. A case that fits by name only does not bind when another case of the test fits the file. No case binds a tag of any test file. When 2 tests of one file have one name, or the cases that fit by name only are not one case, each bound case must pass.
+- "The code tree", the sentence "An untracked file does not count": it also applies to the bind. A tag proves a requirement only when its test file is a path of the code tree.
+- "Consequences", the sentence "The bind by name can miss a case. The tag then proves nothing until the author adds `case:`": it stays, and the messages name the reason of each miss.

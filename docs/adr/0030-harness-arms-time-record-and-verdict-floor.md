@@ -95,3 +95,13 @@ ADR 0008, ADR 0016 and ADR 0021 are accepted and locked, so this ADR does not ed
 ## Amendments
 
 The row of 1 pair in the table of the lab estimates is wrong, and so is the figure of 29% in the first gap. The control rate `b` is uniform from 0.2 to 0.8, and one pair is `on` only when the arm with the skill passes and the other fails. Thus the share is E[b(1 - b)] = 0.22 with no true gain, and E[(b + 0.2)(1 - b)] = 0.32 with a true gain of 0.20. The first lab run gave 0.29 and 0.44, which this model cannot give. Read these 2 values for the row `1 x 1`; the floor of 15 pairs stays, as the other rows do not change.
+
+### 2026-11-24: the turns, one arm and the free space (0.8.1)
+
+Status: accepted by the owner's word of 2026-11-24.
+
+- `turns` is the sum of `num_turns` over the `result` events of a run. A background task can wake the agent after it stopped, and each wake-up ends with a `result` event that counts its own segment. Each result of a run also gets `segments`, the number of these events. The runner passes `--output-format stream-json --verbose`, so it sees each event. A record of an earlier version holds the turns of the last segment.
+- `--arms` runs 1, 2 or 3 arms. With 1 arm, the arms of one eval can run as separate commands at the same time. `eval verdict --compare` joins the result files of these commands by the eval and the number of the run.
+- A run starts only when the temporary folder and the folder of the result have `[evals] min-free-mib` MiB free. Else the command stops as at the cap.
+
+The design is D95 and D100 of [part A of 0.8.1](../design/0.8.1-a-lifecycle-and-harness.md).

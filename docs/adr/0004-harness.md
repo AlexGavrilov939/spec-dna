@@ -125,3 +125,15 @@ No hook stores prompt, command or tool text. The context meter stores only the l
 - Bad: the model id table (alias to id, for `modelSettings`) belongs to a release. When Anthropic changes the model of an alias, `check` of the new spec-dna reports SD502 until `init` writes the new id.
 
 ## Amendments
+
+### 2026-11-24: the advisor in 0.8.1
+
+Status: accepted by the owner's word of 2026-11-24.
+
+After protocol 2 of the model-team measurement ([ADR 0033](0033-protocol-2-of-the-model-team-measurement.md), [results](../team-measurement-2.md)), the owner decided 3 points.
+
+- The role `advisor` of a new configuration is `none` in the profiles `lite` and `standard`, and `fable` in `strict`. `init` writes it. A table with no `advisor` entry still reads as `fable`, so `upgrade` changes no project.
+- Where the advisor is on, the model-team line asks the main session to consult it only in a change of class `higher-risk`. The rule is text: no hook and no check enforces it.
+- The gate of the section "Rejected" that stops work until the advisor reads the changes is not planned. The data now exist: `lean` against `lean-no-advisor` gave -0.10 on the main measure (90% interval -0.20 to 0.00) at 1.49 times the cost (1.33 to 1.65), `no-gain-at-cost` on all runs, and `inconclusive` by the rule of ADR 0033. In both readings, no run shows a gain that a gate could protect. Claude Code 2.1.330 also runs no hook on the advisor tool, so a gate cannot see a call.
+
+The design is D97 to D99 of [part A of 0.8.1](../design/0.8.1-a-lifecycle-and-harness.md).
