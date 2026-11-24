@@ -34,7 +34,7 @@ status: approved
 - [x] t6: Write the new lines Read first of D94 and the line Reads after them. Files: `.claude/agents/test-engineer.md`, `.claude/agents/release-engineer.md`, `.claude/agents/docs-editor.md`. Verify: `pre-commit run --all-files` and the same grep on the 3 files. Hours: 1.
 - [x] t7: Write the new line Read first of `failure-analyst` and the line Reads after it. Add the line Reads to `checker` after its paragraph Scope, and to `architect` after its line Read first. Files: `.claude/agents/failure-analyst.md`, `.claude/agents/checker.md`, `.claude/agents/architect.md`. Verify: `pre-commit run --all-files` and the same grep on the 3 files. Hours: 1.
 - [x] t8: Write the entry of the change. Files: `CHANGELOG.md`. Verify: `pre-commit run --all-files`. Hours: 1.
-- [ ] t9: Run the independent review, and finish the change. Files: none: finish deletes the folder of the change. Verify: `spec-dna finish meter-fix --dry-run`. Hours: 1.
+- [x] t9: Run the independent review, and finish the change. Files: none: finish deletes the folder of the change. Verify: `spec-dna finish meter-fix --dry-run`. Hours: 1.
 
 ## Risks
 
