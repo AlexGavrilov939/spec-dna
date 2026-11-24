@@ -894,7 +894,13 @@ pub fn under_tag(lines: &[&str], tag: usize) -> Under {
     let tag_indent =
         comment_open(lines, tag).map_or_else(|| indent(lines[tag]), |k| indent(lines[k]));
     let mut annotated = false;
-    if let Some(pos) = lines[tag].find(TAG) {
+    // The text before `covers:` is a definition only when the line does not
+    // start with a comment: `/// covers:` and `// This test covers:` are
+    // comments, and the scan goes on below them.
+    if let Some(pos) = lines[tag]
+        .find(TAG)
+        .filter(|&pos| !is_comment(lines[tag][..pos].trim()))
+    {
         let own = [before_tag(&lines[tag][..pos])];
         let (mut off, mut any) = (0, false);
         while let Some((_, o)) = skip_item(&own, 0, off, 1) {
@@ -2844,6 +2850,12 @@ mod tests {
             // A definition on the line of the tag, before the text.
             ("def test_x():  # covers: a#b\n    pass\n", def("test_x")),
             ("@Test fun closes() { // covers: a#b\n}\n", def("closes")),
+            // A doc comment, and a comment with words before the tag, are no
+            // definition: the scan goes on below.
+            ("/// covers: a#b\n#[test]\nfn closes() {\n", def("closes")),
+            ("// This test covers: a#b\ndef test_x():\n", def("test_x")),
+            ("/* The test covers: a#b */\n@Test\nvoid x() {\n", def("x")),
+            ("# a note, covers: a#b\ndef test_x():\n", def("test_x")),
             // A comment or blank lines between the tag and the test.
             (
                 "# covers: a#b\n# more text\n\n# covers: c#d\ndef test_x():\n",

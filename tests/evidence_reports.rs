@@ -2533,7 +2533,19 @@ fn an_exact_case_name_that_one_case_has_gives_no_sd621() {
     );
     stamp(&r);
     let (code, out) = check(&r, &["--all"]);
-    assert_eq!(state_lines(&out, "SD621").len(), 1, "{out}");
+    let found = state_lines(&out, "SD621");
+    assert_eq!(found.len(), 1, "{out}");
+    // The tag has `case:` already, so the message does not tell the author to
+    // add it.
+    assert!(
+        found[0].contains("names the case `Valves closes on timeout`"),
+        "{out}"
+    );
+    assert!(
+        found[0].contains("more than one case of that name"),
+        "{out}"
+    );
+    assert!(!found[0].contains("add `case:"), "{out}");
     assert_eq!(code, 1, "{out}");
 }
 
