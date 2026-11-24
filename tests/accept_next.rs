@@ -568,12 +568,22 @@ fn a_deviation_that_the_record_lacks_and_a_bad_deviation_leave_the_item_open() {
         line.starts_with("[ ] ") && line.contains("no entry for the deviation `d1`"),
         "{line}"
     );
-    let r = with_plan("- d1: no kind");
+    // `accept` refuses a plan with an item that is not valid (D88), so the item
+    // breaks after the record.
+    let r = with_plan("- d1 (plan): The check moved.");
     commit_record(&r, "accepted");
+    let t = r
+        .read(RECORD)
+        .replace("verdict = \"pending\"", "verdict = \"accepted\"");
+    r.write(RECORD, &t);
+    r.commit("answer the deviation");
+    let plan = r.read(PLAN).replace("- d1 (plan):", "- d1:");
+    r.write(PLAN, &plan);
+    r.commit("break the item");
     let out = next_text(&r);
     let line = accept_line(&out).unwrap();
     assert!(
-        line.starts_with("[ ] ") && line.contains("is not valid"),
+        line.starts_with("[ ] ") && line.contains("the item of `Deviations` is not valid"),
         "{line}"
     );
 }

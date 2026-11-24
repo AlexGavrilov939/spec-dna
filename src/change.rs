@@ -1436,7 +1436,7 @@ pub fn deviation_lines(plan: &Doc) -> Vec<DeviationLine> {
                 && !seen.insert(d.id.clone())
             {
                 parsed = Err(format!(
-                    "the id `{}` is used already in `Deviations`: one item for each id",
+                    "the id `{0}` is used already in `Deviations`: give each item its own id, for example `{0}-2`; a task with 2 deviations has 2 items",
                     d.id
                 ));
             }
@@ -2751,12 +2751,10 @@ mod section_tests {
         }
         let twice = dev("- d1 (plan): a\n- d1 (spec): b");
         assert!(twice[0].parsed.is_ok());
-        assert!(
-            twice[1]
-                .parsed
-                .as_ref()
-                .unwrap_err()
-                .contains("used already")
+        // The message names the fix of a repeated id (D88).
+        assert_eq!(
+            twice[1].parsed.as_ref().unwrap_err(),
+            "the id `d1` is used already in `Deviations`: give each item its own id, for example `d1-2`; a task with 2 deviations has 2 items"
         );
         let bad_label = dev("- d4 (spec): x. Delta: UPDATE a#b");
         assert!(bad_label[0].parsed.as_ref().unwrap().fix.delta_bad);

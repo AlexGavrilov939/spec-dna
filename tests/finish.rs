@@ -2167,6 +2167,24 @@ fn s5_record(r: &Repo, edit: impl Fn(String) -> String) -> String {
     t
 }
 
+/// Like `s5_record`, for a plan or a spec with an item that is not valid.
+/// `accept` refuses such a change (D88). So the 4 codes of the sections are off
+/// while the record is written, and on again when `finish` runs: `finish` still
+/// stops on the item, with the code of the item.
+fn s5_record_unchecked(r: &Repo) -> String {
+    let cfg = r.read("spec-dna.toml");
+    let off = cfg.replace(
+        "SD608 = \"off\"",
+        "SD608 = \"off\"\nSD936 = \"off\"\nSD937 = \"off\"\nSD939 = \"off\"\nSD940 = \"off\"",
+    );
+    r.write("spec-dna.toml", &off);
+    r.commit("turn the checks of the sections off");
+    let t = s5_record(r, |t| t);
+    r.write("spec-dna.toml", &cfg);
+    r.commit("turn the checks of the sections on");
+    t
+}
+
 fn s5_finish(r: &Repo, args: &[&str]) -> (i32, String, String) {
     let mut v = vec!["finish", S5_SLUG];
     v.extend(args);
@@ -2535,7 +2553,7 @@ fn in_lite_with_no_record_finish_prints_no_deviations_and_exits_0() {
 fn a_bad_item_in_the_plan_or_the_spec_stops_finish_before_the_answers() {
     // SD939: a deviation with no kind.
     let r = s5_built("standard", "", "", |_| String::new(), "- d1: no kind.");
-    s5_record(&r, |t| t);
+    s5_record_unchecked(&r);
     let (code, out, err) = s5_finish(&r, &["--json"]);
     assert_eq!(code, 1, "{out}{err}");
     assert!(out.contains("\"code\":\"SD939\""), "{out}");
@@ -2547,7 +2565,7 @@ fn a_bad_item_in_the_plan_or_the_spec_stops_finish_before_the_answers() {
         |_| String::new(),
         "- d1 (spec): The valve closes after 2 reads.",
     );
-    s5_record(&r, |t| t);
+    s5_record_unchecked(&r);
     let (code, out, err) = s5_finish(&r, &["--json"]);
     assert_eq!(code, 1, "{out}{err}");
     assert!(out.contains("\"code\":\"SD940\""), "{out}");
@@ -2559,7 +2577,7 @@ fn a_bad_item_in_the_plan_or_the_spec_stops_finish_before_the_answers() {
         |_| "- requirements/valves#overflow@0123456789abcdef".to_string(),
         "",
     );
-    s5_record(&r, |t| t);
+    s5_record_unchecked(&r);
     let (code, out, err) = s5_finish(&r, &["--json"]);
     assert_eq!(code, 1, "{out}{err}");
     assert!(out.contains("\"code\":\"SD936\""), "{out}");
@@ -2571,7 +2589,7 @@ fn a_bad_item_in_the_plan_or_the_spec_stops_finish_before_the_answers() {
         |_| "- rules/safety#valve-closed@0123456789abcdef".to_string(),
         "",
     );
-    s5_record(&r, |t| t);
+    s5_record_unchecked(&r);
     let (code, out, err) = s5_finish(&r, &["--json"]);
     assert_eq!(code, 1, "{out}{err}");
     assert!(out.contains("\"code\":\"SD937\""), "{out}");
@@ -2628,7 +2646,7 @@ fn a_spec_with_a_change_line_for_the_rule_and_the_same_hash_in_the_item_finishes
     let spec = r.read(S5_SPEC).replace(S5_DELTA, &delta);
     r.write(S5_SPEC, &spec);
     r.commit("a change line for the rule");
-    s5_record(&r, |t| t);
+    s5_record_unchecked(&r);
     let (code, out, err) = s5_finish(&r, &["--json"]);
     assert_eq!(code, 1, "{out}{err}");
     assert!(out.contains("\"code\":\"SD937\""), "{out}");
@@ -3009,7 +3027,7 @@ fn sd939_and_sd940_stop_a_change_whose_folder_is_in_the_base() {
         "{out}"
     );
     // The record answers the valid item, so `finish` stops on SD939 first.
-    s5_record(&r, |t| t);
+    s5_record_unchecked(&r);
     let (code, out, err) = s5_finish(&r, &["--json"]);
     assert_eq!(code, 1, "{out}{err}");
     assert!(
