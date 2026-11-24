@@ -137,7 +137,7 @@ sonnet = "high"
 | `spec-dna` | string | required | The pinned version. If the binary has a different version, `check`, `finish`, `accept`, `approve`, `refresh`, `evidence stamp`, `eval run`, `import` and `init` do not run. They print the install command and exit with code 3. The other commands print a warning. To move the pin, run `spec-dna upgrade`. In the checkout of spec-dna itself (a tree binary), SD503 does not count a change of the pin line. See [the tree binary](diagnostics.md#files-that-sd503-counts). |
 | `spec-dna-sha256` | table | none | The SHA-256 sums of the release assets of the pin. Each key is an asset name: `spec-dna-<version>-<target>`, with the suffix `.exe` for a Windows target. Each value is its sum. See [The table `spec-dna-sha256`](#the-table-spec-dna-sha256). |
 | `profile` | string | `"standard"` | The default severity of each diagnostic code: `"lite"`, `"standard"` or `"strict"`. [docs/profiles.md](profiles.md) gives the table. |
-| `rules` | table | `{}` | Severity overrides for every root. A key is a rule group (`references`, `ids`, `budgets`, `area-budget`, `drift`, `evidence`, `reports`, `proof`, `acceptance`, `rollup`, `lint`, `layers`, `changes`) or a code (`SD704`). A value is `"off"`, `"warning"` or `"error"`. A code rule has priority over a group rule. The group `evidence` holds SD103, SD105 and SD608. The group `reports` holds SD613 to SD617. The group `proof` holds SD618 to SD620. The group `acceptance` holds SD927 to SD941. The group `rollup` holds SD641 to SD645. The group `area-budget` holds SD705 to SD707. A rule for the group `budgets` does not change the groups `rollup` and `area-budget`. No rule for the group `evidence` changes the groups `reports` and `proof`. No rule for the group `changes` changes the group `acceptance`. The group `layers` holds SD901 to SD904. The group `changes` holds SD905 and SD910 to SD926. The word `rules` in `[layers.rules]` is a layer name, not the `[rules]` table: the key path shows which one. |
+| `rules` | table | `{}` | Severity overrides for every root. A key is a rule group (`references`, `ids`, `budgets`, `area-budget`, `drift`, `evidence`, `reports`, `proof`, `acceptance`, `rollup`, `lint`, `layers`, `changes`) or a code (`SD704`). A value is `"off"`, `"warning"` or `"error"`. A code rule has priority over a group rule. The group `evidence` holds SD103, SD105 and SD608. The group `reports` holds SD613 to SD617. The group `proof` holds SD618 to SD620. The group `acceptance` holds SD927 to SD941. The group `rollup` holds SD641 to SD647. The group `area-budget` holds SD705 to SD707. A rule for the group `budgets` does not change the groups `rollup` and `area-budget`. No rule for the group `evidence` changes the groups `reports` and `proof`. No rule for the group `changes` changes the group `acceptance`. The group `layers` holds SD901 to SD904. The group `changes` holds SD905 and SD910 to SD926. The word `rules` in `[layers.rules]` is a layer name, not the `[rules]` table: the key path shows which one. |
 | `language` | string | `"en"` | The language of the normative text: a BCP 47 language tag, such as `en`, `en-GB` or `de`. It is a top-level key only. The form is a primary subtag of 2 or 3 letters, then subtags of 1 to 8 letters or digits, separated by `-`. spec-dna does not check a tag against the language registry. A tag in another form, such as `english`, `en_GB` or `x-private`, is an error (exit code 3). The primary subtag `en` (in any case) means English. Another primary subtag disables the checks that read English word lists (SD801 to SD805 and SD904). |
 | `change` | table | none | The change process. See [The table `change`](#the-table-change). |
 | `change.policy` | string | required in the table | `"three-class"`, `"two-class"` or `"none"`. Without the `[change]` table the policy is `"none"`. With `"none"`, the codes SD905 and SD910 to SD926 are off, and no rule can enable them. |
@@ -171,6 +171,7 @@ sonnet = "high"
 | `layers.<name>.max-chars` | integer | none | The most body characters in the layer. |
 | `layers.<name>.max-started` | integer | none | The most started changes. |
 | `layers.<name>.stale-days` | integer | none | The days without a commit before a change is stale. |
+| `layers.<name>.rolls-up` | list of strings | the layer of the type `requirements` | Only on the layer of the type `summary`: the source layers of the summaries. Each name is a layer that has the type `requirements`, `interface`, `rule`, `decision` or `research`. See [The key `rolls-up`](#the-key-rolls-up). `init` writes no key. |
 | `evidence.tests` | list of globs | the default test paths | The files where `check` reads `covers: <doc-id>#<key>` tags. The default covers `**/tests/**`, `**/test/**`, `**/__tests__/**` and test file names such as `*_test.*`, `test_*.*`, `*.test.*`, `*.spec.*`, `*Test.*` and `*_spec.*`. An empty list disables the tags. |
 | `evidence.reports` | list of globs | `[]` | The test report files, as globs from the repository root. Empty: the test reports are off, and a tag alone proves a requirement. With a list, `spec-dna evidence stamp` stamps the reports, and `check --reports` and `finish` read them ([Test reports](#test-reports)). `init` writes `reports = []` with a comment in `standard` and `strict`, and no key in `lite`. |
 | `evidence.tree-exclude` | list of globs | `["**/*.md", "**/*.markdown"]` | The paths that the code tree leaves out, so that an edit of them does not make a report stale. A list replaces the default. A project whose Markdown files are code sets its own list. |
@@ -295,6 +296,7 @@ The graph has these rules. A break of a rule is a configuration error (exit code
 - An entry of `files` is a relative path inside the root, and no 2 layers have the same file.
 - No 2 layers have the same folder. A layer with no `dir` has the folder of its name.
 - A layer has only the keys of the table above.
+- The key `rolls-up` is only on a layer that has the type `summary` ([The key `rolls-up`](#the-key-rolls-up)).
 
 The layers also give the place of a document: its type, if the front matter has no `type`. [Place gives the type](types.md#place-gives-the-type) has the rule. A mixed root with `[layers]` needs a layer for each type that its documents have. A document of a type that no layer has gives SD303, and the message says to run `spec-dna layer add`.
 
@@ -303,6 +305,25 @@ The level of a layer is the number of edges on its longest `moves-to` path to a 
 A document belongs to the first layer in the file whose `paths` match it. If no `paths` match, it belongs to the layer that has its type. `spec-dna layer list` shows which rule put each document in its layer: `paths`, `files` (a top file of the layer of its type) or `type`.
 
 A project with no `[layers]` table gets the [default graph](#default-graph) without the layer `summaries`. Reason: a project of 0.7.1 can have a folder `summaries/` with documents of another type, and a new place type would change their type. `spec-dna layer add summaries` adds the layer. If the project sets `types`, the graph keeps only the layers that hold one of these types. It drops the edges to the other layers. A project with a `[layers]` table gets only the layers that it writes. A project with a `[layers]` table and a `summary` document, but with no layer that has the type, gets SD303, and the message names `spec-dna layer add summaries`.
+
+### The key `rolls-up`
+
+The key `rolls-up` is a list of layer names. It is only on the layer that has the type `summary`. It names the source layers of the summaries: the layers whose documents a summary can pin ([Summary](types.md#summary)). With no key, the only source layer is the layer that has the type `requirements`, and the roll-up gives the result of 0.8.0.
+
+```toml
+[layers.summaries]
+types = ["summary"]
+rolls-up = ["requirements", "interfaces", "decisions", "research"]
+```
+
+These break the rules of the key. Each one is a configuration error (exit code 3), and the message names the key:
+
+- The key is on a layer that has no type `summary`.
+- A name is not a layer of `[layers]`.
+- A named layer has none of the types `requirements`, `interface`, `rule`, `decision` and `research`.
+- The folder of a source layer is inside the folder of another source layer. `requirements` and `requirements/interfaces` are an example. `requirements` and `requirements-api` are not.
+
+An empty list is valid: the summaries then have no source layer. A project opts in by hand, because `init` writes no key. A project that opts in rewrites its summaries once, with `spec-dna refresh --all`. Each pin adds about 60 bytes to the front matter of a summary, and no byte goes into `context`.
 
 ### Keep and context
 
@@ -429,6 +450,8 @@ The class of a change for the acceptance is `higher-risk` when one of these is t
 Where the diff deletes the folder of the change, the head has no intent. Then the newest intent of the change (at the last commit of the branch that has the folder, else in the base tree) takes the place of the intent of the head in the first point, so an absent or invalid class there is `higher-risk` too, and `check` after `finish` reads the class that `finish` read. The history of the branch counts only an explicit `higher-risk`.
 
 Thus a branch cannot lower or remove the class to skip the record. A change that a person merged into the base as `routine` stays `routine`.
+
+A plan that a commit added when `spec-dna.toml` pinned a version before 0.8.0 needs no record. `next` and `finish` print one note for it, and the note names the prompt of the acceptor. To opt in, start the acceptor with the prompt of the note. When the folder of the change has `acceptance.toml`, the change needs its record as a change of 0.8.0 does: `finish` checks the record at step 5.2. The note is only for a change that would need a record if its plan were new, while its folder has no record. A change in `lite`, and a `routine` change in `standard`, get no note.
 
 A branch can edit `spec-dna.toml`, so the rule reads each value of the configuration as the stricter of the head and the tree of the base. The acceptance is on when SD927 is on in the head or in the base. `acceptance-for` is the stricter of the 2 values, each with the default of its own profile (`all` before `higher-risk`, and `higher-risk` before `none`). `high-risk-paths` and `high-risk-layers` are the union of the 2 lists. `higher-risk-acceptors` is the larger value. When the head turns off a code of the group `acceptance` that the base has on, the record checks (SD927 to SD935 and SD938) use the severities of the base. `finish` also reads the codes SD936, SD937, SD939 and SD940 with the base. In `check`, those 4 codes follow the head. A base tree with no `spec-dna.toml` (a pull request that adopts spec-dna) has nothing to lower, so the head decides. A base `spec-dna.toml` that does not parse gives the strictest values: the acceptance on and `acceptance-for = "all"`. The commits between the base and the head add nothing, because they cannot lower the base. A pull request that lowers a value and merges is the act of a person, so the next change reads the new value.
 
