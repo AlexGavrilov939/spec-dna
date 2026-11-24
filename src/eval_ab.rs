@@ -374,10 +374,7 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
         excluded: vec![0, 0],
         models: BTreeSet::new(),
         streak: 0,
-        floor: Floor::new(
-            table.min_free_mib,
-            Some((repo.root.join(&out_dir), out_dir.clone())),
-        ),
+        floor: result_floor(repo, table.min_free_mib, &out_dir, o.resume.as_deref()),
         low: None,
     };
     let mut started = utc_time(now_secs());
@@ -647,6 +644,20 @@ const STREAK_STOP: u32 = 5;
 enum Done {
     Counted(Side),
     Stop(Stop),
+}
+
+/// The check of the free space of a run of `--ab` or `--arms` (D100). The
+/// folder of the result is the folder of the file of `--resume`, which the
+/// command writes again, and else `out_dir`.
+fn result_floor(repo: &Repo, min_mib: u64, out_dir: &str, resume: Option<&str>) -> Floor {
+    let dir = match resume {
+        Some(file) => match Path::new(file).parent() {
+            Some(p) if !p.as_os_str().is_empty() => p.display().to_string(),
+            _ => ".".to_string(),
+        },
+        None => out_dir.to_string(),
+    };
+    Floor::new(min_mib, Some((repo.root.join(&dir), dir)))
 }
 
 /// Builds the result from the state.
@@ -2153,10 +2164,7 @@ pub fn run_arms(repo: &Repo, cfg: &Config, o: &ArmsOpts) -> Result<u8, Fatal> {
         excluded: vec![0; o.arms.len()],
         models: BTreeSet::new(),
         streak: 0,
-        floor: Floor::new(
-            table.min_free_mib,
-            Some((repo.root.join(&out_dir), out_dir.clone())),
-        ),
+        floor: result_floor(repo, table.min_free_mib, &out_dir, o.resume.as_deref()),
         low: None,
     };
     let mut started = utc_time(now_secs());

@@ -2812,6 +2812,48 @@ fn a_disk_below_the_floor_stops_before_the_second_pair_and_resume_goes_on() {
 }
 
 #[test]
+fn a_resume_reads_the_free_space_of_the_folder_of_its_result_file() {
+    // D100: the folder of the result file. A first run with `--out` has its
+    // file there, and `--resume` writes the same file.
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM[..1]);
+    let first = ["--max-total-usd", "100", "--out", "evals/kept"];
+    let (code, out, err) = fx.arms("none", &first, &[("STUB_DF_LOW_AFTER", "0")]);
+    assert_eq!(code, 3, "{out}{err}");
+    let mut full = vec!["tdd"];
+    full.extend_from_slice(&["--max-total-usd", "100", "--out", "evals/kept-ab"]);
+    let (code, out, err) = fx.run_env(&full, &[("STUB_DF_LOW_AFTER", "0")]);
+    assert_eq!(code, 3, "{out}{err}");
+    let file_in = |dir: &str| {
+        let entry = fs::read_dir(fx.repo.dir.join(dir))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap();
+        format!("{dir}/{}", entry.file_name().to_string_lossy())
+    };
+    let arms_file = file_in("evals/kept");
+    let ab_file = file_in("evals/kept-ab");
+    for (dir, resume) in [("evals/kept", &arms_file), ("evals/kept-ab", &ab_file)] {
+        fs::remove_file(fx.path("df-log")).unwrap();
+        let args = ["--resume", resume.as_str(), "--max-total-usd", "100"];
+        let (code, out, err) = if dir == "evals/kept" {
+            fx.arms("none", &args, &[])
+        } else {
+            let mut full = vec!["tdd"];
+            full.extend_from_slice(&args);
+            fx.run_env(&full, &[])
+        };
+        assert_eq!(code, 0, "{out}{err}");
+        let calls = fx.df_calls();
+        assert!(!calls.is_empty());
+        for pair in calls.chunks(2) {
+            assert!(pair[1].ends_with(&format!("/{dir}")), "{calls:?}");
+        }
+    }
+}
+
+#[test]
 fn a_stop_before_the_first_run_of_ab_and_arms_prints_no_negative_zero() {
     let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
     fx.add_plain(&TEAM[..1]);
