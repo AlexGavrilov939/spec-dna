@@ -717,3 +717,79 @@ fn refresh_writes_the_frontier_of_the_source_layers() {
     );
     assert!(!check_all(&r).contains("SD64"));
 }
+
+/// A project with only decisions and research in the 2 areas `storage` and
+/// `billing`, each with a summary that has current pins, committed.
+fn two_area_project() -> Repo {
+    let r = Repo::with_config(&format!("profile = \"standard\"\n\n{STORAGE_LAYERS}"));
+    r.write("docs/decisions/storage/use-sqlite.md", USE_SQLITE);
+    r.write("docs/research/storage/write-load.md", WRITE_LOAD);
+    r.write(
+        "docs/decisions/billing/use-ledger.md",
+        &USE_SQLITE.replace("SQLite", "ledger"),
+    );
+    for area in ["storage", "billing"] {
+        let (code, out, err) = r.run(&["new", "summary", area]);
+        assert_eq!(code, 0, "{out}{err}");
+        let path = format!("docs/summaries/{area}.md");
+        let text = r.read(&path);
+        let end = text.find("\n---\n").unwrap() + 5;
+        r.write(
+            &path,
+            &format!("{}\n# Area {area}\n\nText.\n", &text[..end]),
+        );
+    }
+    r.commit("start");
+    r
+}
+
+#[test]
+fn a_move_of_a_decision_to_another_area_names_the_2_summaries() {
+    let r = two_area_project();
+    let (code, out, err) = r.run(&[
+        "mv",
+        "decisions/storage/use-sqlite",
+        "decisions/billing/use-sqlite",
+    ]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains(
+            "roll-up: the move changes the frontier of summaries/billing, summaries/storage"
+        ),
+        "{out}"
+    );
+    // The pin of the old area is stale, and the new area has an item with no pin.
+    let text = check_all(&r);
+    assert_eq!(lines_of(&text, "SD641").len(), 1, "{text}");
+    assert_eq!(lines_of(&text, "SD642").len(), 1, "{text}");
+}
+
+#[test]
+fn a_move_of_a_research_note_to_another_area_names_the_2_summaries() {
+    let r = two_area_project();
+    let (code, out, err) = r.run(&[
+        "mv",
+        "research/storage/write-load",
+        "research/billing/write-load",
+        "--json",
+    ]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("\"summaries\":[\"summaries/billing\",\"summaries/storage\"]"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_move_of_a_decision_inside_one_area_names_no_summary() {
+    let r = two_area_project();
+    let (code, out, err) = r.run(&[
+        "mv",
+        "decisions/storage/use-sqlite",
+        "decisions/storage/pick-sqlite",
+    ]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!out.contains("roll-up"), "{out}");
+    let text = check_all(&r);
+    assert!(!text.contains("SD64"), "{text}");
+}
