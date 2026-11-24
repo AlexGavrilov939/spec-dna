@@ -522,12 +522,16 @@ pub fn change_roles(nc: &NeedConfig, i: &RoleInput) -> Result<Vec<String>, Strin
         .collect();
     let others: Vec<&[String]> = i.other_scopes.iter().map(Vec::as_slice).collect();
     // The paths since the commit that added the plan count only when the diff has
-    // no code path in `scope` (a pull request with only `finish`).
+    // no code path in `scope` (a pull request with only `finish`). The diff starts
+    // at the first parent of that commit, as the fallback of `accept` does, so a
+    // squash commit that holds the plan and the code gives its code. A root commit
+    // has no parent: the diff then starts at the commit itself.
     let mut since: Vec<String> = Vec::new();
     if !diff_code.iter().any(|p| change::in_scope(i.scope, p))
         && let Some(added) = i.git.added_by(i.plan_path)?
     {
-        since = Diff::read(i.git, &added, false)?
+        let from = i.git.commit(&format!("{added}^")).unwrap_or(added);
+        since = Diff::read(i.git, &from, false)?
             .files
             .into_iter()
             .map(|f| f.0)
