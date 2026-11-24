@@ -28,4 +28,4 @@ None. This change adds, changes or removes no requirement, because this reposito
 ## Open questions
 
 - [x] Does the pin of a decision use a new hash of the text in force (Q2 of the design)? Answer of the owner: (a), in the amendment of ADR 0028 of 2026-11-24. A new amendment of an accepted decision makes the summary stale.
-- [ ] Does a record in the folder of a change of an old plan end its exemption (Q3 of the design)? The design recommends (a): yes, and `finish` checks the record in full. Option (b) gives no opt-in, so the tasks t10 and t11 of the plan change. The owner answers before the approval of the spec.
+- [x] Does a record in the folder of a change of an old plan end its exemption (Q3 of the design)? The design recommends (a): yes, and `finish` checks the record in full. Option (b) gives no opt-in, so the tasks t10 and t11 of the plan change. Answer of the owner (word of 2026-11-24, the recommendation of the design): (a), yes.
