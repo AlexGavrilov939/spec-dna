@@ -43,7 +43,7 @@ status: approved
 - [x] t8: Document the questions 12 and 13, the default of each profile, the note of reconfigure, the warning, the roles of a new project and the rule of text. Files: `docs/init.md`, `docs/harness.md`, `docs/profiles.md`. Verify: `pre-commit run --all-files` and `cargo run --quiet -- check --all` with no SD102 and no SD602. Hours: 2.
 - [x] t9: Document the default of the role advisor that `init` writes, and that a table with no row advisor reads as fable. Files: `docs/config.md`. Verify: `pre-commit run --all-files`. Hours: 1.
 - [x] t10: Write the rule of D98 in the line of `CLAUDE.md` of this repository, in the 3 texts of the ownership file, and in the 2 texts of the agents README and the row of fallback-advisor in its table of agents. Files: `CLAUDE.md`, `.claude/agents/ownership.md`, `.claude/agents/README.md`. Verify: `pre-commit run --all-files`. Hours: 1.
-- [ ] t11: Write the description of D98 in the agent file fallback-advisor, and write the entry of the change. Files: `.claude/agents/fallback-advisor.md`, `CHANGELOG.md`. Verify: `pre-commit run --all-files`. Hours: 1.
+- [x] t11: Write the description of D98 in the agent file fallback-advisor, and write the entry of the change. Files: `.claude/agents/fallback-advisor.md`, `CHANGELOG.md`. Verify: `pre-commit run --all-files`. Hours: 1.
 - [ ] t12: Run the independent review and the acceptance pass, and finish the change. Files: none: finish deletes the folder of the change. Verify: `spec-dna finish advisor-default --dry-run`. Hours: 3.
 
 ## Risks

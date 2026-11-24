@@ -1,6 +1,6 @@
 ---
 name: fallback-advisor
-description: Opus advisor for a decision point while the advisor tool is off or fails - an approach to pick, an error that comes back, a claim that a task is done. Advises only and never writes code.
+description: Opus advisor for a decision point of a `higher-risk` change while the advisor tool is off or fails - an approach to pick, an error that comes back, a claim that a task is done. Advises only and never writes code.
 model: opus
 effort: xhigh
 tools: Read, Bash
