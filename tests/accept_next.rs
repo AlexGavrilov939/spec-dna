@@ -578,6 +578,47 @@ fn a_deviation_that_the_record_lacks_and_a_bad_deviation_leave_the_item_open() {
     );
 }
 
+/// A built change whose plan has the section `Deviations` with `devs`, and no
+/// record. The plan is added under the pin 0.8.0.
+fn built_with_deviations(devs: &str) -> Repo {
+    let r = Repo::with_config(&config("standard"));
+    base_files(&r);
+    r.commit("base");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    change_files(&r);
+    r.write(PLAN, &format!("{PLAN_TEXT}\n## Deviations\n\n{devs}\n"));
+    commit_plan_at_0_8_0(&r);
+    add_code(&r);
+    r
+}
+
+/// D88: the acceptor edits neither the plan nor the spec, so `next` names the
+/// builder, not the acceptor, while an item of the plan is not valid.
+#[test]
+fn next_stops_before_the_acceptor_on_a_repeated_deviation_id() {
+    let r = built_with_deviations("- d1 (plan): The check moved.\n- d1 (plan): The test moved.");
+    let line = record_item(&r);
+    assert!(
+        line.starts_with(
+            "[ ] the plan of the change `valve-timeout` has an item that is not valid (SD939 at "
+        ) && line.contains("docs/intent/valve-timeout/plan.md:")
+            && line.contains("the id `d1` is used already in `Deviations`")
+            && line.ends_with(
+                "the builder fixes it and commits, and then starts the acceptor [skill: review]"
+            ),
+        "{line}"
+    );
+    assert!(!line.contains("accept valve-timeout --brief"), "{line}");
+    // A valid list names the acceptor, as before (guard).
+    let r = built_with_deviations("- d1 (plan): The check moved.\n- d2 (plan): The test moved.");
+    let line = record_item(&r);
+    assert!(
+        line.contains("spec-dna accept valve-timeout --brief"),
+        "{line}"
+    );
+}
+
 // D71 item 2 and D75 items 1 and 6, D73 item 10: the prompt line, the follow-up line
 // and the open task of the acceptance.
 

@@ -1146,6 +1146,23 @@ fn section_messages(sec: &Sections, code: Code) -> Vec<String> {
         .collect()
 }
 
+/// The first finding of a section of the spec or the plan that stops the
+/// acceptor before a record exists (D88): SD936, SD937, SD939 or SD940, in the
+/// order of [`first_stop`], for a code that is on. SD938 needs a record, so it
+/// is not here. `next` and `accept` call this function with the [`Sections`]
+/// that `finish` reads, so the 3 commands stop on the same finding.
+pub fn section_stop<'a>(cfg: &Config, sec: &'a Sections) -> Option<&'a Diag> {
+    [
+        Code::InvariantInvalid,
+        Code::InvariantStale,
+        Code::DeviationInvalid,
+        Code::DeviationUnresolved,
+    ]
+    .into_iter()
+    .filter(|c| !cfg.is_off(*c))
+    .find_map(|c| sec.diags.iter().find(|d| d.code == c))
+}
+
 /// The items that the spec and the plan of the change `ch` declare, with the
 /// rule of the pin applied ([`section_is_read`]): a spec or a plan of 0.7.1
 /// declares nothing. `accept` (the skeleton and the brief), the compare of the

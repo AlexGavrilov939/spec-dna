@@ -491,6 +491,24 @@ fn accept_item_of_record(
                     quote_paths(&edited)
                 )));
             }
+            // The acceptor edits neither the spec nor the plan, so an item that is
+            // not valid goes to the builder first (D88).
+            let sections = acceptance::sections_of(cfg, &repo.git, Some(base_rev), ch, head)
+                .map_err(Fatal::Io)?;
+            if let Some(d) = acceptance::section_stop(cfg, &sections) {
+                let which = if d.path.ends_with("/spec.md") {
+                    "spec"
+                } else {
+                    "plan"
+                };
+                return Ok(open(format!(
+                    "the {which} of the change `{slug}` has an item that is not valid ({} at {}:{}: {}); the builder fixes it and commits, and then starts the acceptor",
+                    d.code.code(),
+                    d.path,
+                    d.line,
+                    d.message
+                )));
+            }
             return Ok(open(format!(
                 "start {} with the prompt `{}`, and add no word; it writes and commits the record",
                 acceptor_phrase(head_cfg),
