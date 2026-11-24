@@ -1,0 +1,807 @@
+{
+  "arms": {
+    "lean": {
+      "runs": 14,
+      "runs_with_transcript": 14,
+      "runs_with_advisor_call": 14,
+      "runs_hidden": 13,
+      "runs_strict": 5,
+      "advisor_calls": 41,
+      "advisor_results": 40,
+      "subagent_starts": 13,
+      "tool_uses": 2372,
+      "turns": 1774,
+      "hidden_touches": 55,
+      "strict_touches": 6,
+      "hidden_in_results": 167
+    },
+    "lean-no-advisor": {
+      "runs": 14,
+      "runs_with_transcript": 14,
+      "runs_with_advisor_call": 0,
+      "runs_hidden": 8,
+      "runs_strict": 3,
+      "advisor_calls": 0,
+      "advisor_results": 0,
+      "subagent_starts": 12,
+      "tool_uses": 2410,
+      "turns": 1838,
+      "hidden_touches": 40,
+      "strict_touches": 5,
+      "hidden_in_results": 140
+    },
+    "none": {
+      "runs": 14,
+      "runs_with_transcript": 14,
+      "runs_with_advisor_call": 0,
+      "runs_hidden": 10,
+      "runs_strict": 1,
+      "advisor_calls": 0,
+      "advisor_results": 0,
+      "subagent_starts": 5,
+      "tool_uses": 1883,
+      "turns": 1753,
+      "hidden_touches": 30,
+      "strict_touches": 1,
+      "hidden_in_results": 92
+    }
+  },
+  "runs": [
+    {
+      "arm": "lean-no-advisor",
+      "task": "t2-01-tree-binary",
+      "epoch": 1795464336,
+      "turns": 79,
+      "assistant_messages": 284,
+      "tool_uses": 130,
+      "hidden_in_results": 11,
+      "subagent_starts": 1,
+      "advisor_calls": 0,
+      "advisor_results": 0,
+      "hidden_touches": 0,
+      "strict_touches": 0,
+      "files": 2,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "none",
+      "task": "t2-03-task-checks",
+      "epoch": 1795464336,
+      "turns": 153,
+      "assistant_messages": 327,
+      "tool_uses": 152,
+      "hidden_in_results": 8,
+      "hidden_touches": 6,
+      "advisor_calls": 0,
+      "advisor_results": 0,
+      "subagent_starts": 0,
+      "strict_touches": 0,
+      "files": 1,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "lean",
+      "task": "t2-02-change-feedback",
+      "epoch": 1795464337,
+      "turns": 177,
+      "assistant_messages": 451,
+      "tool_uses": 225,
+      "hidden_in_results": 17,
+      "advisor_calls": 3,
+      "advisor_results": 3,
+      "hidden_touches": 11,
+      "subagent_starts": 1,
+      "strict_touches": 0,
+      "files": 2,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "lean-no-advisor",
+      "task": "t2-03-task-checks",
+      "epoch": 1795466146,
+      "turns": 126,
+      "assistant_messages": 342,
+      "tool_uses": 174,
+      "hidden_in_results": 10,
+      "hidden_touches": 1,
+      "subagent_starts": 1,
+      "advisor_calls": 0,
+      "advisor_results": 0,
+      "strict_touches": 0,
+      "files": 2,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "lean",
+      "task": "t2-01-tree-binary",
+      "epoch": 1795467037,
+      "turns": 68,
+      "assistant_messages": 197,
+      "tool_uses": 102,
+      "hidden_in_results": 11,
+      "advisor_calls": 3,
+      "advisor_results": 3,
+      "subagent_starts": 1,
+      "hidden_touches": 2,
+      "strict_touches": 0,
+      "files": 2,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "none",
+      "task": "t2-02-change-feedback",
+      "epoch": 1795467565,
+      "turns": 189,
+      "assistant_messages": 329,
+      "tool_uses": 189,
+      "hidden_in_results": 7,
+      "hidden_touches": 7,
+      "advisor_calls": 0,
+      "advisor_results": 0,
+      "subagent_starts": 0,
+      "strict_touches": 0,
+      "files": 1,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "none",
+      "task": "t2-01-tree-binary",
+      "epoch": 1795469088,
+      "turns": 60,
+      "assistant_messages": 119,
+      "tool_uses": 59,
+      "hidden_in_results": 4,
+      "advisor_calls": 0,
+      "advisor_results": 0,
+      "subagent_starts": 0,
+      "hidden_touches": 0,
+      "strict_touches": 0,
+      "files": 1,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "lean",
+      "task": "t2-03-task-checks",
+      "epoch": 1795469189,
+      "turns": 120,
+      "assistant_messages": 244,
+      "tool_uses": 119,
+      "hidden_in_results": 4,
+      "advisor_calls": 1,
+      "advisor_results": 1,
+      "subagent_starts": 0,
+      "hidden_touches": 0,
+      "strict_touches": 0,
+      "files": 1,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "lean-no-advisor",
+      "task": "t2-02-change-feedback",
+      "epoch": 1795469287,
+      "turns": 179,
+      "assistant_messages": 307,
+      "tool_uses": 177,
+      "hidden_in_results": 7,
+      "hidden_touches": 5,
+      "advisor_calls": 0,
+      "advisor_results": 0,
+      "subagent_starts": 0,
+      "strict_touches": 0,
+      "files": 1,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "lean-no-advisor",
+      "task": "t2-04-locked-links",
+      "epoch": 1795469877,
+      "turns": 95,
+      "assistant_messages": 170,
+      "tool_uses": 94,
+      "hidden_in_results": 2,
+      "advisor_calls": 0,
+      "advisor_results": 0,
+      "subagent_starts": 0,
+      "hidden_touches": 0,
+      "strict_touches": 0,
+      "files": 1,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "lean",
+      "task": "t2-01-tree-binary",
+      "epoch": 1795470857,
+      "turns": 85,
+      "assistant_messages": 242,
+      "tool_uses": 124,
+      "hidden_in_results": 11,
+      "advisor_calls": 4,
+      "advisor_results": 4,
+      "subagent_starts": 1,
+      "hidden_touches": 4,
+      "strict_touches": 0,
+      "files": 2,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "lean",
+      "task": "t2-04-locked-links",
+      "epoch": 1795470897,
+      "turns": 102,
+      "assistant_messages": 312,
+      "tool_uses": 157,
+      "hidden_in_results": 14,
+      "advisor_calls": 2,
+      "advisor_results": 2,
+      "hidden_touches": 10,
+      "strict_touches": 1,
+      "subagent_starts": 1,
+      "files": 2,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "none",
+      "task": "t2-02-change-feedback",
+      "epoch": 1795470918,
+      "turns": 161,
+      "assistant_messages": 311,
+      "tool_uses": 160,
+      "hidden_in_results": 7,
+      "hidden_touches": 1,
+      "advisor_calls": 0,
+      "advisor_results": 0,
+      "subagent_starts": 0,
+      "strict_touches": 0,
+      "files": 1,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "lean-no-advisor",
+      "task": "t2-02-change-feedback",
+      "epoch": 1795472924,
+      "turns": 197,
+      "assistant_messages": 430,
+      "tool_uses": 245,
+      "hidden_in_results": 8,
+      "subagent_starts": 1,
+      "advisor_calls": 0,
+      "advisor_results": 0,
+      "hidden_touches": 0,
+      "strict_touches": 0,
+      "files": 2,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "none",
+      "task": "t2-04-locked-links",
+      "epoch": 1795472985,
+      "turns": 85,
+      "assistant_messages": 447,
+      "tool_uses": 232,
+      "hidden_in_results": 7,
+      "subagent_starts": 5,
+      "advisor_calls": 0,
+      "advisor_results": 0,
+      "hidden_touches": 0,
+      "strict_touches": 0,
+      "files": 6,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "none",
+      "task": "t2-01-tree-binary",
+      "epoch": 1795473618,
+      "turns": 42,
+      "assistant_messages": 80,
+      "tool_uses": 41,
+      "hidden_in_results": 5,
+      "advisor_calls": 0,
+      "advisor_results": 0,
+      "subagent_starts": 0,
+      "hidden_touches": 0,
+      "strict_touches": 0,
+      "files": 1,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "lean-no-advisor",
+      "task": "t2-01-tree-binary",
+      "epoch": 1795474082,
+      "turns": 92,
+      "assistant_messages": 260,
+      "tool_uses": 134,
+      "hidden_in_results": 2,
+      "subagent_starts": 1,
+      "advisor_calls": 0,
+      "advisor_results": 0,
+      "hidden_touches": 0,
+      "strict_touches": 0,
+      "files": 2,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "lean-no-advisor",
+      "task": "t2-03-task-checks",
+      "epoch": 1795475678,
+      "turns": 176,
+      "assistant_messages": 420,
+      "tool_uses": 225,
+      "hidden_in_results": 17,
+      "hidden_touches": 12,
+      "strict_touches": 1,
+      "subagent_starts": 1,
+      "advisor_calls": 0,
+      "advisor_results": 0,
+      "files": 2,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "lean",
+      "task": "t2-02-change-feedback",
+      "epoch": 1795475749,
+      "turns": 146,
+      "assistant_messages": 388,
+      "tool_uses": 193,
+      "hidden_in_results": 10,
+      "advisor_calls": 3,
+      "advisor_results": 3,
+      "hidden_touches": 3,
+      "subagent_starts": 1,
+      "strict_touches": 1,
+      "files": 2,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "lean",
+      "task": "t2-04-locked-links",
+      "epoch": 1795476760,
+      "turns": 103,
+      "assistant_messages": 345,
+      "tool_uses": 161,
+      "hidden_in_results": 14,
+      "advisor_calls": 4,
+      "advisor_results": 4,
+      "hidden_touches": 6,
+      "subagent_starts": 1,
+      "strict_touches": 2,
+      "files": 2,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "lean",
+      "task": "t2-03-task-checks",
+      "epoch": 1795478286,
+      "turns": 133,
+      "assistant_messages": 374,
+      "tool_uses": 187,
+      "hidden_in_results": 10,
+      "advisor_calls": 4,
+      "advisor_results": 3,
+      "hidden_touches": 1,
+      "subagent_starts": 1,
+      "strict_touches": 0,
+      "files": 2,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "none",
+      "task": "t2-05-approver-hook",
+      "epoch": 1795479341,
+      "turns": 118,
+      "assistant_messages": 220,
+      "tool_uses": 116,
+      "hidden_in_results": 7,
+      "hidden_touches": 1,
+      "advisor_calls": 0,
+      "advisor_results": 0,
+      "subagent_starts": 0,
+      "strict_touches": 0,
+      "files": 1,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "none",
+      "task": "t2-04-locked-links",
+      "epoch": 1795480393,
+      "turns": 95,
+      "assistant_messages": 186,
+      "tool_uses": 94,
+      "hidden_in_results": 5,
+      "advisor_calls": 0,
+      "advisor_results": 0,
+      "subagent_starts": 0,
+      "hidden_touches": 0,
+      "strict_touches": 0,
+      "files": 1,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "lean-no-advisor",
+      "task": "t2-05-approver-hook",
+      "epoch": 1795481040,
+      "turns": 157,
+      "assistant_messages": 418,
+      "tool_uses": 209,
+      "hidden_in_results": 14,
+      "subagent_starts": 1,
+      "hidden_touches": 4,
+      "strict_touches": 1,
+      "advisor_calls": 0,
+      "advisor_results": 0,
+      "files": 2,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "none",
+      "task": "t2-03-task-checks",
+      "epoch": 1795481362,
+      "turns": 195,
+      "assistant_messages": 364,
+      "tool_uses": 191,
+      "hidden_in_results": 8,
+      "hidden_touches": 4,
+      "advisor_calls": 0,
+      "advisor_results": 0,
+      "subagent_starts": 0,
+      "strict_touches": 0,
+      "files": 1,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "lean-no-advisor",
+      "task": "t2-04-locked-links",
+      "epoch": 1795481583,
+      "turns": 118,
+      "assistant_messages": 358,
+      "tool_uses": 171,
+      "hidden_in_results": 9,
+      "hidden_touches": 3,
+      "subagent_starts": 1,
+      "advisor_calls": 0,
+      "advisor_results": 0,
+      "strict_touches": 0,
+      "files": 2,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "none",
+      "task": "t2-01-tree-binary",
+      "epoch": 1795483421,
+      "turns": 65,
+      "assistant_messages": 118,
+      "tool_uses": 64,
+      "hidden_in_results": 4,
+      "hidden_touches": 1,
+      "advisor_calls": 0,
+      "advisor_results": 0,
+      "subagent_starts": 0,
+      "strict_touches": 0,
+      "files": 1,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "lean-no-advisor",
+      "task": "t2-02-change-feedback",
+      "epoch": 1795483922,
+      "turns": 183,
+      "assistant_messages": 413,
+      "tool_uses": 227,
+      "hidden_in_results": 14,
+      "subagent_starts": 1,
+      "hidden_touches": 5,
+      "advisor_calls": 0,
+      "advisor_results": 0,
+      "strict_touches": 0,
+      "files": 2,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "lean",
+      "task": "t2-05-approver-hook",
+      "epoch": 1795484223,
+      "turns": 184,
+      "assistant_messages": 439,
+      "tool_uses": 215,
+      "hidden_in_results": 15,
+      "advisor_calls": 3,
+      "advisor_results": 3,
+      "hidden_touches": 6,
+      "subagent_starts": 1,
+      "strict_touches": 0,
+      "files": 2,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "lean-no-advisor",
+      "task": "t2-01-tree-binary",
+      "epoch": 1795484696,
+      "turns": 67,
+      "assistant_messages": 209,
+      "tool_uses": 103,
+      "hidden_in_results": 4,
+      "subagent_starts": 1,
+      "advisor_calls": 0,
+      "advisor_results": 0,
+      "hidden_touches": 0,
+      "strict_touches": 0,
+      "files": 2,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "lean",
+      "task": "t2-02-change-feedback",
+      "epoch": 1795485923,
+      "turns": 176,
+      "assistant_messages": 408,
+      "tool_uses": 218,
+      "hidden_in_results": 9,
+      "advisor_calls": 2,
+      "advisor_results": 2,
+      "hidden_touches": 2,
+      "subagent_starts": 1,
+      "strict_touches": 0,
+      "files": 2,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "lean",
+      "task": "t2-01-tree-binary",
+      "epoch": 1795487440,
+      "turns": 88,
+      "assistant_messages": 245,
+      "tool_uses": 115,
+      "hidden_in_results": 11,
+      "advisor_calls": 3,
+      "advisor_results": 3,
+      "subagent_starts": 1,
+      "hidden_touches": 5,
+      "strict_touches": 0,
+      "files": 2,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "none",
+      "task": "t2-02-change-feedback",
+      "epoch": 1795488261,
+      "turns": 191,
+      "assistant_messages": 317,
+      "tool_uses": 189,
+      "hidden_in_results": 9,
+      "hidden_touches": 2,
+      "advisor_calls": 0,
+      "advisor_results": 0,
+      "subagent_starts": 0,
+      "strict_touches": 0,
+      "files": 1,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "lean",
+      "task": "t2-03-task-checks",
+      "epoch": 1795490605,
+      "turns": 145,
+      "assistant_messages": 416,
+      "tool_uses": 205,
+      "hidden_in_results": 8,
+      "advisor_calls": 3,
+      "advisor_results": 3,
+      "hidden_touches": 1,
+      "strict_touches": 1,
+      "subagent_starts": 1,
+      "files": 2,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "none",
+      "task": "t2-04-locked-links",
+      "epoch": 1795491404,
+      "turns": 94,
+      "assistant_messages": 182,
+      "tool_uses": 93,
+      "hidden_in_results": 5,
+      "hidden_touches": 1,
+      "strict_touches": 1,
+      "advisor_calls": 0,
+      "advisor_results": 0,
+      "subagent_starts": 0,
+      "files": 1,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "lean-no-advisor",
+      "task": "t2-05-approver-hook",
+      "epoch": 1795491464,
+      "turns": 111,
+      "assistant_messages": 261,
+      "tool_uses": 145,
+      "hidden_in_results": 12,
+      "subagent_starts": 1,
+      "advisor_calls": 0,
+      "advisor_results": 0,
+      "hidden_touches": 0,
+      "strict_touches": 0,
+      "files": 2,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "lean-no-advisor",
+      "task": "t2-04-locked-links",
+      "epoch": 1795492665,
+      "turns": 115,
+      "assistant_messages": 391,
+      "tool_uses": 179,
+      "hidden_in_results": 18,
+      "hidden_touches": 8,
+      "subagent_starts": 1,
+      "strict_touches": 3,
+      "advisor_calls": 0,
+      "advisor_results": 0,
+      "files": 2,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "none",
+      "task": "t2-03-task-checks",
+      "epoch": 1795493926,
+      "turns": 187,
+      "assistant_messages": 322,
+      "tool_uses": 186,
+      "hidden_in_results": 6,
+      "hidden_touches": 3,
+      "advisor_calls": 0,
+      "advisor_results": 0,
+      "subagent_starts": 0,
+      "strict_touches": 0,
+      "files": 1,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "lean",
+      "task": "t2-04-locked-links",
+      "epoch": 1795495377,
+      "turns": 126,
+      "assistant_messages": 395,
+      "tool_uses": 195,
+      "hidden_in_results": 17,
+      "advisor_calls": 4,
+      "advisor_results": 4,
+      "hidden_touches": 2,
+      "strict_touches": 1,
+      "subagent_starts": 1,
+      "files": 2,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "lean",
+      "task": "t2-05-approver-hook",
+      "epoch": 1795495842,
+      "turns": 121,
+      "assistant_messages": 319,
+      "tool_uses": 156,
+      "hidden_in_results": 16,
+      "advisor_calls": 2,
+      "advisor_results": 2,
+      "subagent_starts": 1,
+      "hidden_touches": 2,
+      "strict_touches": 0,
+      "files": 2,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "lean-no-advisor",
+      "task": "t2-03-task-checks",
+      "epoch": 1795497479,
+      "turns": 143,
+      "assistant_messages": 368,
+      "tool_uses": 197,
+      "hidden_in_results": 12,
+      "subagent_starts": 1,
+      "hidden_touches": 2,
+      "advisor_calls": 0,
+      "advisor_results": 0,
+      "strict_touches": 0,
+      "files": 2,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    },
+    {
+      "arm": "none",
+      "task": "t2-05-approver-hook",
+      "epoch": 1795499198,
+      "turns": 118,
+      "assistant_messages": 220,
+      "tool_uses": 117,
+      "hidden_in_results": 10,
+      "hidden_touches": 4,
+      "advisor_calls": 0,
+      "advisor_results": 0,
+      "subagent_starts": 0,
+      "strict_touches": 0,
+      "files": 1,
+      "models": [
+        "claude-opus-5-5"
+      ]
+    }
+  ]
+}
