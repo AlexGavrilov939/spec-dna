@@ -139,13 +139,14 @@ pub fn diagnose_against(config: &Config, c: &Corpus, base: Option<&Corpus>) -> V
 /// applies the severity. A tree with no such document gives nothing.
 fn rollup_diags(config: &Config, c: &Corpus, base: Option<&Corpus>) -> Vec<Diag> {
     use crate::rollup::Kind;
-    const CODES: [Code; 6] = [
+    const CODES: [Code; 7] = [
         Code::SummaryStale,
         Code::SummaryIncomplete,
         Code::PinInvalid,
         Code::SummaryNoArea,
         Code::SummaryRepinned,
         Code::SummaryNoteChanged,
+        Code::SummaryRestsOnNothing,
     ];
     if CODES.iter().all(|code| config.is_off(*code)) {
         return Vec::new();
@@ -161,6 +162,7 @@ fn rollup_diags(config: &Config, c: &Corpus, base: Option<&Corpus>) -> Vec<Diag>
                 Kind::Invalid => Code::PinInvalid,
                 Kind::NoArea => Code::SummaryNoArea,
                 Kind::Note => Code::SummaryNoteChanged,
+                Kind::RestsOnNothing => Code::SummaryRestsOnNothing,
             };
             diag(&c.docs[i as usize], f.line, code, f.target, f.message)
         })

@@ -1262,3 +1262,138 @@ fn a_decision_or_a_note_outside_the_key_gives_sd643() {
     );
     assert!(lines_of(&out, "SD647").is_empty(), "{out}");
 }
+
+// A roll-up document that rests on nothing (design 0.8.1, D84, item 7).
+
+const SYSTEM_TOP: &str =
+    "---\nrests-on: []\n---\n# System\n\n## Overview\n\nValves.\n\n## Constraints\n\n- None.\n";
+
+/// A project with an area `valves` that has only a draft requirement, the
+/// summary of the area and a `system` document that pins the summary.
+fn nothing_project(profile: &str) -> Repo {
+    let r = project(profile);
+    r.write(
+        "docs/requirements/valves/closing.md",
+        &CLOSING.replace("status: active", "status: draft"),
+    );
+    r.write(
+        "docs/summaries/valves.md",
+        "---\nrests-on: []\n---\n# Valves\n\nA valve closes after its sensor stops.\n",
+    );
+    r.write("docs/system.md", SYSTEM_TOP);
+    let (code, out, err) = r.run(&["refresh", "system"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(r.read("docs/system.md").contains("summaries/valves@"));
+    r
+}
+
+#[test]
+fn a_summary_with_no_pin_and_no_item_that_system_pins_gives_sd646() {
+    // A warning in `standard`, an error in `strict`, and nothing in `lite`.
+    for (profile, severity) in [("standard", "warning"), ("strict", "error")] {
+        let r = nothing_project(profile);
+        let (code, out) = check_all(&r);
+        let found = lines_of(&out, "SD646");
+        assert_eq!(found.len(), 1, "{profile}: {out}");
+        assert!(
+            found[0].starts_with("docs/summaries/valves.md:")
+                && found[0].contains(&format!("{severity} SD646 summary-rests-on-nothing"))
+                && found[0].contains("`system`")
+                && found[0].contains("rolls-up"),
+            "{}",
+            found[0]
+        );
+        // The severity decides the exit code: the finding is new (no base).
+        assert_eq!(code, i32::from(severity == "error"), "{profile}: {out}");
+        assert!(!out.contains("SD641") && !out.contains("SD642"), "{out}");
+    }
+    let (_, out) = check_all(&nothing_project("lite"));
+    assert!(!out.contains("SD646"), "{out}");
+}
+
+#[test]
+fn sd646_is_not_new_against_a_base_that_has_it() {
+    let r = nothing_project("strict");
+    r.commit("rests on nothing");
+    // A change of a draft requirement: no item of any frontier.
+    edit(
+        &r,
+        "docs/requirements/valves/closing.md",
+        "after 30 seconds",
+        "after 31 seconds",
+    );
+    // The base has the same finding, so the gate does not stop on it.
+    let (code, out, err) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}{err}");
+    // `--all` shows it, and it is an error in `strict`.
+    let (code, out) = check_all(&r);
+    assert!(out.contains("error SD646"), "{out}");
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn sd646_is_silent_where_sd641_or_sd642_speaks_and_when_the_document_has_an_item() {
+    let r = nothing_project("standard");
+    // The summary gets an active requirement: the frontier is not empty, and
+    // the summary has no pin, so SD642 names the requirement and the pin of
+    // `system` is stale (SD641).
+    edit(
+        &r,
+        "docs/requirements/valves/closing.md",
+        "status: draft",
+        "status: active",
+    );
+    let (_, out) = check_all(&r);
+    assert!(!out.contains("SD646"), "{out}");
+    assert_eq!(lines_of(&out, "SD642").len(), 2, "{out}");
+    // The summary pins both requirements, and the pin of `system` is stale
+    // after the text changed.
+    assert_eq!(r.run(&["refresh", "summaries/valves", "--holds"]).0, 0);
+    let (_, out) = check_all(&r);
+    assert!(!out.contains("SD646"), "{out}");
+    // A summary of the draft area whose pin in `system` has a wrong hash: SD641
+    // speaks, and SD646 stays silent.
+    let r = nothing_project("standard");
+    let text = r.read("docs/system.md");
+    let at = text.find("summaries/valves@").unwrap() + "summaries/valves@".len();
+    r.write(
+        "docs/system.md",
+        &format!("{}{}{}", &text[..at], "0".repeat(16), &text[at + 16..]),
+    );
+    let (_, out) = check_all(&r);
+    assert_eq!(lines_of(&out, "SD641").len(), 1, "{out}");
+    assert!(!out.contains("SD646"), "{out}");
+}
+
+#[test]
+fn a_system_with_no_pin_that_product_pins_gives_sd646_and_a_system_with_no_field_stays_sd641() {
+    let r = project("standard");
+    r.write(
+        "docs/requirements/valves/closing.md",
+        &CLOSING.replace("status: active", "status: draft"),
+    );
+    // `system` has the field and no item; `product` pins it.
+    r.write("docs/system.md", SYSTEM_TOP);
+    r.write(
+        "docs/product.md",
+        "---\nrests-on: []\n---\n# Product\n\n## Vision\n\nValves.\n",
+    );
+    assert_eq!(r.run(&["refresh", "product"]).0, 0);
+    let (_, out) = check_all(&r);
+    let found = lines_of(&out, "SD646");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].starts_with("docs/system.md:") && found[0].contains("`product`"),
+        "{}",
+        found[0]
+    );
+    // The field `rests-on` goes: `system` is no roll-up document, and the pin of
+    // `product` is SD641, as in 0.8.0.
+    r.write(
+        "docs/system.md",
+        &SYSTEM_TOP.replace("---\nrests-on: []\n---\n", ""),
+    );
+    let (_, out) = check_all(&r);
+    assert!(!out.contains("SD646"), "{out}");
+    assert_eq!(lines_of(&out, "SD641").len(), 1, "{out}");
+}

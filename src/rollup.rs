@@ -154,7 +154,7 @@ pub enum Level {
 }
 
 /// What a check found. The profile and the rules give the severity of the
-/// codes SD641 to SD644 and SD647 that `check` maps from these.
+/// codes SD641 to SD644, SD646 and SD647 that `check` maps from these.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     /// SD641: a pin no longer holds.
@@ -171,6 +171,9 @@ pub enum Kind {
     /// frontier has no pin. It is no "stale" finding: a changed note does not
     /// make a normative text wrong.
     Note,
+    /// SD646: a roll-up document has no pin and an empty frontier, and another
+    /// roll-up document pins it. The target is the id of the pinning document.
+    RestsOnNothing,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -822,6 +825,63 @@ impl<'a> Rollup<'a> {
         }
     }
 
+    /// SD646 (design 0.8.1, D84, item 7): a roll-up document that has no pin and
+    /// an empty frontier, and that another roll-up document pins. `found` has
+    /// the other findings of the tree. A pin that has SD641, SD642 or SD643
+    /// is reported by that code only, so SD646 is silent there. Each pinning
+    /// document gives one finding on the document that has no pin, with the id
+    /// of the pinning document as its target.
+    fn rests_on_nothing(&self, found: &[(u32, Finding)]) -> Vec<(u32, Finding)> {
+        let mut out = Vec::new();
+        for (di, d) in self.c.docs.iter().enumerate() {
+            let di = di as u32;
+            if !is_rollup(d) || d.rests_on.as_ref().is_some_and(|p| !p.is_empty()) {
+                continue;
+            }
+            let Some(level) = self.level(d) else { continue };
+            if let Level::Summary(a) = &level
+                && !area_exists(self.config, self.c, a)
+            {
+                continue;
+            }
+            if !self.frontier(&level).is_empty() {
+                continue;
+            }
+            for (pi, p) in self.c.docs.iter().enumerate() {
+                let pi = pi as u32;
+                if pi == di || !is_rollup(p) {
+                    continue;
+                }
+                let pins_it = p.rests_on.iter().flatten().any(|(text, _)| {
+                    parse_pin(text).is_ok_and(|pin| {
+                        pin.key.is_none() && resolve(self.c, &pin) == Resolved::Item(Item::Doc(di))
+                    })
+                });
+                // The pin of the pinning document has another code.
+                let spoken = found.iter().any(|(i, f)| {
+                    *i == pi
+                        && f.target == d.id
+                        && matches!(f.kind, Kind::Stale | Kind::Incomplete | Kind::Invalid)
+                });
+                if pins_it && !spoken {
+                    out.push((
+                        di,
+                        Finding {
+                            kind: Kind::RestsOnNothing,
+                            line: 1,
+                            target: p.id.clone(),
+                            message: format!(
+                                "`{}` rests on nothing: it has no pin and no item of a source layer is in its area, and `{}` pins it; add the layer of its sources to `rolls-up`, or remove `{}` and the pin that names it",
+                                d.id, p.id, d.id
+                            ),
+                        },
+                    ));
+                }
+            }
+        }
+        out
+    }
+
     /// The findings of each roll-up document, and of each document that has the
     /// field `rests-on` and no place for it. A document of another type is
     /// reported once for each pin (SD643), or once if it has no pin.
@@ -871,6 +931,8 @@ impl<'a> Rollup<'a> {
                 }
             }
         }
+        let nothing = self.rests_on_nothing(&out);
+        out.extend(nothing);
         out
     }
 
