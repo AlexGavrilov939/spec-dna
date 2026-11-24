@@ -198,10 +198,12 @@ A run of 0.7.1 copies the harness files of the project that runs the command: `C
 | Arm | The copy |
 | --- | --- |
 | `none` | `[harness] level = "none"`. No `.claude/` folder |
-| `lean` | The level `lean` with the roles that `init` writes by default, including the advisor |
+| `lean` | The level `lean` with the default roles of the code, including the advisor |
 | `lean-no-advisor` | `lean` with `advisor = { claude-code = "none" }`. This turns off the role `advisor`. It is not the key `advisor` of the entry `acceptor`. It has no `advisorModel`, no `fallback-advisor.md` and no sentence of the advisor in the line of `CLAUDE.md`. That is the only difference from `lean` |
 | `full` | The level `full` |
 | `project` | The harness files of the project, as in 0.7.1. In `--arms` and `--harness`, it also gets the pin and the adapter line of the binary, `SD501` and `SD502` off, and the same `--model` and `--effort` as each other arm |
+
+The arm `lean` is not the team of a new project: from 0.8.1, `init` writes no advisor in `lite` and `standard`. In 0.8.1, the model-team line of the arm `lean` also has a new consult sentence. It asks for a consult only in a change of class `higher-risk` ([design](design/0.8.1-a-lifecycle-and-harness.md)). Thus a run of the arm `lean` in 0.8.1 and a run in 0.8.0 do not have the same line. In an eval with no such change, the line asks for no consult.
 
 For a built-in arm (not `project`), the runner writes the table `[harness]` of the arm into `spec-dna.toml` of the copy (it makes the file, with the pin of the binary, if the fixture has none). It runs the generator of `init` on the copy. It copies no `.claude/*`, no generated line and no `REVIEW.md` from the project. Each built-in arm has `skills = []`, `review-md = false` and `protect-tests = "off"`. Each arm gets the adapter line of the binary in `AGENTS.md` and `CLAUDE.md`. `SD501` and `SD502` are off, as for `--ab`. A fixture with its own `[harness]` table is an error (exit code 3), because the arm is that table.
 
