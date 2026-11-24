@@ -38,6 +38,49 @@ These rules were set and committed before the first batch run. They change no ru
 4. **The jobs.** The runner runs the arms of one command one after the other, and `--arms` needs 2 arms at least, so the arms of one task cannot run at the same time. The batch runs up to 3 jobs at the same time, and a job is the command of the ADR for one task and one wave (`eval run --arms ... <task> --runs 1`), in the order of the waves. Each job has its own result file, and `merge.py` joins them. The arms of a job come in the rotation of the ADR. The concurrency changes the minutes of a run (3 builds at once), and it can raise the risk of the 7,200 seconds limit for the agent.
 5. **The cap.** The room of the batch is 649.29 USD. A job gets a cap of 80 USD (3 runs of 25 USD, and 5 USD of slack for a run that passes its budget a little). A job starts when the room, minus the spend of the finished jobs, minus the cap of each job in flight or waiting to run again, is at least 80 USD. It starts with a lower cap (the rest, at least 25 USD) only when no other job runs or waits. A job that the API stopped or a signal stopped goes on with `--resume` after 30 minutes. A job of a wave starts only after the job of the same task in the wave before it is done. A job whose attempt a signal stopped counts its whole cap as spent, because the runner does not write the cost of such an attempt. A stop by the cap ends the batch, and only the complete waves count. After each complete wave, the running totals go to this page, with a commit.
 
+## Result
+
+The batch ran 3 complete waves: 5 tasks, 3 arms, 45 runs, with the probe as the first run of `t2-05-approver-hook`. No attempt was refused (0 excluded attempts) and no job ran again. All runs used Claude Code 2.1.330. The 14 jobs cost 461.40 USD, so the whole protocol cost 502.11 USD of the 700 USD cap (197.89 USD left).
+
+| Arm | Part 1 | Part 2 (main measure) | Cost per run (USD) | Minutes per run | Turns per run | Advisor calls per run | Marked by the ADR pattern | Marked by `strict` | Hit a limit |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `none` | 0.55 | 0.21 | 8.13 | 29.8 | 123 | 0 | 11 | 1 | 0 |
+| `lean-no-advisor` | 0.52 | 0.29 | 10.20 | 44.2 | 133 | 0 | 9 | 3 | 0 |
+| `lean` | 0.70 | 0.19 | 15.15 | 57.5 | 125 | 3.1 | 14 | 5 | 1 |
+
+The turns come from the transcripts. The minutes are the wall time of a run with up to 3 jobs on the machine, so they are higher than in a quiet run. The 1 run that hit a limit is `lean` on `t2-05`, wave 2, with the 7,200 seconds of the agent. It scores 0 and counts 25 USD.
+
+### The 2 verdicts
+
+The difference is the mean over the 5 tasks of the difference of the task means, with the 90% interval of the bootstrap by task (seed 24, 2,000 resamples). The cost ratio has the same interval.
+
+| Comparison | Part 2 difference (main measure) | Cost ratio | Verdict, all runs | Verdict without the runs marked by the ADR pattern | Verdict without the runs marked by `strict` |
+| --- | --- | --- | --- | --- | --- |
+| `lean` against `lean-no-advisor` | -0.10 (-0.20 to 0.00) | 1.49 (1.33 to 1.65) | `no-gain-at-cost` | `inconclusive`, no data | `no-gain-at-cost` |
+| `lean` against `none` | -0.02 (-0.18 to +0.13) | 1.86 (1.51 to 2.41) | `no-gain-at-cost` | `inconclusive`, no data | `no-gain-at-cost` |
+
+For description, `lean-no-advisor` against `none` gives +0.08 (-0.04 to +0.28) at 1.25 times the cost: `inconclusive`. The difference on part 1 is +0.19 for `lean` against `lean-no-advisor`, and +0.15 for `lean` against `none`.
+
+The 2 verdicts of each comparison have different classes. The ADR pattern marks 34 of the 45 runs, so only 11 runs are left (`none` 4, `lean-no-advisor` 6, `lean` 1), and no task has runs in both arms of a comparison. By the rule of the ADR, the owner reads the result as `inconclusive`. This page also gives the reason to read it otherwise: the pattern of the ADR marks the output folder of Claude Code, `git remote -v` in the copy and test text. The column `strict` marks 9 runs. In the 9 marked runs, read by hand, each marked call is a `git clone` of the copy of the run itself or of a scratch repository of the run (a local path), or a test text with `gh pr create` inside a heredoc that the pattern could not strip. No call reaches the oracle, a checkout of the repository, the code host or `refs/pull`. The owner decides.
+
+### Where the arms differed, by task
+
+Mean part 2 of 3 runs, in the order `none`, `lean-no-advisor`, `lean`. Part 1 and the cost per run follow.
+
+| Task | Part 2 | Part 1 | Cost per run (USD) | Note |
+| --- | --- | --- | --- | --- |
+| `t2-01-tree-binary` | 0.33, 0.33, 0.00 | 0.67, 0.89, 1.00 | 2.9, 6.3, 9.4 | 1 run of `none` and 1 of `lean-no-advisor` caught the later defect, none of `lean` |
+| `t2-02-change-feedback` | 0.00, 0.00, 0.00 | 0.75, 0.50, 0.83 | 10.2, 10.9, 15.9 | At the floor in each arm |
+| `t2-03-task-checks` | 0.00, 0.00, 0.00 | 0.67, 0.68, 0.79 | 12.4, 13.2, 15.9 | At the floor in each arm |
+| `t2-04-locked-links` | 0.17, 0.67, 0.50 | 0.12, 0.12, 0.42 | 8.1, 8.8, 15.7 | Both `lean` arms did better than `none`, and the advisor added nothing |
+| `t2-05-approver-hook` | 0.56, 0.44, 0.44 | 0.56, 0.39, 0.47 | 7.1, 11.7, 18.8 | No order of the arms. With the probe left out, the means are 0.67, 0.33 and 0.33 on 2 runs |
+
+So the main measure rests on 2 tasks (`t2-04` and `t2-05`) and a few runs of `t2-01`. On `t2-02` and `t2-03` no run of any arm caught a later defect.
+
+### Use of the result
+
+The table "Use of the result" of the ADR gives, for the verdicts on all runs (`no-gain-at-cost`): the rule of 0.8.1 stays, and the owner decides if `lean` keeps the advisor as a default role, and for the default level the owner decides. With the reading of the ADR (`inconclusive`), nothing changes. The data say: `lean` raises part 1 by 0.15 to 0.19 and does not raise the main measure, at 1.5 to 1.9 times the cost and about twice the minutes of `none`. The advisor (3.1 calls per run) shows no gain on the main measure. The owner decides each change of a default.
+
 ## Running totals
 
 These totals are written after each complete wave, so a stopped session loses nothing. They are not the verdict. All verdicts are `inconclusive` until 3 waves are complete.
@@ -74,10 +117,16 @@ Leaks: the pattern of the ADR marks 10 of the 15 runs (`none` 3, `lean-no-adviso
 - The runner recorded 2 turns for `lean-no-advisor` for a run of 152 turns. See the rule 1 above for the cause and the correction.
 - The count of leaks marks the 3 probes as leaked, as the ADR defines it: 1 tool use of `none`, 5 of `lean-no-advisor` and 1 of `lean` match the pattern of `transcript_counts.py`. The matches are of 3 kinds: the folder of task output that Claude Code makes for the copy, a `git remote -v` inside the copy, and test text with the string `gh pr`. No tool input names the oracle, a checkout of this repository, the remote host or the pull request refs. The pattern has false positives, and the ADR fixes it, so it was not changed. The column `strict` of the rule 2 flags none of the 3 probes. Only tool inputs were checked by kind, not tool results.
 - Before the probes, the person deleted the folders `team2-target-*` and an old scratch copy of the runner from the temporary folder of the system. No tool input of a probe names a folder `team2-` or the copy of another run.
+- 5 tasks and 3 waves give wide intervals. Part 2 has 1 to 4 tests for each task, so a task mean moves in steps. 2 of the 5 tasks are at the floor of part 2 in each arm.
+- 3 jobs ran at the same time on one machine and one account, so the minutes (and the risk of the 7,200 seconds limit) are higher than in a quiet run. The arms of a job ran one after the other, not at the same time as the owner asked, because the runner cannot run 1 arm alone. The load of the machine was high during the batch (other sessions ran builds).
+- The probe is 1 of the 45 runs. It ran alone and with no tap log, and its counts come from the transcripts.
+- `--max-turns` probably bounds each segment between wake-ups and not the whole run. The turn limit did not decide any run. The runner defect (the turns of the last segment only) stays open for 0.8.1.
+- No job ran again and no attempt was refused, so the logic of the scheduler for retries and for the cap was not used in this batch.
+- The pattern of the ADR marks 34 of 45 runs, and `strict` marks 9. Both columns over-mark: each of the 9 marks of `strict` is a local `git clone` or a test text. A leak that neither column sees (a read by a path built in a script) is possible.
 - One repository, one language, one model family, one version of Claude Code.
 - The tasks are public and the fixed code is on the public repository. A model may know them.
 - The cost comes from the runner, not from an invoice.
 
 ## Spend
 
-The probes cost 40.71 USD of the 700 USD cap. The dry run and the self-test cost nothing, because they use the stub agent. The pilot of protocol 1 is on [its page](team-measurement.md).
+The probes cost 40.71 USD and the 14 jobs of the batch cost 461.40 USD, so the protocol cost 502.11 USD of the 700 USD cap. The dry run and the self-test cost nothing, because they use the stub agent. The pilot of protocol 1 is on [its page](team-measurement.md).
