@@ -207,11 +207,14 @@ superseded, retired or rejected document is only listed, unless
     ),
     (
         "show",
-        "show <id>[#<anchor>]\nshow --conventions <type>",
+        "show <id>[#<anchor>] [--reports]\nshow --conventions <type>",
         "Prints a document, a section or a requirement, with the evidence of
-each requirement. With --conventions, it prints the sections that state
-the project conventions for documents of the type (`conventions` in
-spec-dna.toml).",
+each requirement. Each full covers: tag shows the test under it, and with
+--json the field binds. With --reports and [evidence] reports, it reads the
+test reports as check --reports does, and each tag shows the result of its
+case. With --conventions, it prints the sections that state the project
+conventions for documents of the type (`conventions` in spec-dna.toml). It
+does not combine with --reports.",
     ),
     (
         "new",
@@ -1010,8 +1013,10 @@ fn run(a: Args) -> Result<u8, Fatal> {
             }
         }
     }
-    if a.reports && a.command != "check" {
-        return Err(Fatal::Usage("--reports is an option of `check`".into()));
+    if a.reports && !matches!(a.command.as_str(), "check" | "show") {
+        return Err(Fatal::Usage(
+            "--reports is an option of `check` and `show`".into(),
+        ));
     }
     if a.command != "accept" {
         for (given, name) in [
@@ -2406,11 +2411,23 @@ fn context(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
 
 fn show(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     if let Some(name) = &a.conventions {
+        if a.reports {
+            return Err(Fatal::Usage(
+                "--reports gives the result of a test under a tag, so it does not combine with --conventions"
+                    .into(),
+            ));
+        }
         return show_conventions(repo, a, name);
     }
     expect_args(a, 1, 1)?;
     let (cfg, mut c) = load_head(repo, a)?;
     c.covers = evidence::load(repo, &cfg, None, true)?;
+    // With `--reports` and a key that is not empty, `show` reads the reports as
+    // `check --reports` does (design 0.8.1, D82): each full tag gets its result.
+    if a.reports && !cfg.evidence_reports.is_empty() {
+        let reads = report::read(repo, &cfg)?;
+        evidence::bind_covers(&repo.root, &mut c.covers, &reads);
+    }
     let t = &a.positional[0];
     if let Some((d, frag)) = context::resolve_target(&c, t) {
         print!(

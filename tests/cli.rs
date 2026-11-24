@@ -2588,6 +2588,118 @@ fn show_json_gives_the_field_binds_with_the_result_not_read() {
     );
 }
 
+/// `tagged_repo` with the key `[evidence] reports`, a Jest file whose tag binds
+/// by name, and a stamped report: `test_period` passed, and `Loans renews`
+/// (jest-junit with its defaults) passed.
+fn reports_repo() -> Repo {
+    let r = Repo::empty();
+    r.write(
+        "spec-dna.toml",
+        "spec-dna = \"0.1.0\"\n[evidence]\nreports = [\"reports/*\"]\n[[roots]]\npath = \"docs\"\ndefault-type = \"requirements\"\nstatus = \"active\"\n",
+    );
+    r.write(".gitignore", "reports/\n");
+    r.write(
+        "docs/loans.md",
+        "# Loans\n\n## Requirements\n\n- **loan-period**: When a member borrows a book, the library SHALL set the due date 14 days later.\n- **renew-limit**: The library SHALL allow at most 1 renewal.\n- **fines**: the fine is collected daily.\n",
+    );
+    r.write(
+        "tests/test_loans.py",
+        "# covers: loans#loan-period\ndef test_period():\n    pass\n",
+    );
+    r.write("tests/test_import.py", "# covers: loans#fines\nimport os\n");
+    r.write(
+        "tests/loans.test.js",
+        "describe('Loans', () => {\n  // covers: loans#renew-limit\n  it('renews', () => {});\n});\n",
+    );
+    r.commit("start");
+    r.write(
+        "reports/junit.xml",
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><testsuites><testsuite name=\"s\" tests=\"2\"><testcase classname=\"tests.test_loans\" name=\"test_period\"/><testcase classname=\"Loans renews\" name=\"Loans renews\"/></testsuite></testsuites>",
+    );
+    let (code, out, err) = r.run(&["evidence", "stamp"]);
+    assert_eq!(code, 0, "{out}{err}");
+    r
+}
+
+#[test]
+fn show_with_reports_gives_the_result_of_each_full_tag() {
+    let r = reports_repo();
+    let (code, out, err) = r.run(&["show", "loans", "--reports"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("- loans#loan-period: tests/test_loans.py:1 [passed test_period]\n"),
+        "{out}"
+    );
+    assert!(
+        out.contains("- loans#renew-limit: tests/loans.test.js:2 [passed Loans renews, by name]\n"),
+        "{out}"
+    );
+    assert!(
+        out.contains("- loans#fines: tests/test_import.py:1 [unbound: no-test]\n"),
+        "{out}"
+    );
+    // Without the option, `show` reads no report.
+    let (code, out, _) = r.run(&["show", "loans"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("- loans#loan-period: tests/test_loans.py:1 [test test_period]\n"),
+        "{out}"
+    );
+    assert!(
+        out.contains("- loans#renew-limit: tests/loans.test.js:2 [test renews]\n"),
+        "{out}"
+    );
+    // A skipped case, and a test that no case names.
+    r.write(
+        "reports/junit.xml",
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><testsuites><testsuite name=\"s\" tests=\"2\"><testcase classname=\"tests.test_loans\" name=\"test_period\"><skipped/></testcase><testcase classname=\"tests.test_loans\" name=\"test_other\"/></testsuite></testsuites>",
+    );
+    let (code, out, err) = r.run(&["evidence", "stamp"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let (_, out, _) = r.run(&["show", "loans", "--reports"]);
+    assert!(
+        out.contains("- loans#loan-period: tests/test_loans.py:1 [skipped test_period]\n"),
+        "{out}"
+    );
+    assert!(
+        out.contains("- loans#renew-limit: tests/loans.test.js:2 [unbound: no-case]\n"),
+        "{out}"
+    );
+    // No fresh report: the reason is `no-report`.
+    r.write("src/new.py", "x = 1\n");
+    r.commit("code");
+    let (code, out, _) = r.run(&["show", "loans#loan-period", "--reports"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("- loans#loan-period: tests/test_loans.py:1 [unbound: no-report]\n"),
+        "{out}"
+    );
+}
+
+#[test]
+fn show_reports_with_no_key_changes_nothing_and_with_conventions_is_a_usage_error() {
+    let r = tagged_repo();
+    let (code, with, _) = r.run(&["show", "loans", "--reports"]);
+    assert_eq!(code, 0, "{with}");
+    let (_, without, _) = r.run(&["show", "loans"]);
+    assert_eq!(with, without);
+    let (code, _, err) = r.run(&["show", "--conventions", "requirements", "--reports"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("--reports"), "{err}");
+    assert!(err.contains("--conventions"), "{err}");
+    // The other commands still refuse the option.
+    let (code, _, err) = r.run(&["context", "loans", "--reports"]);
+    assert_eq!(code, 2, "{err}");
+}
+
+#[test]
+fn show_reports_json_matches_golden() {
+    let r = reports_repo();
+    let (code, out, err) = r.run(&["show", "loans", "--reports", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    golden("show-binds.json", &out);
+}
+
 #[test]
 fn a_partial_tag_alone_gives_sd608_that_names_it() {
     let r = partial_repo("# covers: partial loans#fines");
