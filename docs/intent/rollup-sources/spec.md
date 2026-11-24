@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 ---
 # The roll-up reads interfaces, rules, decisions and research, and an old plan gets one note: spec
 
