@@ -581,3 +581,124 @@ fn a_deleted_folder_reads_the_newest_intent_so_an_intent_with_no_class_needs_a_r
     let (_, out, err) = r.run(&["check"]);
     assert!(has(&out, "SD927"), "{out}{err}");
 }
+
+// A plan of a version before 0.8.0 (design 0.8.1, D86). The plan needs no
+// record. The note names the prompt of the acceptor, and a record in the folder
+// of the change ends the exemption.
+
+/// The plan and the intent are on the base, added when `spec-dna.toml` pinned
+/// `pin`. The branch adds the code.
+fn on_old_base(pin: &str, config_text: &str, intent: &str) -> Repo {
+    let r = Repo::new();
+    r.write("spec-dna.toml", &pin_line(pin, config_text));
+    base_files(&r);
+    change_files(&r, intent);
+    r.commit("plan");
+    r.write("spec-dna.toml", &pin_line(VERSION, config_text));
+    r.write("README.md", "# Project, with the new pin\n");
+    r.commit("move the pin");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    add_code(&r);
+    r
+}
+
+/// Writes an accepted record with the real brief, and commits it alone.
+fn commit_accepted_record(r: &Repo) {
+    let (code, out, err) = r.run(&["accept", SLUG, "--session", "s1"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let (code, out, err) = r.run(&["accept", SLUG, "--brief"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let hash = out.lines().last().unwrap().strip_prefix("brief ").unwrap();
+    let t = r
+        .read(RECORD)
+        .replacen("brief = \"pending\"", &format!("brief = \"{hash}\""), 1)
+        .replace("result = \"pending\"", "result = \"accepted\"");
+    r.write(
+        RECORD,
+        &format!(
+            "{t}\n[[attempt]]\nacceptor = 1\ntext = \"Sent a NaN value.\"\noutcome = \"held\"\n"
+        ),
+    );
+    r.commit("record");
+}
+
+/// The note of an old plan for the slug `valve-timeout`, in 2 parts: the text
+/// up to the root, and the text after it.
+const OLD_NOTE_HEAD: &str = "note: `docs/intent/valve-timeout/plan.md` was added when spec-dna.toml pinned 0.7.1, before 0.8.0, so the change needs no acceptance record; to opt in, start one agent that did not build the change with the prompt `cd '";
+const OLD_NOTE_TAIL: &str =
+    "' && spec-dna accept valve-timeout --brief`: its record ends the exemption";
+
+#[test]
+fn an_old_plan_with_no_record_keeps_the_exemption_and_the_note_names_the_prompt() {
+    let r = on_old_base(
+        "0.7.1",
+        &config("standard", "", ""),
+        &higher_risk(INTENT_TEXT),
+    );
+    let (code, out, err) = finish(&r);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!r.dir.join(".spec-dna").exists(), "no archive file");
+    assert!(err.contains(OLD_NOTE_HEAD), "{err}");
+    assert!(err.contains(OLD_NOTE_TAIL), "{err}");
+    // The root of the prompt is the root of the repository.
+    let root = err
+        .split(OLD_NOTE_HEAD)
+        .nth(1)
+        .and_then(|t| t.split(OLD_NOTE_TAIL).next())
+        .unwrap();
+    assert_eq!(
+        std::fs::canonicalize(root).unwrap(),
+        std::fs::canonicalize(&r.dir).unwrap(),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_record_in_the_folder_of_an_old_plan_ends_the_exemption() {
+    // The record is fresh: step 5.2 passes, the record moves, and no note
+    // prints, because the change no longer skips the record.
+    let r = on_old_base(
+        "0.7.1",
+        &config("standard", "", ""),
+        &higher_risk(INTENT_TEXT),
+    );
+    commit_accepted_record(&r);
+    let (code, out, err) = finish(&r);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!err.contains("before 0.8.0"), "{err}");
+    assert!(r.dir.join(".spec-dna/accepted/valve-timeout.toml").exists());
+    // The code changes after the acceptance: step 5.2 stops with SD929. Before
+    // the opt-in, `finish` archived the record.
+    let r = on_old_base(
+        "0.7.1",
+        &config("standard", "", ""),
+        &higher_risk(INTENT_TEXT),
+    );
+    commit_accepted_record(&r);
+    r.write(CODE, &format!("{CODE_NEW}\n\ndef more():\n    pass\n"));
+    r.commit("edit the code after the acceptance");
+    let (code, out, err) = finish(&r);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(has(&out, "SD929"), "{out}");
+    assert!(!r.dir.join(".spec-dna").exists(), "nothing is archived");
+}
+
+#[test]
+fn a_change_that_would_need_no_record_if_its_plan_were_new_gets_no_note() {
+    // `lite`: the acceptance is off. A routine change in `standard`: no reason
+    // for a record.
+    let r = on_old_base("0.7.1", &config("lite", "", ""), &higher_risk(INTENT_TEXT));
+    let (code, out, err) = finish(&r);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!err.contains("before 0.8.0"), "{err}");
+    let r = on_old_base("0.7.1", &config("standard", "", ""), INTENT_TEXT);
+    let (code, out, err) = finish(&r);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!err.contains("before 0.8.0"), "{err}");
+    // A plan of 0.8.0 gets no note: it needs a record.
+    let r = on_base(&config("standard", "", ""), &higher_risk(INTENT_TEXT));
+    let (_, out, err) = finish(&r);
+    assert!(has(&out, "SD927"), "{out}{err}");
+    assert!(!err.contains("before 0.8.0"), "{err}");
+}

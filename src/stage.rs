@@ -407,7 +407,7 @@ fn accept_item(
 /// the root becomes `'\''`). The acceptor runs it as its first call, so the builder
 /// writes about 80 bytes and no word of the brief. With `follow_up`, it is the
 /// command of the follow-up (D73 item 10).
-fn prompt_line(root: &std::path::Path, slug: &str, follow_up: bool) -> String {
+pub(crate) fn prompt_line(root: &std::path::Path, slug: &str, follow_up: bool) -> String {
     let root = root.to_string_lossy().replace('\'', "'\\''");
     let form = if follow_up { " --follow-up" } else { "" };
     format!("cd '{root}' && spec-dna accept {slug}{form} --brief")
@@ -424,7 +424,7 @@ fn quote_paths(paths: &[String]) -> String {
 
 /// Who runs the prompt: the agent `acceptor` where the harness writes it, else any
 /// agent that did not build the change (D71 item 4).
-fn acceptor_phrase(cfg: &Config) -> &'static str {
+pub(crate) fn acceptor_phrase(cfg: &Config) -> &'static str {
     if cfg
         .harness
         .as_ref()
