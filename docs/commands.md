@@ -254,7 +254,9 @@ The tier `summary` ([design](design/0.8.0.md#d56-context-the-tier-summary)) exis
 
 The tier fills its sections in this order: first the title section of each document, from the deepest summary up to `product`, then the other sections in the same order of the documents. The first sections of this order are in full, the next ones are stubs, and the last ones are not listed. The output keeps the order from the top down.
 
-The tier, in full text and in stubs together, uses at most a half of the budget: 4,000 of the 8,000 characters of the default. It never takes the room that the entry and the citing sections need in full: the tier comes after them in the packing order, and a half is a cap, not a promise. A summary of 3,000 characters, its soft budget, fits at the default budget. A summary of 6,000 characters, its hard budget, is in full from a budget of about 12,200 characters.
+The tier, in full text and in stubs together, uses at most a half of the budget: 4,000 of the 8,000 characters of the default. A half is a cap, not a promise. The tier never takes the room that the entry and the citing sections need in full. It also leaves the room of the stub lines of the sections that come after it. Thus the tier has less than a half when the entry is large. A tree with a roll-up serves an entry section in full where the same tree with no roll-up serves it in full.
+
+When no deeper summary comes first and the entry is small, a summary of 3,000 characters (its soft budget) is in full at the default budget. A lone summary of 6,000 characters (its hard budget) is in full from a budget of about 12,200 characters. A deeper summary before it moves that point up.
 
 A document of the tier is in no other tier. A target that names the document makes it an entry, and `[conventions]` can name a section of it. If the layer of the summaries has `context = "on-request"`, `context` counts the summaries and does not serve them.
 
