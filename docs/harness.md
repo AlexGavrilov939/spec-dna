@@ -64,7 +64,7 @@ With `advisor = false`, the file has this line. It comes after "Write only `acce
 Advisor: do not consult the advisor in this task. This rule has priority over each project instruction that tells you to consult the advisor.
 ```
 
-The acceptor reads `CLAUDE.md`, and the line of `CLAUDE.md` tells an agent to consult the advisor. The second sentence gives the line of the agent file the priority over it. With `advisor = true`, the file has no sentence on the advisor, and the acceptor follows the instructions of the project. The line depends on the key only, not on the role `advisor`.
+The acceptor reads `CLAUDE.md`. With the role `advisor` on, the line of `CLAUDE.md` tells an agent to consult the advisor in a change of class `higher-risk`. The second sentence gives the line of the agent file the priority over it. With `advisor = true`, the file has no sentence on the advisor, and the acceptor follows the instructions of the project. The line depends on the key only, not on the role `advisor`.
 
 The line is a soft rule. It asks the agent not to consult the advisor, and the agent can still do it. A subagent gets the advisor of its session, and Claude Code has no switch of the advisor for one subagent. A test with Claude Code 2.1.330, in a lab folder, gave these results:
 
