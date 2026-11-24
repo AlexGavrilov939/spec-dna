@@ -1256,3 +1256,76 @@ fn no_advisor_or_a_change_policy_gives_no_warning_of_the_advisor() {
         assert!(!out.contains("has no change of class"), "{answers}: {out}");
     }
 }
+
+// ---- The advisor of a new project (design 0.8.1, D97) ----
+
+/// The row of the role `advisor` of a new project of `lite` or `standard`.
+const NO_ADVISOR_ROW: &str =
+    "\nadvisor = { claude-code = \"none\", agent = \"opus\", effort = \"xhigh\" }\n";
+
+/// The row of the role `advisor` of a new project of `strict`.
+const ADVISOR_ROW: &str =
+    "\nadvisor = { claude-code = \"fable\", agent = \"opus\", effort = \"xhigh\" }\n";
+
+const FALLBACK: &str = ".claude/agents/fallback-advisor.md";
+
+fn harness_golden(name: &str) -> String {
+    let p = format!("{}/tests/golden/harness/{name}", env!("CARGO_MANIFEST_DIR"));
+    fs::read_to_string(&p).unwrap_or_else(|e| panic!("{p}: {e}"))
+}
+
+/// The project has no row, no setting, no file and no sentence of the advisor.
+fn assert_no_advisor(r: &Repo, profile: &str) {
+    let cfg = r.read("spec-dna.toml");
+    assert!(cfg.contains(NO_ADVISOR_ROW), "{profile}:\n{cfg}");
+    assert!(!r.dir.join(FALLBACK).exists(), "{profile}: {FALLBACK}");
+    let settings = r.read(".claude/settings.json");
+    assert!(!settings.contains("advisorModel"), "{profile}:\n{settings}");
+    let claude = r.read("CLAUDE.md");
+    for gone in ["advisor", "consult"] {
+        assert!(!claude.contains(gone), "{profile}: {gone}\n{claude}");
+    }
+}
+
+#[test]
+fn a_new_standard_project_has_no_advisor() {
+    let r = repo();
+    let (code, out, err) = run(&r, &["init", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_no_advisor(&r, "standard");
+    assert_eq!(
+        r.read(".claude/settings.json"),
+        harness_golden("settings-standard.json")
+    );
+    let page = harness_golden("model-team-no-advisor.md");
+    assert_eq!(
+        normalize_marker(&r.read(".claude/agents/model-team.md")),
+        page
+    );
+    assert_eq!(md_lint(&page), [], "model-team-no-advisor.md");
+    r.commit("adopt spec-dna");
+    let (code, out, err) = run(&r, &["check"]);
+    assert_eq!(code, 0, "{out}{err}");
+    // The same in `lite`.
+    let r = repo();
+    let (code, out, err) = init_with(&r, "profile = \"lite\"\n", &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_no_advisor(&r, "lite");
+}
+
+#[test]
+fn a_new_strict_project_has_the_advisor() {
+    let r = repo();
+    let (code, out, err) = init_with(&r, "profile = \"strict\"\n", &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let cfg = r.read("spec-dna.toml");
+    assert!(cfg.contains(ADVISOR_ROW), "{cfg}");
+    assert!(r.dir.join(FALLBACK).exists(), "{out}");
+    let settings = r.read(".claude/settings.json");
+    assert!(
+        settings.contains("\"advisorModel\": \"fable\""),
+        "{settings}"
+    );
+    let claude = r.read("CLAUDE.md");
+    assert!(claude.contains("Consult the advisor only"), "{claude}");
+}
