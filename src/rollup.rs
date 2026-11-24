@@ -403,7 +403,8 @@ pub struct Rollup<'a> {
     c: &'a Corpus,
     /// The documents of the source layers that have items (design 0.8.1,
     /// D84), with the folders of each one: the active documents of the types
-    /// `requirements`, `interface` and `rule`.
+    /// `requirements`, `interface` and `rule`, the accepted decisions and the
+    /// research documents.
     sources: Vec<(u32, Vec<String>)>,
     /// The summaries that have an area with a folder: the document and its area.
     summaries: Vec<(u32, Vec<String>)>,
