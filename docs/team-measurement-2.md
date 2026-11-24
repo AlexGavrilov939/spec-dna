@@ -42,6 +42,20 @@ These rules were set and committed before the first batch run. They change no ru
 
 These totals are written after each complete wave, so a stopped session loses nothing. They are not the verdict. All verdicts are `inconclusive` until 3 waves are complete.
 
+### After wave 2 (2026-11-24, 04:37)
+
+10 runs in each arm (5 tasks, 2 waves; the probe is wave 1 of `t2-05`). The jobs of waves 1 and 2 cost 298.40 USD, and the whole protocol has cost 339.11 USD, with the probes (the jobs of wave 3 that are done are not in these totals). 1 run hit a limit: `lean` on `t2-05-approver-hook`, wave 2, ran into the 7,200 seconds of the agent. It scores 0 in both parts and counts 25 USD, as the ADR says.
+
+| Arm | Part 1 | Part 2 (main measure) | Cost per run (USD) | Minutes per run | Turns per run | Advisor calls per run | Marked by the ADR pattern | Marked by `strict` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `none` | 0.52 | 0.25 | 8.26 | 26.3 | 119 | 0 | 6 | 0 |
+| `lean-no-advisor` | 0.51 | 0.27 | 10.36 | 43.5 | 137 | 0 | 6 | 2 |
+| `lean` | 0.68 | 0.22 | 15.29 | 55.0 | 122 | 3.3 | 9 | 3 |
+
+With all 30 runs, the 2 verdicts are `inconclusive` (a verdict needs 3 complete waves): `lean` against `lean-no-advisor` gives -0.05 on part 2 (interval -0.20 to +0.10) at 1.48 times the cost, and `lean` against `none` gives -0.03 (interval -0.27 to +0.20) at 1.85 times the cost. Part 1 is higher in `lean` by 0.17 and 0.16. The variant without the runs that the ADR pattern marks has 1 run of `lean`, so it has no verdict. The variant without the runs that `strict` marks is also `inconclusive`.
+
+The 5 runs that `strict` marks, read call by call: each call is a `git clone` of the copy of the run itself or of a scratch repository of the run (a local path), and one is a test text with `gh pr create` inside a heredoc that the pattern could not strip. No call reaches the oracle, a checkout of the repository, the code host or `refs/pull`. The column stays as it is, and this reading is a note.
+
 ### After wave 1 (2026-11-24, 00:14)
 
 Wave 1 has the 5 tasks in the 3 arms. The run of `t2-05-approver-hook` is the probe. The 4 new jobs cost 117.16 USD, and the whole protocol has cost 157.87 USD, with the probes.
