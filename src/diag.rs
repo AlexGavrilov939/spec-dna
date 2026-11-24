@@ -198,6 +198,13 @@ pub const NO_SUMMARY_LAYER_FIX: &str = "Use a type of the root and of the `types
 /// The part of the message of SD303 that selects `NO_SUMMARY_LAYER_FIX`.
 pub const NO_SUMMARY_LAYER_MARK: &str = "no layer of spec-dna.toml has type `summary`";
 
+/// The part of the message of SD401 for a spec or a plan that moves from
+/// `approved` to `draft` (design 0.8.1, D91). It selects `REWORK_FIX`.
+pub const REWORK_MARK: &str = "this is the step back of a rework: a hook that runs `spec-dna check` rejects its commit, so skip only that hook for this commit, name the skip in its body, and make the approval commit next";
+
+/// The fix of SD401 for the step back of a rework.
+pub const REWORK_FIX: &str = "To rework an approved spec or plan, set `status: draft` in the commit of the edit. Skip only the hook that runs `spec-dna check` for that commit, and name the skip in the body of the commit. Then the approver makes the approval commit, and SD401 is gone. For another document, write a new document.";
+
 /// The fix of SD929 for an archive file, after `finish`.
 pub const STALE_AFTER_FINISH_FIX: &str = "Run `git revert --no-commit` on the commit of `finish`, delete `<folder>/acceptance.toml`, and commit. The revert commit then holds no record, so it gives no SD932. Merge the base, run `spec-dna accept <slug>` again from a new brief, and run `spec-dna finish <slug>` again.";
 
@@ -228,6 +235,7 @@ impl Diag {
         match self.code {
             Code::RecordEdited if said(crate::acceptance::CUT_MARK) => CUT_HISTORY_FIX,
             Code::TypeInvalid if said(NO_SUMMARY_LAYER_MARK) => NO_SUMMARY_LAYER_FIX,
+            Code::StatusTransition if said(REWORK_MARK) => REWORK_FIX,
             // The message names the place: the fix follows it.
             Code::AcceptanceStale if said(crate::acceptance::STALE_AFTER_FINISH) => {
                 STALE_AFTER_FINISH_FIX

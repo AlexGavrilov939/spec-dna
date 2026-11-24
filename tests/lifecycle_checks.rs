@@ -2436,3 +2436,57 @@ fn a_shallow_clone_reads_the_sections_as_0_8_0_does() {
     let _ = std::fs::remove_dir_all(&dst);
     assert_eq!(codes_of(&text, "SD939"), 1, "{text}");
 }
+
+// SD401: the step back of a spec or a plan of a change is a rework (D91)
+
+#[test]
+fn the_step_back_of_a_base_approved_plan_gives_the_rework_steps() {
+    let r = scoped("");
+    let plan = r.read("docs/intent/dose/plan.md");
+    r.write(
+        "docs/intent/dose/plan.md",
+        &plan.replace("status: approved", "status: draft"),
+    );
+    r.commit("rework the plan");
+    // SD401 compares the 2 trees, so it needs the explicit base.
+    let (code, out, _) = r.run(&["check", "--base", "main"]);
+    let found = messages(&out, "SD401");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].contains("status cannot move from `approved` to `draft`")
+            && found[0].contains("skip only that hook"),
+        "{out}"
+    );
+    assert_eq!(code, 1, "{out}");
+    let (_, json, _) = r.run(&["check", "--base", "main", "--json"]);
+    assert!(
+        json.contains("To rework an approved spec or plan"),
+        "{json}"
+    );
+    assert!(!json.contains("To return to an earlier status"), "{json}");
+}
+
+#[test]
+fn a_decision_that_steps_back_keeps_the_text_of_0_8_0() {
+    // Guard: only a spec or a plan gets the steps of the rework.
+    let r = repo_with(&config("standard", "gate = \"warn\"\n", "", ""));
+    r.write("docs/decisions/timer.md", DECISION);
+    r.commit("base");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    r.write(
+        "docs/decisions/timer.md",
+        &DECISION.replace("accepted", "proposed"),
+    );
+    r.commit("step back");
+    let (_, out, _) = r.run(&["check", "--base", "main"]);
+    let found = messages(&out, "SD401");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].ends_with("status cannot move from `accepted` to `proposed`"),
+        "{out}"
+    );
+    let (_, json, _) = r.run(&["check", "--base", "main", "--json"]);
+    assert!(json.contains("write a new document."), "{json}");
+    assert!(!json.contains("rework"), "{json}");
+}
