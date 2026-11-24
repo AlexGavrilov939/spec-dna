@@ -323,7 +323,7 @@ These break the rules of the key. Each one is a configuration error (exit code 3
 - A named layer has none of the types `requirements`, `interface`, `rule`, `decision` and `research`.
 - The folder of a source layer is inside the folder of another source layer. `requirements` and `requirements/interfaces` are an example. `requirements` and `requirements-api` are not.
 
-An empty list is valid: the summaries then have no source layer. A project opts in by hand, because `init` writes no key. A project that opts in rewrites its summaries once, with `spec-dna refresh --all`. Each pin adds about 60 bytes to the front matter of a summary, and no byte goes into `context`.
+An empty list is valid: the summaries then have no source layer. A project opts in by hand, because `init` writes no key. A project that opts in rewrites its summaries once. The new items make each summary stale, and `refresh` refuses a summary whose text is the text of the base, so edit the text of each summary to cover the new items, then run `spec-dna refresh <id>` (or `spec-dna refresh --all` after the edits). To write the pins with no edit, run `spec-dna refresh <id> --holds` for each summary: that is the claim that the text still holds, and SD645 shows it. `refresh --all` takes no `--holds`. Each pin adds about 60 bytes to the front matter of a summary, and no byte goes into `context`.
 
 ### Keep and context
 

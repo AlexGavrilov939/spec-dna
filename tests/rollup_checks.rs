@@ -1574,3 +1574,61 @@ fn a_removed_note_of_a_layer_with_other_types_gives_sd647_when_the_base_has_the_
     );
     assert!(lines_of(&out, "SD641").is_empty(), "{out}");
 }
+
+/// A project with a layer `research`, a summary that pins a research note by
+/// hand, committed, and the note removed. `key` is the line of the key
+/// `rolls-up`, or empty. SD202 is off, so the removal gives no other finding.
+fn removed_note_project(key: &str) -> Repo {
+    let layers = LAYERS.replace(
+        "[layers.summaries]\ntypes = [\"summary\"]\n",
+        &format!(
+            "[layers.research]\ntypes = [\"research\"]\n\n[layers.summaries]\ntypes = [\"summary\"]\n{key}"
+        ),
+    );
+    let r = Repo::with_config(&format!(
+        "profile = \"standard\"\n[rules]\nSD202 = \"off\"\n\n{layers}"
+    ));
+    r.write("docs/requirements/valves/closing.md", CLOSING);
+    r.write("docs/research/valves/load.md", WRITE_LOAD);
+    let r = with_summary_of(r);
+    if !key.contains("research") {
+        let hash = shown_hash(&r, "research/valves/load");
+        add_pin(&r, &format!("research/valves/load@{hash}"));
+    }
+    r.commit("base");
+    std::fs::remove_file(r.dir.join("docs/research/valves/load.md")).unwrap();
+    r
+}
+
+#[test]
+fn a_removed_note_gives_sd647_only_when_the_key_names_its_layer() {
+    // No key: the finding is SD641, an error, as in 0.8.0.
+    // The key names another layer: the same.
+    for key in ["", "rolls-up = [\"requirements\"]\n"] {
+        let r = removed_note_project(key);
+        let (code, out, err) = r.run(&["check"]);
+        let out = format!("{out}{err}");
+        let found = lines_of(&out, "SD641");
+        assert_eq!(found.len(), 1, "`{key}`: {out}");
+        assert!(
+            found[0].contains("error SD641") && found[0].contains("the target was removed"),
+            "`{key}`: {}",
+            found[0]
+        );
+        assert!(!out.contains("SD647"), "`{key}`: {out}");
+        assert_eq!(code, 1, "`{key}`: {out}");
+    }
+    // The key names the layer: SD647, a warning.
+    let r = removed_note_project("rolls-up = [\"requirements\", \"research\"]\n");
+    let (code, out, err) = r.run(&["check"]);
+    let out = format!("{out}{err}");
+    let found = lines_of(&out, "SD647");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].contains("warning SD647") && found[0].contains("the note was removed"),
+        "{}",
+        found[0]
+    );
+    assert!(lines_of(&out, "SD641").is_empty(), "{out}");
+    assert_eq!(code, 0, "{out}");
+}

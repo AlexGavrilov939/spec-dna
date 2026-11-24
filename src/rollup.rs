@@ -1046,25 +1046,34 @@ impl<'a> Rollup<'a> {
 }
 
 /// True if `f` says that a pin target was removed, and `base` has a research
-/// document at that id. The tree of the head has no type for a removed document,
-/// so the base tells it (design 0.8.1, D84, item 3): the finding is then SD647,
-/// as for a note that left the frontier. With no base, only the place of the id
-/// tells it ([`Rollup::findings`]).
-pub fn removed_note_in(base: &Corpus, f: &Finding) -> bool {
-    f.kind == Kind::Stale
-        && f.message.contains(REMOVED)
-        && !f.target.contains('#')
-        && matches!(
-            resolve(
-                base,
-                &Pin {
-                    id: f.target.clone(),
-                    key: None,
-                    hash: String::new()
-                }
-            ),
-            Resolved::Item(Item::Doc(d)) if base.docs[d as usize].ty == DocType::Research
-        )
+/// document at that id, in a layer that the key `rolls-up` names. The tree of
+/// the head has no type for a removed document, so the base tells it (design
+/// 0.8.1, D84, item 3): the finding is then SD647, as for a note that left the
+/// frontier. With no key, or with a key that does not name the layer of the
+/// note, the finding stays SD641, as in 0.8.0. With no base, only the place of
+/// the id tells it ([`Rollup::findings`]).
+pub fn removed_note_in(config: &Config, base: &Corpus, f: &Finding) -> bool {
+    if f.kind != Kind::Stale
+        || !f.message.contains(REMOVED)
+        || f.target.contains('#')
+        || !config.layers.rollup_keyed()
+    {
+        return false;
+    }
+    let pin = Pin {
+        id: f.target.clone(),
+        key: None,
+        hash: String::new(),
+    };
+    let Resolved::Item(Item::Doc(d)) = resolve(base, &pin) else {
+        return false;
+    };
+    let doc = &base.docs[d as usize];
+    doc.ty == DocType::Research
+        && crate::check::doc_layer(config, doc).is_some_and(|l| {
+            config.layers.rollup_sources().contains(&l)
+                && config.layers.layers()[l].types.contains(&DocType::Research)
+        })
 }
 
 /// The words of the message of a pin whose target was removed.

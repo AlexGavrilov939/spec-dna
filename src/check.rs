@@ -171,7 +171,7 @@ fn rollup_diags(config: &Config, c: &Corpus, base: Option<&Corpus>) -> Vec<Diag>
         .map(|(i, f)| {
             // The base tells the type of a removed target (design 0.8.1, D84).
             let mut f = f;
-            if base.is_some_and(|b| crate::rollup::removed_note_in(b, &f)) {
+            if base.is_some_and(|b| crate::rollup::removed_note_in(config, b, &f)) {
                 f.kind = Kind::Note;
                 f.message = f
                     .message
