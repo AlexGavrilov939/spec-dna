@@ -329,7 +329,7 @@ fn in_lite_status_and_stats_print_no_proof_line_and_read_no_report() {
     // case is not read: the tag is `tagged`.
     let (_, out, _) = r.run(&["stats", "--sdlc", "--json"]);
     assert!(
-        out.contains("\"proof\":{\"reliable\":0,\"passed_once\":0,\"verified\":0,\"tagged\":1,\"owed\":1,\"none\":1}"),
+        out.contains("\"proof\":{\"reliable\":0,\"passed_once\":0,\"verified\":0,\"tagged\":1,\"owed\":1,\"none\":1,\"reports_read\":false}"),
         "{out}"
     );
     let (_, out, _) = r.run(&["status", "--json"]);
@@ -346,6 +346,70 @@ fn in_lite_status_and_stats_print_no_proof_line_and_read_no_report() {
     assert!(out.contains("proof: 1 owed (manual 1)"), "{out}");
     let (_, out, _) = r2.run(&["stats", "--sdlc"]);
     assert!(out.contains("proof: reliable 0,"), "{out}");
+}
+
+const OPEN_REPORT: &str = "<testsuites><testsuite name=\"p\" tests=\"1\"><testcase classname=\"tests.test_valves\" name=\"test_opens\"/></testsuite></testsuites>";
+
+/// A project with the tag of `open` committed, and a fresh report of its test.
+fn tagged_with_a_report() -> Repo {
+    let r = Repo::with_config(&format!(
+        "{}[evidence]\nreports = [\"reports/*\"]\n",
+        config("standard", "")
+    ));
+    r.write(".gitignore", "reports/\n");
+    r.write("docs/requirements/valves.md", &valves("", ""));
+    r.write(
+        "tests/test_valves.py",
+        "# covers: requirements/valves#open\ndef test_opens():\n    assert True\n",
+    );
+    r.commit_base_of_0_7_1("base");
+    r.write("reports/junit.xml", OPEN_REPORT);
+    let (code, out, err) = r.run(&["evidence", "stamp"]);
+    assert_eq!(code, 0, "{out}{err}");
+    r
+}
+
+#[test]
+fn stats_reads_no_report_while_the_code_tree_differs() {
+    // A clean tree binds as before (guard).
+    let r = tagged_with_a_report();
+    let (code, out, err) = r.run(&["stats", "--sdlc", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("\"passed_once\":1,"), "{out}");
+    let (_, text, _) = r.run(&["stats", "--sdlc"]);
+    assert!(
+        text.contains("proof: reliable 0, passed-once 1,") && !text.contains("no report read"),
+        "{text}"
+    );
+    // An edit of a test file that `HEAD` does not have, and a report that is
+    // fresh for the working tree: the tags read `HEAD`, so no report is read.
+    r.write(
+        "tests/test_valves.py",
+        "# covers: requirements/valves#open\ndef test_opens():\n    assert True\n# edited\n",
+    );
+    let (code, out, err) = r.run(&["evidence", "stamp"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let (code, out, err) = r.run(&["stats", "--sdlc", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("\"passed_once\":0,") && out.contains("\"tagged\":1,"),
+        "{out}"
+    );
+    assert!(out.contains("\"reports_read\":false}"), "{out}");
+    let (_, text, _) = r.run(&["stats", "--sdlc"]);
+    assert!(
+        text.contains("; no report read: the working tree has code edits that HEAD does not have"),
+        "{text}"
+    );
+    // The commit of the edit makes the tree clean again: the reports bind.
+    r.commit("edit the test");
+    let (code, out, err) = r.run(&["evidence", "stamp"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let (_, out, _) = r.run(&["stats", "--sdlc", "--json"]);
+    assert!(
+        out.contains("\"passed_once\":1,") && out.contains("\"reports_read\":true}"),
+        "{out}"
+    );
 }
 
 #[test]
@@ -379,7 +443,7 @@ fn stats_json_has_one_count_for_each_state() {
     assert_eq!(code, 0, "{out}{err}");
     assert!(
         out.contains(
-            "\"proof\":{\"reliable\":0,\"passed_once\":0,\"verified\":0,\"tagged\":1,\"owed\":1,\"none\":1}"
+            "\"proof\":{\"reliable\":0,\"passed_once\":0,\"verified\":0,\"tagged\":1,\"owed\":1,\"none\":1,\"reports_read\":false}"
         ),
         "{out}"
     );

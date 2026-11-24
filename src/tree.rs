@@ -196,6 +196,21 @@ pub fn compute(repo: &Repo, config: &Config) -> Result<(String, Vec<String>), St
     Ok((hash_entries(&entries), paths))
 }
 
+/// The hash of the code tree of the commit `rev`: the hash over the code
+/// entries of `git ls-tree -r <rev>`, with the rules of [`compute`]. A working
+/// tree with no edit of code has the same hash as its `HEAD`.
+pub fn hash_at(repo: &Repo, config: &Config, rev: &str) -> Result<String, String> {
+    let intent = crate::lifecycle::intent_dirs(config);
+    let paths: Vec<String> = repo
+        .git
+        .ls_tree(rev)?
+        .into_iter()
+        .map(|e| e.0)
+        .filter(|p| is_code_path(config, p, &intent))
+        .collect();
+    Ok(hash_entries(&repo.git.tree_entries_at(rev, &paths)?))
+}
+
 /// The paths that git tracks, and that a report glob matches (a report or a
 /// stamp that is in a commit or in the index).
 pub fn tracked_reports(repo: &Repo, config: &Config) -> Result<Vec<String>, String> {
