@@ -877,8 +877,9 @@ pub fn assemble(
     // The tier `summary` is in the plan before the rules and the entry, and it
     // has its place in the output there. In the packing order, it comes after
     // the last section of the entry or of a citing document, so it never takes
-    // their room (D56: the other tiers keep the rest of the budget).
-    let order = summary_after_entry(&plan, order);
+    // their room (D56: the other tiers keep the rest of the budget). Its
+    // sections have the fill order of D83, not the order of the output.
+    let order = summary_after_entry(c, places, &plan, order);
     // An inactive document that no target names is only listed.
     if !include_inactive {
         for (i, &(d, _, _)) in plan.iter().enumerate() {
@@ -924,9 +925,10 @@ pub fn assemble(
     let mut file_listed = vec![false; file_plan.len()];
     let mut listed = vec![false; plan.len()];
     // The tier `summary` as a whole, in full and in stubs, has a quarter of
-    // the budget. It is filled in order: the first sections are in full, the
-    // next ones are stubs, and the last ones are cut. `(fulls, listed)` is the
-    // number of sections of each kind.
+    // the budget. It is filled in its fill order (`summary_fill_key`): the
+    // first sections are in full, the next ones are stubs, and the last ones
+    // are cut. `(fulls, listed)` is the number of sections of each kind. The
+    // output keeps the order of the plan.
     let tier: Vec<usize> = order
         .iter()
         .copied()
@@ -1086,8 +1088,14 @@ fn summary_chain(
 /// Moves the sections of the tier `summary` in the packing order to the place
 /// after the last section of the tier `entry` or `cites`. With no such
 /// section, they come after the conventions and the rules. The sections of the
-/// tier keep their order.
-fn summary_after_entry(plan: &[(u32, usize, Tier)], order: Vec<usize>) -> Vec<usize> {
+/// tier have the fill order of `summary_fill_key`, not the order of the
+/// output.
+fn summary_after_entry(
+    c: &Corpus,
+    places: &Places,
+    plan: &[(u32, usize, Tier)],
+    order: Vec<usize>,
+) -> Vec<usize> {
     let (tier, mut rest): (Vec<usize>, Vec<usize>) =
         order.into_iter().partition(|&i| plan[i].2 == Tier::Summary);
     if tier.is_empty() {
@@ -1102,13 +1110,39 @@ fn summary_after_entry(plan: &[(u32, usize, Tier)], order: Vec<usize>) -> Vec<us
         })
         .map_or(0, |at| at + 1);
     let mut tier = tier;
-    tier.sort_unstable();
+    tier.sort_by_cached_key(|&i| summary_fill_key(c, places, plan[i].0, plan[i].1, i));
     rest.splice(after..after, tier);
     rest
 }
 
-/// The share of the tier `summary`: how many of its sections, in order, are in
-/// full, and how many are listed (a full section is listed too). `costs` has
+/// The key of the fill order of the tier `summary` for the section `chunk` of
+/// the document `d` (D83). The title section of each document comes first,
+/// from the deepest summary up: the deep summaries before the shallow ones (by
+/// id in one depth), then `system`, then `product`. Then come the other
+/// sections, in the same order of the documents, each document in heading
+/// order. The last item is the place in the plan, so each key is unique.
+fn summary_fill_key(
+    c: &Corpus,
+    places: &Places,
+    d: u32,
+    chunk: usize,
+    at: usize,
+) -> (bool, u8, usize, String, usize, usize) {
+    let doc = &c.docs[d as usize];
+    let heading = title_first(doc)
+        .iter()
+        .position(|&j| j == chunk)
+        .unwrap_or(usize::MAX);
+    let (class, shallow) = match &places.roll[d as usize] {
+        Some((Level::Summary(a), _)) => (0, usize::MAX - a.len()),
+        Some((Level::System, _)) => (1, 0),
+        _ => (2, 0),
+    };
+    (heading != 0, class, shallow, doc.id.clone(), heading, at)
+}
+
+/// The share of the tier `summary`: how many of its sections, in the fill
+/// order, are in full, and how many are listed (a full section is listed too). `costs` has
 /// the full cost and the stub cost of each section. The fulls come first, as
 /// many as fit in `share` characters. The stubs after them use the rest of the
 /// share. A section that does not fit stops each count.

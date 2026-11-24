@@ -1083,9 +1083,10 @@ fn the_share_is_a_quarter_of_the_budget_and_not_a_fixed_number() {
 
 #[test]
 fn once_a_section_of_the_tier_is_a_stub_each_later_one_is_a_stub() {
-    // The big section of `valves` is a stub. The small summary of `drives`
-    // comes after it in the order, so it is a stub too: the tier is filled
-    // in order, and the last sections are the ones that it cuts.
+    // The fill order is `drives`, `valves`, `system`, `product`. The big
+    // section of `valves` is a stub, so each later section of the fill order
+    // is a stub too, and only `drives` is in full. The output keeps its order
+    // from the top down.
     let r = large_summary(200);
     let (_, json, _) = r.run(&[
         "context",
@@ -1098,14 +1099,15 @@ fn once_a_section_of_the_tier_is_a_stub_each_later_one_is_a_stub() {
     assert_eq!(
         modes,
         [
-            ("product".to_string(), true),
-            ("system".to_string(), true),
+            ("product".to_string(), false),
+            ("system".to_string(), false),
             ("summaries/valves".to_string(), false),
-            ("summaries/valves/drives".to_string(), false)
+            ("summaries/valves/drives".to_string(), true)
         ],
         "{json}"
     );
-    // The same at a small budget: no full section after a stub.
+    // The same at a small budget: no full section after a stub in the fill
+    // order, which is the output order reversed (each document has 1 section).
     let r = rollup();
     for budget in ["400", "600", "1000", "2000"] {
         let (_, json, _) = r.run(&[
@@ -1115,7 +1117,8 @@ fn once_a_section_of_the_tier_is_a_stub_each_later_one_is_a_stub() {
             budget,
             "--json",
         ]);
-        let modes = tier_modes(&json);
+        let mut modes = tier_modes(&json);
+        modes.reverse();
         let first_stub = modes.iter().position(|m| !m.1).unwrap_or(modes.len());
         assert!(
             modes[first_stub..].iter().all(|m| !m.1),
@@ -1125,11 +1128,12 @@ fn once_a_section_of_the_tier_is_a_stub_each_later_one_is_a_stub() {
 }
 
 #[test]
-fn the_tier_is_a_prefix_of_its_order_at_each_budget() {
-    // The product has a long text, and the others are short. When the room
-    // is small, the product is a stub or is cut, and no later section is in
-    // full or listed before it: the sections that the output has are the
-    // first ones of the tier, and each full section comes before each stub.
+fn the_tier_is_a_prefix_of_its_fill_order_at_each_budget() {
+    // The product has a long text, and the others are short. The fill order
+    // is `drives`, `valves`, `system`, `product`. When the room is small, the
+    // last sections of the fill order are cut. Thus the sections that the
+    // output has are the first ones of the fill order, and in the fill order
+    // each full section comes before each stub.
     let r = rollup_bodies(
         "A valve closes after 30 seconds.",
         &"The product waters. ".repeat(30),
@@ -1158,6 +1162,7 @@ fn the_tier_is_a_prefix_of_its_order_at_each_budget() {
             "summaries/valves/drives"
         ]
     );
+    let fill: Vec<String> = all.iter().rev().cloned().collect();
     // A rule before the tier takes room, and its size moves the point where
     // the room is gone: each size and each budget is a case.
     for rule_chars in [0, 800, 1200, 1600, 2000, 2400] {
@@ -1169,11 +1174,12 @@ fn the_tier_is_a_prefix_of_its_order_at_each_budget() {
             ),
         );
         for budget in (600..4600).step_by(100) {
-            let modes = run(&budget.to_string());
+            let mut modes = run(&budget.to_string());
+            modes.reverse();
             let got: Vec<String> = modes.iter().map(|m| m.0.clone()).collect();
             assert_eq!(
                 got[..],
-                all[..got.len()],
+                fill[..got.len()],
                 "{rule_chars} {budget}: {modes:?}"
             );
             let first_stub = modes.iter().position(|m| !m.1).unwrap_or(modes.len());
@@ -1637,6 +1643,11 @@ impl Measured {
         }
         docs
     }
+
+    /// True if the section of the tier with this id is in full.
+    fn is_full(&self, id: &str) -> bool {
+        self.tier.iter().any(|(i, full)| i == id && *full)
+    }
 }
 
 fn measure(r: &Repo, target: &str, budget: u32) -> Measured {
@@ -1705,6 +1716,64 @@ fn the_fixture_of_d83_keeps_the_output_order_at_each_budget_and_prints_its_sizes
                 .collect();
             assert!(ranks.windows(2).all(|w| w[0] < w[1]), "{line}");
             assert!(m.used <= budget as usize, "{line}");
+        }
+    }
+}
+
+#[test]
+fn the_summary_of_600_bytes_is_in_full_at_8000_with_a_real_layer_graph() {
+    // Before D83 the tier filled `product` first and its share ended inside
+    // `product`: no summary and no line of `system`.
+    let r = d83(8);
+    let m = measure(&r, "src/motor.rs", 8_000);
+    let line = m.line(8, 8_000);
+    assert!(m.is_full("summaries/valves/drives#drives"), "{line}");
+    assert!(m.is_full("summaries/valves#valves"), "{line}");
+}
+
+#[test]
+fn the_title_sections_of_d83_come_before_the_other_sections_in_the_fill_order() {
+    // The fill order of the fixture: the title of each document from the
+    // deepest summary up, then the other sections of `system`, then those of
+    // `product`. At each budget the served sections are a prefix of it, and
+    // in the fill order each full section comes before each stub.
+    let mut fill: Vec<String> = vec![
+        "summaries/valves/drives#drives".into(),
+        "summaries/valves#valves".into(),
+        "system#irrigation-system".into(),
+        "product#irrigation-product".into(),
+    ];
+    for doc in ["system", "product"] {
+        fill.extend((1..=8).map(|s| format!("{doc}#part-{s}")));
+    }
+    for valves_repeat in [8, 56] {
+        let r = d83(valves_repeat);
+        for budget in (600..=24_000).step_by(300) {
+            let b = budget.to_string();
+            let (code, json, err) = r.run(&["context", "src/motor.rs", "--budget", &b, "--json"]);
+            assert_eq!(code, 0, "{json}{err}");
+            let mut served: Vec<(usize, bool)> = parse_units(&json)
+                .into_iter()
+                .filter(|(_, tier, _)| tier == "summary")
+                .map(|(id, _, full)| {
+                    let at = fill.iter().position(|f| *f == id);
+                    (
+                        at.unwrap_or_else(|| panic!("{id} is not in the fill order")),
+                        full,
+                    )
+                })
+                .collect();
+            served.sort();
+            let case = format!("{valves_repeat} {budget}: {served:?}");
+            assert!(
+                served.iter().enumerate().all(|(n, s)| s.0 == n),
+                "not a prefix: {case}"
+            );
+            let first_stub = served.iter().position(|s| !s.1).unwrap_or(served.len());
+            assert!(
+                served[first_stub..].iter().all(|s| !s.1),
+                "a full section after a stub: {case}"
+            );
         }
     }
 }
