@@ -5,7 +5,7 @@
 use crate::config::{Config, Evals};
 use crate::diag::{Code, Diag};
 use crate::evals;
-use crate::evidence::{By, Evidence, OWED_REASONS, is_owed_reason, needs_evidence};
+use crate::evidence::{By, Evidence, OWED_REASONS, Why, is_owed_reason, needs_evidence};
 use crate::layer::Keep;
 use crate::lint::Phrases;
 use crate::model::{Corpus, Doc, DocType, LinkRes, Res, canonical};
@@ -2083,8 +2083,13 @@ pub fn by_name_texts(ev: &Evidence, di: u32, ri: usize) -> Vec<String> {
                     "the tag at {at} names the case `{test}`, and the reports have more than one case of that name that fits the test file by its name only; make the runner write the file of each case (jest-junit: `addFileAttribute: \"true\"`)"
                 );
             }
+            let cause = match b.why {
+                Some(Why::Many) => "more than one test of the reports fits the test (the cases differ before the end of the name, or in their `classname` or `file`), and the worst of them decides",
+                Some(Why::NotWhole) => "no case has the whole name of the test: a case only ends with it, or it is a segment of a longer name",
+                _ => "the case has no `file` and its `classname` names no test file",
+            };
             format!(
-                "the tag at {at} binds the case `{case}` to the test `{test}` by its name only: the case has no `file` and its `classname` names no test file, or its name only ends with the name of the test; add `case:\"{case}\"` if the case is the test under the tag, or make the runner write the file and the whole name of each case (jest-junit: `addFileAttribute: \"true\"`)"
+                "the tag at {at} binds the case `{case}` to the test `{test}` by a weak link: {cause}; add `case:\"{case}\"` if the case is the test under the tag, or make the runner write the file and the whole name of each case (jest-junit: `addFileAttribute: \"true\"`)"
             )
         })
         .collect()

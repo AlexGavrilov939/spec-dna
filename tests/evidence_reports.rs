@@ -3148,6 +3148,67 @@ fn an_rspec_twin_with_the_name_inside_its_own_name_never_hides_the_failed_test()
     assert!(proven(path, text, &passed));
 }
 
+/// One check of an RSpec file with the cases of `rspec_junit_formatter`: each
+/// case has the `file` of the spec. `cases` are (name, child).
+fn rspec_check(text: &str, cases: &[(&str, &str)]) -> (i32, String) {
+    let body: String = cases
+        .iter()
+        .map(|(name, child)| {
+            format!(
+                "<testcase classname=\"spec.valve_spec\" name=\"{name}\" file=\"./spec/valve_spec.rb\" time=\"0.1\">{child}</testcase>"
+            )
+        })
+        .collect();
+    let r = pr("strict", REPORTS, &[("spec/valve_spec.rb", text)]);
+    r.write(
+        "reports/r.xml",
+        &format!("<?xml version=\"1.0\"?><testsuite name=\"rspec\" tests=\"2\">{body}</testsuite>"),
+    );
+    stamp(&r);
+    check(&r, &[])
+}
+
+#[test]
+fn an_rspec_example_with_the_name_inside_another_name_never_hides_the_failed_example() {
+    // The rspec_junit_formatter writes the `file` of each case.
+    for head in ["describe Valve do", "RSpec.describe Valve do"] {
+        let text = format!(
+            "{head}\n  # covers: requirements/valves#flush\n  it 'flushes' do\n  end\n\n  it 'calls #flushes' do\n  end\nend\n"
+        );
+        let (code, out) = rspec_check(
+            &text,
+            &[("Valve flushes", FAILED), ("Valve calls #flushes", "")],
+        );
+        assert!(has(&out, "SD617"), "{head}: {out}");
+        assert_eq!(code, 1, "{head}: {out}");
+        let (code, out) = rspec_check(
+            &text,
+            &[("Valve calls #flushes", ""), ("Valve flushes", FAILED)],
+        );
+        assert!(has(&out, "SD617"), "{head}: {out}");
+        assert_eq!(code, 1, "{head}: {out}");
+        // Nested: the title of the group starts with `#`.
+        let nested = format!(
+            "{head}\n  describe '#flush' do\n    # covers: requirements/valves#flush\n    it 'works' do\n    end\n\n    it 'also works' do\n    end\n  end\nend\n"
+        );
+        let (code, out) = rspec_check(
+            &nested,
+            &[
+                ("Valve#flush works", FAILED),
+                ("Valve#flush also works", ""),
+            ],
+        );
+        assert!(has(&out, "SD617"), "{head}: {out}");
+        assert_eq!(code, 1, "{head}: {out}");
+        // Each case passed: proven. SD621 says that a case binds by its name.
+        let (_, out) = rspec_check(
+            &nested,
+            &[("Valve#flush works", ""), ("Valve#flush also works", "")],
+        );
+        assert!(!has(&out, "SD617"), "{head}: {out}");
+    }
+}
+
 #[test]
 fn a_describe_title_that_is_the_name_of_a_test_never_hides_the_skipped_test() {
     let path = "tests/valves.test.js";
@@ -3263,7 +3324,7 @@ fn a_rust_file_of_a_folder_of_tests_fits_the_binary_of_the_folder() {
 #[test]
 fn a_case_with_a_very_long_name_gives_the_reason_long_name_and_does_not_stall() {
     let text = "# covers: requirements/valves#flush\ndef test_closes():\n    assert True\n";
-    let dots = format!("tests.test_valves.{}", ".".repeat(8_000));
+    let dots = format!("test_closes{}", ".".repeat(8_000));
     let parens = format!("test_closes{}", "(a.".repeat(1_200));
     for name in [dots, parens] {
         let r = pr("strict", REPORTS, &[("tests/test_valves.py", text)]);
@@ -3283,4 +3344,86 @@ fn a_case_with_a_very_long_name_gives_the_reason_long_name_and_does_not_stall() 
         assert!(found[0].contains("long"), "{out}");
         assert_eq!(code, 1, "{out}");
     }
+    // A long case that has no part of the name of the test is no reason: the
+    // tag has a typo, and the reason stays `no-case`.
+    let (code, out) = bind_check(
+        "tests/test_valves.py",
+        text,
+        &[(
+            "tests.test_valves",
+            &format!("test_other{}", ".".repeat(8_000)),
+            "",
+        )],
+    );
+    let found = lines(&out, "SD617");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(!found[0].contains("too long"), "{out}");
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn a_case_that_is_not_the_whole_name_of_the_test_gives_sd621_with_its_cause() {
+    let sd621 = |path: &str, text: &str, cases: &[(&str, &str, &str)]| {
+        let (_, out) = bind_check(path, text, cases);
+        assert!(!has(&out, "SD617"), "{out}");
+        let found = lines(&out, "SD621");
+        assert_eq!(found.len(), 1, "{out}");
+        found[0].to_string()
+    };
+    // A case of another test names the test as a segment: it proves the tag,
+    // and SD621 says that no case has the whole name.
+    let cs = "public class ValveTest {\n    // covers: requirements/valves#flush\n    [Theory(Skip = \"later\")] public void Closes(int n) {\n    }\n}\n";
+    let text = sd621(
+        "Valves/Tests/ValveTest.cs",
+        cs,
+        &[("Valves.Tests.ValveTest", "Closes.WhenCold", "")],
+    );
+    assert!(
+        text.contains("no case has the whole name of the test"),
+        "{text}"
+    );
+    let pkg = "example.org/app/valves";
+    let go = "package valves\n\n// covers: requirements/valves#flush\nfunc TestClose(t *testing.T) {\n}\n\nfunc TestTable(t *testing.T) {\n\tt.Run(\"TestClose\", func(t *testing.T) {\n\t})\n}\n";
+    let text = sd621(
+        "valves/valve_test.go",
+        go,
+        &[(pkg, "TestTable/TestClose", "")],
+    );
+    assert!(
+        text.contains("no case has the whole name of the test"),
+        "{text}"
+    );
+    // 2 tests fit: both cases are whole names, and the cause is the number.
+    let go = "package valves\n\ntype VSuite struct{ suite.Suite }\n\nfunc TestV(t *testing.T) {\n\tsuite.Run(t, new(VSuite))\n}\n\n// covers: requirements/valves#flush\nfunc TestOpen(t *testing.T) {\n}\n\nfunc (s *VSuite) TestOpen() {\n}\n";
+    let text = sd621(
+        "valves/valve_test.go",
+        go,
+        &[(pkg, "TestOpen", ""), (pkg, "TestV/TestOpen", "")],
+    );
+    assert!(
+        text.contains("more than one test of the reports fits"),
+        "{text}"
+    );
+    // The subtests and the rows of one test are one test: no SD621.
+    let go = "package valves\n\n// covers: requirements/valves#flush\nfunc TestOpen(t *testing.T) {\n\tt.Run(\"fast\", func(t *testing.T) {})\n}\n";
+    let (code, out) = bind_check(
+        "valves/valve_test.go",
+        go,
+        &[(pkg, "TestOpen", ""), (pkg, "TestOpen/fast", "")],
+    );
+    assert!(!has(&out, "SD621") && !has(&out, "SD617"), "{out}");
+    assert_eq!(code, 0, "{out}");
+    // `strict` stops on an ordinary file with `closes` beside `never closes`,
+    // when the names of the cases join the titles with a space (jest-junit).
+    let js = "describe('Valves', () => {\n  // covers: requirements/valves#flush\n  it('closes', () => {\n  });\n\n  it('never closes', () => {\n  });\n});\n";
+    let (code, out) = bind_check(
+        "tests/valves.test.js",
+        js,
+        &[
+            ("tests/valves.test.js", "Valves closes", ""),
+            ("tests/valves.test.js", "Valves never closes", ""),
+        ],
+    );
+    assert!(!has(&out, "SD617") && has(&out, "SD621"), "{out}");
+    assert_eq!(code, 1, "{out}");
 }

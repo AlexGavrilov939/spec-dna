@@ -127,8 +127,11 @@ pub struct Bind {
     pub fit: Option<Fit>,
     /// True for a shared set: the tag proves only when each case passed.
     pub shared: bool,
-    /// True when each bound case fits by its name only (SD621).
+    /// True for a weak bind (SD621). `why` gives the cause.
     pub by_name: bool,
+    /// The cause of a weak bind. `None` for `case:` and for a bind that is not
+    /// weak.
+    pub why: Option<Why>,
     /// The reason for no bound case. `None` with a bound case.
     pub reason: Option<Reason>,
     /// The line (from 1) of the first line below the tag that is code and no
@@ -137,6 +140,19 @@ pub struct Bind {
     /// For `case:` with no bound case: the names of cases that end with the
     /// value. The fix of a `case:` with a part of a name.
     pub near: Vec<String>,
+}
+
+/// Why a bind is weak (SD621). The first cause that applies decides.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Why {
+    /// More than one test of the reports fits: the cases differ before the end
+    /// of the name of the test, or in their `classname` or `file`.
+    Many,
+    /// A case fits the test file by its name only.
+    ByName,
+    /// No case has the whole name of the test: a case only ends with it, or it
+    /// is a segment of a longer name.
+    NotWhole,
 }
 
 /// How the bound cases fit the test file of the tag (design 0.8.1, D82 item 6).
@@ -1201,6 +1217,39 @@ fn name_match(case: &str, test: &TestName) -> Option<(usize, NameFit)> {
     find_whole(cut_head(case), &test.name).map(|e| (e, NameFit::Strong))
 }
 
+/// True if the case has the whole name of the test: it equals the name, or its
+/// last segment does (` > `, `::` and `.` end a segment, `/` does not), or it
+/// is the expected name, or it is the method of a Go suite under its function.
+/// The subtests and the rows of a table have the name of the test before their
+/// tail, and they are no own case.
+fn is_own(case: &str, test: &TestName, titles: Option<&[String]>) -> bool {
+    let last = |text: &str, seps: &[&str]| -> usize {
+        seps.iter()
+            .filter_map(|sep| text.rfind(sep).map(|i| i + sep.len()))
+            .max()
+            .unwrap_or(0)
+    };
+    if test.recv.is_some() {
+        let mut segs = case.split('/');
+        return segs.next().is_some()
+            && segs.next() == Some(test.name.as_str())
+            && segs.next().is_none();
+    }
+    if test.call {
+        let variants = if test.bt {
+            tail_variants(case)
+        } else {
+            vec![case]
+        };
+        return variants
+            .iter()
+            .any(|v| v[last(v, &[" > ", " \u{203a} "])..] == test.name)
+            || titles.is_some_and(|ts| expected_name(case, test, ts));
+    }
+    let head = cut_head(case);
+    head[last(head, &["::", "."])..] == test.name
+}
+
 /// True if the case is the one that the titles of the groups and the name of
 /// the test give: the titles and the name, joined with a space, ` > ` or
 /// ` \u{203a} `. RSpec joins a title that starts with `#` or `.` to the title
@@ -1481,8 +1530,8 @@ pub struct Binder<'a> {
     by_second: HashMap<&'a str, Vec<usize>>,
     /// For each case, the way that it fits a test file.
     kind: Vec<Kind>,
-    /// True when a case has a name that is too long to read (`is_long`).
-    long: bool,
+    /// The cases with a name that is too long to read (`is_long`).
+    long: Vec<usize>,
 }
 
 impl<'a> Binder<'a> {
@@ -1492,10 +1541,12 @@ impl<'a> Binder<'a> {
         let mut by_name: HashMap<&str, Vec<usize>> = HashMap::new();
         let mut by_second: HashMap<&str, Vec<usize>> = HashMap::new();
         let mut kind = Vec::with_capacity(cases.len());
-        let mut long = false;
+        let mut long = Vec::new();
         for (i, c) in cases.iter().enumerate() {
             let name = c.name.as_str();
-            long |= is_long(name);
+            if is_long(name) {
+                long.push(i);
+            }
             for k in case_keys(name) {
                 by_key.entry(k).or_default().push(i);
             }
@@ -1712,7 +1763,13 @@ impl<'a> Binder<'a> {
         let bound: Vec<&Case> = fits.iter().map(|(i, ..)| &self.cases[*i]).collect();
         if bound.is_empty() {
             // A case with a long name has no key but its whole name.
-            let reason = if ours.is_some() && self.long {
+            let long = ours.as_ref().is_some_and(|t| {
+                self.long.iter().any(|&i| {
+                    self.cases[i].name.contains(t.name.as_str())
+                        && self.fit(i, &at, false).is_some()
+                })
+            });
+            let reason = if long {
                 Reason::LongName
             } else {
                 Reason::NoCase
@@ -1736,8 +1793,19 @@ impl<'a> Binder<'a> {
         let twins = ours
             .as_ref()
             .is_some_and(|t| tests.iter().filter(|x| *x == t).count() > 1);
-        let weak =
-            fits.iter().any(|f| f.1 == Fit::Name || !f.2) || (!twins && self.many(&bound, &ours));
+        let own = ours
+            .as_ref()
+            .is_none_or(|t| bound.iter().any(|c| is_own(&c.name, t, titles.as_deref())));
+        bind.why = if !twins && self.many(&bound, &ours) {
+            Some(Why::Many)
+        } else if fits.iter().any(|f| f.1 == Fit::Name) {
+            Some(Why::ByName)
+        } else if !own || fits.iter().any(|f| !f.2) {
+            Some(Why::NotWhole)
+        } else {
+            None
+        };
+        let weak = bind.why.is_some();
         bind.by_name = weak
             && match case {
                 Some(name) => !one_case(
@@ -3664,7 +3732,7 @@ mod tests {
         // the square of its separators (73 s and 65 s before the cap).
         let text = "# covers: a#b\ndef test_closes():\n    pass\n";
         let names = [
-            format!("tests.test_a.{}", ".".repeat(8_000)),
+            format!("test_closes{}", ".".repeat(8_000)),
             format!("test_closes{}", "(a.".repeat(1_200)),
         ];
         for name in names {
@@ -3686,6 +3754,25 @@ mod tests {
             );
             assert_eq!(proof, Proof::Passed(name.clone(), 1));
         }
+        // A long case of another test, or of another file, is no reason: the
+        // tag has no case, and the reason stays `no-case`.
+        let other = [case(
+            &format!("test_other{}", ".".repeat(8_000)),
+            Some("tests.test_a"),
+            None,
+            Outcome::Pass,
+        )];
+        let (_, bind) = bind_of("tests/test_a.py", text, None, &other, &["tests/test_a.py"]);
+        assert_eq!(bind.reason, Some(Reason::NoCase));
+        let elsewhere = [case(
+            &format!("test_closes{}", ".".repeat(8_000)),
+            Some("tests.test_b"),
+            None,
+            Outcome::Pass,
+        )];
+        let files = ["tests/test_a.py", "tests/test_b.py"];
+        let (_, bind) = bind_of("tests/test_a.py", text, None, &elsewhere, &files);
+        assert_eq!(bind.reason, Some(Reason::NoCase));
         // A name of an ordinary test is no long name.
         assert!(!is_long("tests.test_a.TestA.test_closes[1-2]"));
     }
