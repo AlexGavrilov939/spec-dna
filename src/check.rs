@@ -2084,7 +2084,7 @@ pub fn by_name_texts(ev: &Evidence, di: u32, ri: usize) -> Vec<String> {
                 );
             }
             format!(
-                "the tag at {at} binds the case `{case}` to the test `{test}` by its name only: the case has no `file`, and its `classname` names no test file; add `case:\"{case}\"` if the case is the test under the tag, or make the runner write the file (jest-junit: `addFileAttribute: \"true\"`)"
+                "the tag at {at} binds the case `{case}` to the test `{test}` by its name only: the case has no `file` and its `classname` names no test file, or its name only ends with the name of the test; add `case:\"{case}\"` if the case is the test under the tag, or make the runner write the file and the whole name of each case (jest-junit: `addFileAttribute: \"true\"`)"
             )
         })
         .collect()

@@ -55,14 +55,16 @@ A tag binds no case in these 3 cases:
 
 ### The name of the case
 
-A case names the test only in the forms of this closed list:
+A case names the test when the name of the test is a whole segment of the name of the case. The separators of the segments are ` > `, ` › `, `::`, `/`, `.` and `#`. A space inside a name is no separator, so the name `Closes` is no segment of the name `Closes when cold`. These forms are closed:
 
-- The forms `def`, `fn`, `func` and method. The head of the case name is the part before the first `(`, `[`, `/` or space. `::` and `.` split the head into segments. The case names the test when the name of the test is one segment of the head. Examples: `test_closes[1-2]` (pytest parameters), `tests::closes` (a module path of nextest), `closes::case_1` (the cases of a Rust macro), `TestTimeout/no_reply` (a Go subtest), `test1(String) [1] a` (JUnit 5 parameters), `testOne with data set #0` (PHPUnit data) and `ValveTest.ClosesOnTimeout` (.NET). The name `test_x_slow` is not the name `test_x`.
-- A Go method of a suite (`func (s *ValveSuite) TestCloses()`, testify) has the case `<Test function>/<method>`, for example `TestValveSuite/TestCloses`, and a subtest adds more segments. The function is the one whose lines have `suite.Run(t, new(ValveSuite))` or `suite.Run(t, &ValveSuite{...})`, in the test files of the same folder. The case of another suite function, a case with the method name alone, and a type that no function runs bind no case (the reason `no-case`). The file rule still applies.
-- The form call. The case name equals the literal, or ends with the literal after a space. A Kotlin test with a name in backticks has this form, and the report can add the parameters of the method: the cases `closes on timeout()` and `closes on timeout(int) [1] 3` have the name `closes on timeout`. For another language the name is the literal, so `it('flushes')` does not bind the case `flushes (slow)` of a table. A separator ` > ` or ` › ` ends with a space. Examples: `closes on timeout`, `Valves closes on timeout` (jest-junit, RSpec) and `Valves > closes on timeout` (Vitest).
+- The forms `def`, `fn`, `func` and method. The name of the test is a segment of the name of the case before its parameters. The parameters start right after the name with `(` or `[`, or with the words `with data set`. Examples: `test_closes[1-2]` (pytest parameters), `tests::closes` (a module path of nextest), `closes::case_1` (the cases of a Rust macro), `TestTimeout/no_reply` (a Go subtest), `test1(String) [1] a` (JUnit 5 parameters), `testOne with data set #0` (PHPUnit data) and `ValveTest.ClosesOnTimeout` (.NET). The name `test_x_slow` is not the name `test_x`, and a display name such as `Closes when cold` is not the name `Closes`.
+- A Go method of a suite (`func (s *ValveSuite) TestCloses()`, testify) has the case `<Test function>/<method>`, for example `TestValveSuite/TestCloses`, and a subtest adds more segments. The function is the one whose lines have `suite.Run(t, new(ValveSuite))` or `suite.Run(t, &ValveSuite{...})`, in the test files of the same folder. The case of another suite function, a case with the method name alone, and a type that no function runs bind no case (the reason `no-case`). A function that runs 2 suites that both have a method of this name binds neither, because the 2 cases have one name.
+- The form call. The name of the test is the literal. A segment that equals it, or the whole case name, is a strong match. A case name that only ends with the literal after a space is a weak match, because jest-junit and RSpec join the titles with a space. A weak match is the expected name when the titles of the groups above the test (`describe`) and the literal, joined with a space, give the whole case name. A case name that has a segment of ` > ` never matches by its last word. Examples: `closes on timeout`, `Valves closes on timeout` (jest-junit, RSpec) and `Valves > closes on timeout` (Vitest). A Kotlin test with a name in backticks has this form, and its name is whole: parentheses and brackets are part of it. The report can add the parameters of the method after it: the cases `closes on timeout()` and `closes on timeout(int) [1] 3` have the name `closes on timeout`. For another language the name is the literal, so `it('flushes')` does not bind the case `flushes (slow)` of a table.
 - A word of the line that is not the name of the test never binds. In particular, the word `it` of an import line binds no case.
 
-A case can name 2 tests of the file. Example: `Valves never closes` ends with `closes` and with `never closes`. The case belongs to the test whose name ends nearer the end of the case name, and on a tie to the test with the longer name. Thus a tag above `it('closes', ...)` does not bind it.
+A test with a template name (`it.each(rows)('%s opens')`, a name with `${}` or `#{}`, `it_behaves_like`) is a test of the file too, but no tag binds to it. The fixed parts of its name claim the cases that they can give. A table with a name on more than one line claims each weak match of the file.
+
+A case can name 2 tests of the file. Example: `Valves never closes` ends with `closes` and with `never closes`. The case belongs to the test with the stronger match, then to the test whose name ends nearer the end of the case name, and on a tie to the test with the longer name. Thus a tag above `it('closes', ...)` does not bind it, and a tag above `it('opens')` does not bind the case `Valves fast opens` of the template `%s opens`. The expected name of a test is always its own case.
 
 ### The file of the case
 
@@ -74,15 +76,17 @@ A case fits the test file of the tag by the first row that applies:
 | a `classname` with `::` | the part after the last `::`, and after its last `/`, is the stem of the test file, or the name of its folder when the stem is `main` | cargo-nextest |
 | a `classname` with `/`, whose last segment has a `.` | the `classname` is the path of the test file, by the rule of `file` | Vitest |
 | a `classname` with `/` | the folder of the test file ends the `classname` in whole segments. When several folders do, only the longest one fits | go-junit-report, gotestsum `full` and `relative` |
-| another `classname` | `$` reads as `.`. The dotted path of the test file (the path without its extension, with `.` for `/`) ends with the `classname`, or with its part before the last `.`, in whole segments. A `classname` of one segment also fits a test file whose folder ends with it | pytest `xunit2`, JUnit, .NET, gotestsum `short` |
+| another `classname` | `$` reads as `.`. The dotted path of the test file (the path without its extension, with `.` for `/`) ends with the whole `classname`, in whole segments. A class after the module (pytest) or an inner class (Java) is a trailing segment that starts with an upper case letter, and it can go: `tests.test_valves.TestValves` fits `tests/test_valves.py`. The part before the last `.` of another name is no key: `tests.test_close` does not fit `app/tests/tests.py`. A `classname` of one segment also fits a test file whose folder ends with it | pytest `xunit2`, JUnit, .NET, gotestsum `short` |
 
 When the row names no test file of the tree, the case fits by its name only. A case with no `file` and no `classname` also fits by its name only (a line of the line format with `-`). A case with a `file` that is not the file of the tag does not fit.
 
-The precedence: when a case fits by `file` or by `classname`, the cases that fit by name only do not bind the tag. Thus a passed case of an unknown file never hides a skipped case of the file of the tag.
+A Rust file is special. A file of `tests/` is a binary of its own, so only the binary id (`<crate>::<name>`) fits it, and the `classname` of the unit tests of the library (the crate) does not. A file of `src/` fits the unit tests of the library by the module path of its name: the case `valves::tests::closes` fits `src/valves.rs`, as a bind by name only.
+
+The precedence: when a case fits by `file` or by `classname`, and its name is a strong match, the other cases do not bind the tag. Thus a passed case of an unknown file never hides a skipped case of the file of the tag.
 
 ### Shared cases
 
-The cases of a tag are shared in 2 cases: 2 tests of the file have the name of the test, or the cases that fit by name only are not one case. One case has one name, one `classname` and one `file`, and it appears once in each report. A shared set proves the requirement only when each of its cases passed. Thus a skipped twin never hides behind a passed twin. The message names the tests and the case: ``the tests of the name `<name>` in <path> share their cases, and the case `<case>` was skipped``.
+The cases of a tag are shared in 2 cases: 2 tests of the file have the name of the test, or the cases are a weak set (see the strength of a bind) that is not one case. One case has one name, one `classname` and one `file`, and it appears once in each report. A shared set proves the requirement only when each of its cases passed. Thus a skipped twin never hides behind a passed twin. The message names the tests and the case: ``the tests of the name `<name>` in <path> share their cases, and the case `<case>` was skipped``.
 
 ### The name of a case with `case:`
 
@@ -92,7 +96,7 @@ A case with a `file` binds only when the file is the file of the tag. For a case
 
 ### The strength of a bind
 
-A bind is exact when each bound case fits by `file` or by `classname`, or when `case:` names it and the fresh reports have one case of that name. Else it is a bind by name, and SD621 reports the tag. A bind by name counts: the requirement is proven when its cases passed. SD621 makes the weak link visible. The fix is `case:"<name>"` with the name of the case, or a runner that writes the `file` of each case: for jest-junit, set `addFileAttribute: "true"` once.
+A bind is exact when a bound case fits by `file` or by `classname` and its name is a strong match, or when `case:` names it and the fresh reports have one case of that name. If any case is exact, only the exact cases bind. Else the cases are one weak set: it is a bind by name, and SD621 reports the tag. A weak set proves the requirement when exactly one case fits. When more than one case fits, the worst of them decides: a failed case, then a skipped case, then a passed case. A bind by name counts: the requirement is proven when its cases passed. SD621 makes the weak link visible. The fix is `case:"<name>"` with the name of the case, or a runner that writes the `file` of each case: for jest-junit, set `addFileAttribute: "true"` once.
 
 ### The proof
 
@@ -120,7 +124,7 @@ The shapes below come from the documentation or the source of each runner. The t
 | pytest, `junit_family = xunit2` (the default) | `tests.test_valves`, or `tests.test_valves.TestValves` in a class | `test_closes_on_timeout`, `test_closes[1-2]` | none | `def`, parameters in `[...]` | `classname`: exact |
 | pytest, `junit_family = xunit1` | the same | the same | `tests/test_valves.py` | `def` | `file`: exact |
 | cargo-nextest, an integration test `tests/valves.rs` | `<crate>::valves` | `closes`, or `<module>::closes` | none | `fn` | `classname` (binary id): exact |
-| cargo-nextest, a unit test of a library | `<crate>` | `<module>::tests::closes` | none | `fn` | by name only, when no test file has the name of the crate. Add `case:` |
+| cargo-nextest, a unit test of a library | `<crate>` | `<module>::tests::closes` | none | `fn` | a file of `src/` by the module path of the name, as a bind by name only (SD621). A file of `tests/` never fits it. Add `case:` for another layout |
 | Jest, jest-junit, the defaults | `Valves closes on timeout` | `Valves closes on timeout` | none | call | by name only (SD621) |
 | Jest, jest-junit, `addFileAttribute: "true"` | as above | as above | `tests/valves.test.js` | call | `file`: exact |
 | Vitest, `--reporter=junit` | `tests/valves.test.ts` | `Valves > closes on timeout` | none | call | `classname` (path): exact |
