@@ -2894,10 +2894,10 @@ fn bind_files(files: &[(&str, &str)], cases: &[(&str, &str, &str)]) -> (i32, Str
 }
 
 #[test]
-fn a_template_of_the_file_claims_its_case_so_a_skipped_test_stays_unproven() {
+fn a_template_of_the_file_takes_part_in_the_worst_case_of_the_test() {
     let cl = "tests/valves.test.js";
     // The tag is above a skipped test. The template `%s opens` is a test of
-    // the file, and its case ends with the word `opens`.
+    // the file, and its case ends with the word `opens`: it is a case of the set.
     for template in [
         "  it.each(['fast'])('%s opens', (x) => {\n  });\n",
         "  test.each`\n    a\n    ${1}\n  `('$a opens', (x) => {\n  });\n",
@@ -2906,35 +2906,67 @@ fn a_template_of_the_file_claims_its_case_so_a_skipped_test_stays_unproven() {
         let text = format!(
             "describe('Valves', () => {{\n  // covers: requirements/valves#flush\n  it.skip('opens', () => {{\n  }});\n\n{template}}});\n"
         );
-        for name in ["Valves > fast opens", "Valves fast opens"] {
-            let (code, out) = bind_check("tests/valves.test.js", &text, &[(cl, name, "")]);
-            let found = lines(&out, "SD617");
-            assert_eq!(found.len(), 1, "{template} {name}: {out}");
-            assert_eq!(code, 1, "{template} {name}: {out}");
-        }
+        let report = [(cl, "Valves opens", SKIPPED), (cl, "Valves fast opens", "")];
+        assert!(
+            unproven("tests/valves.test.js", &text, &report),
+            "{template}"
+        );
+        // A case that a runner separates with ` > ` never binds by its last word.
+        let report = [(cl, "Valves > fast opens", "")];
+        assert!(
+            unproven("tests/valves.test.js", &text, &report),
+            "{template}"
+        );
+        // The report has no case of the skipped test: the one case that ends
+        // with the name binds by its name only (SD621), and it passed.
+        let report = [(cl, "Valves fast opens", "")];
+        let (code, out) = bind_check("tests/valves.test.js", &text, &report);
+        assert!(!has(&out, "SD617"), "{template}: {out}");
+        assert!(has(&out, "SD621"), "{template}: {out}");
+        assert_eq!(code, 1, "{template}: {out}");
     }
-    // A name that a runner separates with ` > ` never binds by its last word.
     let text = "describe('Valves', () => {\n  // covers: requirements/valves#flush\n  it('opens', () => {\n  });\n});\n";
-    let (code, out) = bind_check(
-        "tests/valves.test.js",
-        text,
-        &[(cl, "Valves > fast opens", "")],
-    );
-    assert!(has(&out, "SD617"), "{out}");
-    assert_eq!(code, 1, "{out}");
+    let report = [(cl, "Valves > fast opens", "")];
+    assert!(unproven("tests/valves.test.js", text, &report));
 }
 
 #[test]
-fn a_shared_example_of_rspec_claims_its_cases() {
+fn a_shared_example_of_rspec_is_a_case_of_the_set() {
     let text = "describe Valve do\n  it_behaves_like 'closable'\n\n  # covers: requirements/valves#flush\n  it 'closes' do\n  end\nend\n";
-    let r = pr("strict", REPORTS, &[("spec/valve_spec.rb", text)]);
-    r.write(
-        "reports/r.xml",
-        "<?xml version=\"1.0\"?><testsuite name=\"rspec\" tests=\"1\"><testcase classname=\"spec.valve_spec\" name=\"Valve behaves like closable closes\" file=\"./spec/valve_spec.rb\"/></testsuite>",
-    );
-    stamp(&r);
-    let (code, out) = check(&r, &[]);
+    let run = |cases: &str| {
+        let r = pr("strict", REPORTS, &[("spec/valve_spec.rb", text)]);
+        r.write(
+            "reports/r.xml",
+            &format!(
+                "<?xml version=\"1.0\"?><testsuite name=\"rspec\" tests=\"2\">{cases}</testsuite>"
+            ),
+        );
+        stamp(&r);
+        check(&r, &[])
+    };
+    let case = |name: &str, child: &str| {
+        format!(
+            "<testcase classname=\"spec.valve_spec\" name=\"{name}\" file=\"./spec/valve_spec.rb\">{child}</testcase>"
+        )
+    };
+    // The shared example fails: its case ends with the name of the test, so the
+    // worst case decides.
+    let (code, out) = run(&format!(
+        "{}{}",
+        case("Valve closes", ""),
+        case("Valve behaves like closable closes", FAILED)
+    ));
     assert!(has(&out, "SD617"), "{out}");
+    assert_eq!(code, 1, "{out}");
+    // Each case passed: the tag proves, and SD621 says that a case binds by
+    // the end of its name.
+    let (code, out) = run(&format!(
+        "{}{}",
+        case("Valve closes", ""),
+        case("Valve behaves like closable closes", "")
+    ));
+    assert!(!has(&out, "SD617"), "{out}");
+    assert!(has(&out, "SD621"), "{out}");
     assert_eq!(code, 1, "{out}");
 }
 
@@ -3060,6 +3092,195 @@ fn a_kotlin_name_in_backticks_with_parentheses_or_brackets_binds_whole() {
         // A case that has only the first word of the name binds nothing.
         let (code, out) = bind_check(path, &text, &[(cl, "stops()", "")]);
         assert!(has(&out, "SD617"), "{out}");
+        assert_eq!(code, 1, "{out}");
+    }
+}
+
+// Never hide: the worst of all cases that fit the name (the third checker pass)
+
+/// The check of one tagged file with the cases of one report: true when the
+/// tag is unproven (SD617) and the exit code is 1.
+fn unproven(path: &str, test: &str, cases: &[(&str, &str, &str)]) -> bool {
+    let (code, out) = bind_check(path, test, cases);
+    let found = lines(&out, "SD617");
+    assert!(found.len() <= 1, "{out}");
+    !found.is_empty() && code == 1
+}
+
+/// The reverse: no SD617. More than one case fits the tag, so SD621 can be
+/// the only error (`strict`).
+fn proven(path: &str, test: &str, cases: &[(&str, &str, &str)]) -> bool {
+    let (code, out) = bind_check(path, test, cases);
+    !has(&out, "SD617") && (code == 0 || has(&out, "SD621"))
+}
+
+#[test]
+fn an_rspec_twin_with_the_name_inside_its_own_name_never_hides_the_failed_test() {
+    let cl = "spec.valve_spec";
+    let text = "describe Valve do\n  # covers: requirements/valves#flush\n  it 'flushes' do\n  end\n\n  it 'calls #flushes' do\n  end\nend\n";
+    let path = "spec/valve_spec.rb";
+    let failed = [
+        (cl, "Valve flushes", FAILED),
+        (cl, "Valve calls #flushes", ""),
+    ];
+    assert!(unproven(path, text, &failed));
+    // The test with the tag passes, and so does its twin.
+    let passed = [(cl, "Valve flushes", ""), (cl, "Valve calls #flushes", "")];
+    assert!(proven(path, text, &passed));
+    // The twin comes first in the file and in the report.
+    let text = "describe Valve do\n  it 'calls #flushes' do\n  end\n\n  # covers: requirements/valves#flush\n  it 'flushes' do\n  end\nend\n";
+    let failed = [
+        (cl, "Valve calls #flushes", ""),
+        (cl, "Valve flushes", FAILED),
+    ];
+    assert!(unproven(path, text, &failed));
+    // The group is `RSpec.describe`, the title of a method starts with `#`.
+    let text = "RSpec.describe Valve do\n  describe '#open' do\n    # covers: requirements/valves#flush\n    it 'closes' do\n    end\n\n    it 'also closes' do\n    end\n  end\nend\n";
+    let failed = [
+        (cl, "Valve#open closes", FAILED),
+        (cl, "Valve#open also closes", ""),
+    ];
+    assert!(unproven(path, text, &failed));
+    let passed = [
+        (cl, "Valve#open closes", ""),
+        (cl, "Valve#open also closes", ""),
+    ];
+    assert!(proven(path, text, &passed));
+}
+
+#[test]
+fn a_describe_title_that_is_the_name_of_a_test_never_hides_the_skipped_test() {
+    let path = "tests/valves.test.js";
+    let cl = "tests/valves.test.js";
+    let text = "describe('Valves', () => {\n  // covers: requirements/valves#flush\n  it.skip('closes the valve', () => {\n  });\n\n  describe('closes the valve', () => {\n    it('fast', () => {\n    });\n  });\n});\n";
+    let report = [
+        (cl, "Valves > closes the valve", SKIPPED),
+        (cl, "Valves > closes the valve > fast", ""),
+    ];
+    assert!(unproven(path, text, &report));
+    let text = "describe('Valves', () => {\n  describe('opens', () => {\n    it.each([1, 2])('case %i', (n) => {\n    });\n  });\n\n  // covers: requirements/valves#flush\n  it.skip('opens', () => {\n  });\n});\n";
+    let report = [
+        (cl, "Valves > opens > case 1", ""),
+        (cl, "Valves > opens > case 2", ""),
+        (cl, "Valves > opens", SKIPPED),
+    ];
+    assert!(unproven(path, text, &report));
+    // The test with the tag passes: the cases of the group pass too.
+    let report = [
+        (cl, "Valves > opens > case 1", ""),
+        (cl, "Valves > opens > case 2", ""),
+        (cl, "Valves > opens", ""),
+    ];
+    assert!(proven(path, text, &report));
+}
+
+#[test]
+fn a_template_with_the_literal_of_the_test_never_hides_the_skipped_test() {
+    let path = "tests/valves.test.js";
+    let cl = "tests/valves.test.js";
+    let text = "describe('Valves', () => {\n  // covers: requirements/valves#flush\n  it.skip('closes', () => {\n  });\n\n  it.each(['a', 'b'])('closes', (x) => {\n  });\n});\n";
+    let report = [
+        (cl, "Valves > closes", SKIPPED),
+        (cl, "Valves > closes", ""),
+        (cl, "Valves > closes", ""),
+    ];
+    assert!(unproven(path, text, &report));
+    let report = [(cl, "Valves > closes", ""); 3];
+    assert!(proven(path, text, &report));
+    // The test with the tag fails, and a template of the same literal passes.
+    let report = [(cl, "Valves > closes", FAILED), (cl, "Valves > closes", "")];
+    assert!(unproven(path, text, &report));
+}
+
+#[test]
+fn a_dotnet_display_name_never_hides_the_skipped_theory() {
+    let cs = "public class ValveTest {\n    // covers: requirements/valves#flush\n    [Theory(Skip = \"later\")] public void Closes(int n) {\n    }\n\n    [Fact(DisplayName = \"Closes.WhenCold\")] public void Other() {\n    }\n}\n";
+    let path = "Valves/Tests/ValveTest.cs";
+    let cl = "Valves.Tests.ValveTest";
+    let report = [(cl, "Closes(n: 1)", SKIPPED), (cl, "Closes.WhenCold", "")];
+    assert!(unproven(path, cs, &report));
+    let report = [(cl, "Closes(n: 1)", ""), (cl, "Closes.WhenCold", "")];
+    assert!(proven(path, cs, &report));
+}
+
+#[test]
+fn a_go_test_a_suite_method_and_a_subtest_of_one_name_all_take_part() {
+    let pkg = "example.org/app/valves";
+    let path = "valves/valve_test.go";
+    let text = "package valves\n\ntype VSuite struct{ suite.Suite }\n\nfunc TestV(t *testing.T) {\n\tsuite.Run(t, new(VSuite))\n}\n\n// covers: requirements/valves#flush\nfunc TestOpen(t *testing.T) {\n}\n\nfunc (s *VSuite) TestOpen() {\n}\n";
+    let report = [(pkg, "TestOpen", SKIPPED), (pkg, "TestV/TestOpen", "")];
+    assert!(unproven(path, text, &report));
+    let report = [(pkg, "TestOpen", ""), (pkg, "TestV/TestOpen", "")];
+    assert!(proven(path, text, &report));
+    // A subtest of another test function has the name of the test.
+    let text = "package valves\n\n// covers: requirements/valves#flush\nfunc TestClose(t *testing.T) {\n}\n\nfunc TestTable(t *testing.T) {\n\tt.Run(\"TestClose\", func(t *testing.T) {\n\t})\n}\n";
+    let report = [
+        (pkg, "TestClose", SKIPPED),
+        (pkg, "TestTable/TestClose", ""),
+    ];
+    assert!(unproven(path, text, &report));
+    let report = [(pkg, "TestClose", ""), (pkg, "TestTable/TestClose", "")];
+    assert!(proven(path, text, &report));
+}
+
+#[test]
+fn a_test_of_the_same_name_twice_in_a_file_is_proven_by_the_worst_of_its_cases() {
+    let path = "tests/valves.test.js";
+    let cl = "tests/valves.test.js";
+    let text = "describe('Valves', () => {\n  // covers: requirements/valves#flush\n  it('closes', () => {\n  });\n});\n\ndescribe('Pumps', () => {\n  it('closes', () => {\n  });\n});\n";
+    let report = [(cl, "Valves > closes", ""), (cl, "Pumps > closes", SKIPPED)];
+    assert!(unproven(path, text, &report));
+    let report = [(cl, "Valves > closes", ""), (cl, "Pumps > closes", "")];
+    assert!(proven(path, text, &report));
+}
+
+#[test]
+fn a_rust_file_of_a_folder_of_tests_fits_the_binary_of_the_folder() {
+    let main = "mod valves;\n";
+    let text =
+        "// covers: requirements/valves#flush\n#[test]\nfn closes() {\n    assert!(true);\n}\n";
+    for child in ["", SKIPPED] {
+        let (code, out) = bind_files(
+            &[("tests/it/main.rs", main), ("tests/it/valves.rs", text)],
+            &[("mycrate::it", "valves::closes", child)],
+        );
+        assert_eq!(has(&out, "SD617"), !child.is_empty(), "{out}");
+        assert_eq!(code, i32::from(!child.is_empty()), "{out}");
+    }
+    // The binary of another test file does not fit.
+    let (code, out) = bind_files(
+        &[
+            ("tests/it/main.rs", main),
+            ("tests/it/valves.rs", text),
+            ("tests/pumps.rs", "#[test]\nfn closes() {\n}\n"),
+        ],
+        &[("mycrate::pumps", "valves::closes", "")],
+    );
+    assert!(has(&out, "SD617"), "{out}");
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn a_case_with_a_very_long_name_gives_the_reason_long_name_and_does_not_stall() {
+    let text = "# covers: requirements/valves#flush\ndef test_closes():\n    assert True\n";
+    let dots = format!("tests.test_valves.{}", ".".repeat(8_000));
+    let parens = format!("test_closes{}", "(a.".repeat(1_200));
+    for name in [dots, parens] {
+        let r = pr("strict", REPORTS, &[("tests/test_valves.py", text)]);
+        r.write(
+            "reports/r.xml",
+            &junit("runner", &[("tests.test_valves", &name, "")]),
+        );
+        stamp(&r);
+        let start = std::time::Instant::now();
+        let (code, out) = check(&r, &[]);
+        let took = start.elapsed();
+        // The bound is wide: the check starts a process and reads git. The unit
+        // test `a_long_case_name_is_read_in_less_than_2_seconds` has the tight one.
+        assert!(took.as_secs_f64() < 10.0, "{took:?}");
+        let found = lines(&out, "SD617");
+        assert_eq!(found.len(), 1, "{out}");
+        assert!(found[0].contains("long"), "{out}");
         assert_eq!(code, 1, "{out}");
     }
 }
