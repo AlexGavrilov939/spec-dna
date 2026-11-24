@@ -1,5 +1,5 @@
 ---
-status: draft
+status: accepted
 class: routine
 ---
 # The context meter reads the last executor iteration, and the briefs name sections
