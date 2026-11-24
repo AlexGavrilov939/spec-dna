@@ -2731,8 +2731,9 @@ fn routine_fan_out(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
 /// `closed` gives none of them. A branch-born change gives none, because the
 /// base tree has no folder. The checks read the spec and the plan from the base
 /// tree, so an edit of them in the pull request of `finish` has no effect
-/// (design, "Finish"). Only the scope of SD913 also reads the newest plan of
-/// the branch ([`branch_version`]).
+/// (design, "Finish"). The scope of SD913 and the tasks that SD915 reads for a
+/// change with no delta come from the newest plan of the branch
+/// ([`branch_version`]).
 fn finished_checks(
     ctx: &Ctx,
     changes: &[DiffChange],
