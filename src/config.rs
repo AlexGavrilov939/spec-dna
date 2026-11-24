@@ -1120,6 +1120,11 @@ impl Profile {
             // pins. A stale summary is an error in `standard` and `strict`.
             "SD641" | "SD642" | "SD643" | "SD644" => (None, Some(E), Some(E)),
             "SD645" => (None, Some(W), Some(W)),
+            // The roll-up of more sources (design 0.8.1, D84). Off in `lite`.
+            // A summary that rests on nothing is a warning in `standard` and
+            // an error in `strict`. A changed note is a warning in both.
+            "SD646" => (None, Some(W), Some(E)),
+            "SD647" => (None, Some(W), Some(W)),
             // The budget of an area (design 0.8.0, D55). Off in `lite`. The
             // codes run only with the key `[budgets.area]`.
             "SD705" => (None, Some(W), Some(E)),
@@ -1156,7 +1161,12 @@ pub const GROUPS: [(&str, &[&str]); 13] = [
             "SD936", "SD937", "SD938", "SD939", "SD940", "SD941",
         ],
     ),
-    ("rollup", &["SD641", "SD642", "SD643", "SD644", "SD645"]),
+    (
+        "rollup",
+        &[
+            "SD641", "SD642", "SD643", "SD644", "SD645", "SD646", "SD647",
+        ],
+    ),
     ("lint", &["SD801", "SD802", "SD803", "SD804", "SD805"]),
     ("layers", &["SD901", "SD902", "SD903", "SD904"]),
     (
@@ -4327,12 +4337,15 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
         type Sev = Option<Severity>;
         // Design 0.8.0, D52: code, lite, standard, strict. The codes are off in
         // `lite`, and a stale summary is an error in the 2 other profiles.
-        let rows: [(Code, &str, Sev, Sev, Sev); 5] = [
+        let rows: [(Code, &str, Sev, Sev, Sev); 7] = [
             (Code::SummaryStale, "SD641", None, Some(E), Some(E)),
             (Code::SummaryIncomplete, "SD642", None, Some(E), Some(E)),
             (Code::PinInvalid, "SD643", None, Some(E), Some(E)),
             (Code::SummaryNoArea, "SD644", None, Some(E), Some(E)),
             (Code::SummaryRepinned, "SD645", None, Some(W), Some(W)),
+            // Design 0.8.1, D84.
+            (Code::SummaryRestsOnNothing, "SD646", None, Some(W), Some(E)),
+            (Code::SummaryNoteChanged, "SD647", None, Some(W), Some(W)),
         ];
         for (code, name, lite, standard, strict) in rows {
             assert_eq!(code.code(), name);
