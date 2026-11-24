@@ -153,7 +153,7 @@ Commands:
 2. Take the first open task. A task with `By: person` is not yours: never tick it. Only the review of the owner ends the task `Review by the owner`: never tick it or write `Skip:` for it. Start one fresh subagent for the task. Give the subagent the task and `spec-dna context <file>...` for its files. The subagent changes only the files of the task.
 3. Review the diff in 2 passes. Pass 1, compliance: compare the diff with the task, `spec.md` and the rules of the project. Pass 2, quality: compare it with the style of the code, the tests and the simplicity.
 4. Fix each gap that a pass finds. Run the `Verify:` of the task. Then change its box to `- [x]`.
-5. If the work differs from the plan or the spec, add an item to `Deviations` of `plan.md`. Write it in the commit of the work. Use `- <id> (plan): <text>` or `- <id> (spec): <text>. Delta: <verb> <doc-id>#<key>` (or `Follow-up: <slug>`).
+5. If the work differs from the plan or the spec, add an item to `Deviations` of `plan.md`. Write it in the commit of the work. Use `- <id> (plan): <text>` or `- <id> (spec): <text>. Delta: <verb> <doc-id>#<key>` (or `Follow-up: <slug>`). Give each item its own id, for example `d1`, `d2`. A task with 2 deviations has 2 items.
 
 Artifact: The code, the tests and the checked task.
 

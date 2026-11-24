@@ -212,7 +212,7 @@ An item is `<doc-id>#<key>@<hash>`. The id and the key name a requirement of a d
 
 The section `Deviations` of a plan lists each difference between the work and the plan or the spec. The builder adds one item for each deviation, in the commit of the work. The edit changes the plan after its approval, as the tick of a box does, and SD910 gives no finding for it. The section needs no key: the record holds the deviations, so they are on where the acceptance is on.
 
-An item is `- <id> (<kind>): <text>`. The id is unique in the section: it has letters, digits, `-` and `_`. The kind is `plan` (the files, the tasks, the order or the approach) or `spec` (the behavior differs from a requirement or a delta line). A `spec` item names a way to fix the difference: `Delta: <verb> <doc-id>#<key>` names a line of the delta of the spec, or `Follow-up: <slug>` names a change folder of the tree. A `plan` item needs neither.
+An item is `- <id> (<kind>): <text>`. The id is unique in the section: it has letters, digits, `-` and `_`. Give each item its own id, for example `d1` and `d2`. An id needs no relation to a task, and a task with 2 deviations has 2 items, for example `t3-a` and `t3-b`. The kind is `plan` (the files, the tasks, the order or the approach) or `spec` (the behavior differs from a requirement or a delta line). A `spec` item names a way to fix the difference: `Delta: <verb> <doc-id>#<key>` names a line of the delta of the spec, or `Follow-up: <slug>` names a change folder of the tree. A `plan` item needs neither.
 
 - SD939 reports an item of another form, a kind outside `plan` and `spec`, and a repeated id.
 - SD940 reports a `spec` item that names no line of the delta and no change folder.

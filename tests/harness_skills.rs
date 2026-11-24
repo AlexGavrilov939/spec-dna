@@ -1191,7 +1191,7 @@ fn the_golden_files_of_standard_differ_from_0_7_1_in_the_named_lines_only() {
             ],
             &[
                 r#"2. Take the first open task. A task with `By: person` is not yours: never tick it. Only the review of the owner ends the task `Review by the owner`: never tick it or write `Skip:` for it. Start one fresh subagent for the task. Give the subagent the task and `spec-dna context <file>...` for its files. The subagent changes only the files of the task."#,
-                r#"5. If the work differs from the plan or the spec, add an item to `Deviations` of `plan.md`. Write it in the commit of the work. Use `- <id> (plan): <text>` or `- <id> (spec): <text>. Delta: <verb> <doc-id>#<key>` (or `Follow-up: <slug>`)."#,
+                r#"5. If the work differs from the plan or the spec, add an item to `Deviations` of `plan.md`. Write it in the commit of the work. Use `- <id> (plan): <text>` or `- <id> (spec): <text>. Delta: <verb> <doc-id>#<key>` (or `Follow-up: <slug>`). Give each item its own id, for example `d1`, `d2`. A task with 2 deviations has 2 items."#,
                 r#"If the check fails: Fix the cause in the same task. If a file is outside `Files`, stop and ask the person. With a yes, add the path to `Files` of `plan.md` in the commit of the edit. A plan with an approval commit in this branch needs a new approval commit first (SD910, reason 8). A due summary that `next` names is no such file: edit it with no stop."#,
             ],
         ),
