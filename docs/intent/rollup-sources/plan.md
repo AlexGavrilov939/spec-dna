@@ -53,7 +53,7 @@ status: approved
 - [x] t13: Document the key and its rules, the summary of decisions with the example of D84, the section of refresh, and the note and the opt-in in the sections of next and finish and of the acceptance record. Files: `docs/config.md`, `docs/types.md`, `docs/commands.md`. Verify: `pre-commit run --all-files` and `cargo run --quiet -- check --all` with no SD102 and no SD602. Hours: 3.
 - [x] t14: Document SD646, SD647 and the new texts of SD643 and SD644, rename the heading of the roll-up to SD641 to SD647, and change its links in the 3 pages. Files: `docs/diagnostics.md`, `docs/commands.md`, `docs/types.md`. Verify: `pre-commit run --all-files` and `cargo run --quiet -- check --all` with no SD102 and no SD602. Hours: 2.
 - [x] t15: Write the entry of the change. Files: `CHANGELOG.md`. Verify: `pre-commit run --all-files`. Hours: 1.
-- [ ] t16: Run the independent review and the acceptance pass, and finish the change. Files: none: finish deletes the folder of the change. Verify: `spec-dna finish rollup-sources --dry-run`. Hours: 3.
+- [x] t16: Run the independent review and the acceptance pass, and finish the change. Files: none: finish deletes the folder of the change. Verify: `spec-dna finish rollup-sources --dry-run`. Hours: 3.
 
 ## Risks
 
