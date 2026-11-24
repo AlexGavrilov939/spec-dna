@@ -1003,3 +1003,262 @@ fn a_project_with_no_key_has_no_item_of_an_interface_or_a_rule() {
     let (_, out) = check_all(&r);
     assert_eq!(lines_of(&out, "SD643").len(), 1, "{out}");
 }
+
+// Decisions and research documents as whole items (design 0.8.1, D84).
+
+const USE_SQLITE: &str = "---\nstatus: accepted\n---\n# Use SQLite\n\n## Context and Problem Statement\n\nThe service keeps its data in one place.\n\n## Decision Outcome\n\nUse one SQLite file with a write-ahead log.\n";
+
+const USE_POSTGRES: &str = "---\nstatus: accepted\nsupersedes: [decisions/storage/use-sqlite]\n---\n# Use Postgres\n\n## Context and Problem Statement\n\nOne file is not enough for 2 writers.\n\n## Decision Outcome\n\nUse a Postgres server.\n";
+
+const WRITE_LOAD: &str =
+    "# Write load\n\nOne writer at a time is enough for 200 writes in a second.\n";
+
+/// A project of the profile `profile` with the layers for the decisions and
+/// the research, and the key `rolls-up` with the layers in `rolls_up`.
+fn note_project(profile: &str, rolls_up: &str) -> Repo {
+    let r = Repo::with_config(&format!(
+        "profile = \"{profile}\"\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.decisions]\ntypes = [\"decision\"]\n\n[layers.research]\ntypes = [\"research\"]\n\n[layers.summaries]\ntypes = [\"summary\"]\nrolls-up = {rolls_up}\n\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n"
+    ));
+    r.write("docs/requirements/valves/closing.md", CLOSING);
+    r.write("docs/decisions/storage/use-sqlite.md", USE_SQLITE);
+    r.write("docs/research/storage/write-load.md", WRITE_LOAD);
+    r
+}
+
+/// The project with the summary `summaries/storage` that `new summary` wrote.
+fn with_storage_summary(r: Repo) -> Repo {
+    let (code, out, err) = r.run(&["new", "summary", "storage"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let text = r.read("docs/summaries/storage.md");
+    let at = text.find("# Storage").unwrap();
+    r.write(
+        "docs/summaries/storage.md",
+        &format!(
+            "{}# Storage\n\nThe service keeps its data in one SQLite file with a write-ahead log.\n",
+            &text[..at]
+        ),
+    );
+    r
+}
+
+#[test]
+fn an_accepted_decision_is_pinned_as_a_whole_document_and_an_amendment_makes_it_stale() {
+    let r = with_storage_summary(note_project(
+        "standard",
+        "[\"requirements\", \"decisions\"]",
+    ));
+    let text = r.read("docs/summaries/storage.md");
+    assert!(text.contains("  - decisions/storage/use-sqlite@"), "{text}");
+    // The research note is no source here.
+    assert!(!text.contains("research/"), "{text}");
+    let (code, out) = check_all(&r);
+    assert!(!out.contains("SD64"), "{out}");
+    assert_eq!(code, 0, "{out}");
+    // An edit of a live section changes no hash in force.
+    edit(
+        &r,
+        "docs/decisions/storage/use-sqlite.md",
+        "## Decision Outcome",
+        "## Status\n\n- step 1: done\n\n## Decision Outcome",
+    );
+    let (_, out) = check_all(&r);
+    assert!(!out.contains("SD64"), "{out}");
+    // An amendment section does: SD641.
+    let path = "docs/decisions/storage/use-sqlite.md";
+    r.write(
+        path,
+        &format!(
+            "{}\n## Amendments\n\n### 2026-11-24\n\nThe log is checked each hour.\n",
+            r.read(path)
+        ),
+    );
+    let (code, out) = check_all(&r);
+    let found = lines_of(&out, "SD641");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].contains("`decisions/storage/use-sqlite`")
+            && found[0].contains("text in force changed"),
+        "{}",
+        found[0]
+    );
+    assert_eq!(code, 1, "{out}");
+    // After a refresh the pin holds again.
+    assert_eq!(r.run(&["refresh", "summaries/storage", "--holds"]).0, 0);
+    let (_, out) = check_all(&r);
+    assert!(!out.contains("SD64"), "{out}");
+}
+
+#[test]
+fn a_superseded_decision_gives_sd641_with_its_successor_and_the_new_one_gives_sd642() {
+    let r = with_storage_summary(note_project(
+        "standard",
+        "[\"requirements\", \"decisions\"]",
+    ));
+    edit(
+        &r,
+        "docs/decisions/storage/use-sqlite.md",
+        "status: accepted",
+        "status: superseded",
+    );
+    r.write("docs/decisions/storage/use-postgres.md", USE_POSTGRES);
+    let (_, out) = check_all(&r);
+    let stale = lines_of(&out, "SD641");
+    assert_eq!(stale.len(), 1, "{out}");
+    assert!(
+        stale[0].contains("`decisions/storage/use-sqlite`")
+            && stale[0].contains("superseded")
+            && stale[0].contains("successor: `decisions/storage/use-postgres`"),
+        "{}",
+        stale[0]
+    );
+    let missing = lines_of(&out, "SD642");
+    assert_eq!(missing.len(), 1, "{out}");
+    assert!(
+        missing[0].contains("`decisions/storage/use-postgres`"),
+        "{}",
+        missing[0]
+    );
+    // A decision that is no longer accepted and has no successor: no name.
+    edit(
+        &r,
+        "docs/decisions/storage/use-postgres.md",
+        "supersedes: [decisions/storage/use-sqlite]\n",
+        "",
+    );
+    let (_, out) = check_all(&r);
+    let stale = lines_of(&out, "SD641");
+    assert_eq!(stale.len(), 1, "{out}");
+    assert!(
+        stale[0].contains("superseded") && !stale[0].contains("successor"),
+        "{}",
+        stale[0]
+    );
+}
+
+#[test]
+fn a_decision_that_is_not_accepted_is_no_item() {
+    let r = note_project("standard", "[\"requirements\", \"decisions\"]");
+    edit(
+        &r,
+        "docs/decisions/storage/use-sqlite.md",
+        "status: accepted",
+        "status: proposed",
+    );
+    let r = with_storage_summary(r);
+    assert!(!r.read("docs/summaries/storage.md").contains("decisions/"));
+    let (_, out) = check_all(&r);
+    assert!(!out.contains("SD64"), "{out}");
+}
+
+#[test]
+fn a_changed_research_note_gives_sd647_a_warning_and_no_sd641() {
+    let r = with_storage_summary(note_project(
+        "standard",
+        "[\"requirements\", \"decisions\", \"research\"]",
+    ));
+    let text = r.read("docs/summaries/storage.md");
+    assert!(text.contains("  - research/storage/write-load@"), "{text}");
+    let (code, out) = check_all(&r);
+    assert!(!out.contains("SD64"), "{out}");
+    assert_eq!(code, 0, "{out}");
+    edit(
+        &r,
+        "docs/research/storage/write-load.md",
+        "200 writes",
+        "400 writes",
+    );
+    let (code, out) = check_all(&r);
+    let found = lines_of(&out, "SD647");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].contains("warning SD647 summary-note-changed")
+            && found[0].contains("`research/storage/write-load`")
+            && found[0].contains("the note changed")
+            && found[0].contains("spec-dna refresh summaries/storage"),
+        "{}",
+        found[0]
+    );
+    assert!(!out.contains("SD641"), "{out}");
+    assert_eq!(code, 0, "{out}");
+    // A new note of the area has no pin: SD647, not SD642.
+    r.write(
+        "docs/research/storage/read-load.md",
+        "# Read load\n\nReads are cheap.\n",
+    );
+    let (_, out) = check_all(&r);
+    let found = lines_of(&out, "SD647");
+    assert_eq!(found.len(), 2, "{out}");
+    assert!(
+        found
+            .iter()
+            .any(|l| l.contains("`research/storage/read-load`") && l.contains("no pin")),
+        "{out}"
+    );
+    assert!(lines_of(&out, "SD642").is_empty(), "{out}");
+    // A removed note: SD647 too.
+    r.write(
+        "docs/research/storage/read-load.md",
+        "# Read load\n\nReads are cheap.\n",
+    );
+    std::fs::remove_file(r.dir.join("docs/research/storage/write-load.md")).unwrap();
+    let (_, out) = check_all(&r);
+    assert!(
+        lines_of(&out, "SD647")
+            .iter()
+            .any(|l| l.contains("`research/storage/write-load`") && l.contains("removed")),
+        "{out}"
+    );
+    assert!(lines_of(&out, "SD641").is_empty(), "{out}");
+}
+
+#[test]
+fn sd647_is_a_warning_in_strict_and_off_in_lite() {
+    for (profile, want) in [("strict", true), ("lite", false)] {
+        let r = with_storage_summary(note_project(
+            profile,
+            "[\"requirements\", \"decisions\", \"research\"]",
+        ));
+        edit(
+            &r,
+            "docs/research/storage/write-load.md",
+            "200 writes",
+            "400 writes",
+        );
+        let (_, out) = check_all(&r);
+        assert_eq!(lines_of(&out, "SD647").len(), usize::from(want), "{out}");
+        if want {
+            assert!(out.contains("warning SD647"), "{out}");
+        }
+        assert!(
+            !out.contains("SD641") && !out.contains("error SD647"),
+            "{out}"
+        );
+    }
+}
+
+#[test]
+fn a_decision_or_a_note_outside_the_key_gives_sd643() {
+    let r = with_storage_summary(note_project(
+        "standard",
+        "[\"requirements\", \"decisions\"]",
+    ));
+    let hash = shown_hash(&r, "research/storage/write-load");
+    let text = r.read("docs/summaries/storage.md");
+    r.write(
+        "docs/summaries/storage.md",
+        &text.replacen(
+            "---\n# Storage",
+            &format!("  - research/storage/write-load@{hash}\n---\n# Storage"),
+            1,
+        ),
+    );
+    let (_, out) = check_all(&r);
+    let found = lines_of(&out, "SD643");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].contains("`research/storage/write-load`") && found[0].contains("source layers"),
+        "{}",
+        found[0]
+    );
+    assert!(lines_of(&out, "SD647").is_empty(), "{out}");
+}

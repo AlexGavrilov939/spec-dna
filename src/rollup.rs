@@ -97,10 +97,12 @@ impl Item {
     }
 
     /// The current hash of the item as a pin writes it: the hash that `show`
-    /// prints for a requirement, and the `frozen_hash` of a document.
+    /// prints for a requirement, the hash of the text in force of a decision or
+    /// a research document (design 0.8.1, D84), and the `frozen_hash` of any
+    /// other document.
     pub fn hash(self, c: &Corpus) -> String {
         match self {
-            Item::Doc(d) => hex(&c.docs[d as usize].frozen_hash),
+            Item::Doc(d) => hex(&doc_hash(&c.docs[d as usize])),
             Item::Req(d, r) => hex(&c.docs[d as usize].parsed.reqs[r].hash),
         }
     }
@@ -124,9 +126,20 @@ impl Item {
     /// True if the pin hash names the current text of the item.
     pub fn matches(self, c: &Corpus, hash: &str) -> bool {
         match self {
-            Item::Doc(d) => hash.eq_ignore_ascii_case(&hex(&c.docs[d as usize].frozen_hash)),
+            Item::Doc(d) => hash.eq_ignore_ascii_case(&hex(&doc_hash(&c.docs[d as usize]))),
             Item::Req(d, r) => hash_matches(&c.docs[d as usize].parsed.reqs[r], hash),
         }
+    }
+}
+
+/// The hash of a pin to a whole document: the hash of the text in force for a
+/// decision and a research document, so that an amendment makes the pin
+/// stale, and the `frozen_hash` for a summary, a `system` and a `product`
+/// document.
+fn doc_hash(d: &Doc) -> crate::hash::Hash {
+    match d.ty {
+        DocType::Decision | DocType::Research => d.force_hash,
+        _ => d.frozen_hash,
     }
 }
 
@@ -141,7 +154,7 @@ pub enum Level {
 }
 
 /// What a check found. The profile and the rules give the severity of the
-/// codes SD641 to SD644 that `check` maps from these.
+/// codes SD641 to SD644 and SD647 that `check` maps from these.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     /// SD641: a pin no longer holds.
@@ -151,8 +164,13 @@ pub enum Kind {
     /// SD643: a pin has a bad form, is ambiguous, names an item of the same or
     /// a higher level, or sits in a type that has no pins.
     Invalid,
-    /// SD644: a summary names no folder of the layer `requirements`.
+    /// SD644: a summary names no folder of a source layer.
     NoArea,
+    /// SD647: a pin to a research document no longer holds (the note changed,
+    /// was removed or left the frontier), or a research document of the
+    /// frontier has no pin. It is no "stale" finding: a changed note does not
+    /// make a normative text wrong.
+    Note,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -187,9 +205,19 @@ fn within(inner: &[String], outer: &[String]) -> bool {
 
 /// True for a document that has items by its type and its status (design
 /// 0.8.1, D84, item 3): an active document of the types `requirements`,
-/// `interface` and `rule`.
-fn is_item_doc(d: &Doc) -> bool {
+/// `interface` and `rule`, an `accepted` decision, and a research document.
+fn is_item_doc(config: &Config, d: &Doc) -> bool {
     crate::evidence::needs_evidence(d)
+        || (d.ty == DocType::Decision && d.status_str() == "accepted" && in_typed_layer(config, d))
+        || (d.ty == DocType::Research && in_typed_layer(config, d))
+}
+
+/// True if the layer of the document holds the type of the document. A glob of
+/// `paths` can put a document in a layer of another type, and that is no source
+/// of a whole document.
+fn in_typed_layer(config: &Config, d: &Doc) -> bool {
+    crate::check::doc_layer(config, d)
+        .is_some_and(|l| config.layers.layers()[l].types.contains(&d.ty))
 }
 
 /// True for a document that holds roll-up pins by its type: a summary, or a
@@ -403,7 +431,7 @@ impl<'a> Rollup<'a> {
                 {
                     summaries.push((i, a));
                 }
-            } else if is_item_doc(d)
+            } else if is_item_doc(config, d)
                 && let Some(a) = source_area(config, d)
             {
                 sources.push((i, a));
@@ -419,10 +447,50 @@ impl<'a> Rollup<'a> {
 
     /// The items of a source document (design 0.8.1, D84, item 3): each
     /// requirement of an active document of the types `requirements`,
-    /// `interface` and `rule`.
+    /// `interface` and `rule`, and the whole document for a decision and a
+    /// research document.
     fn items_of(&self, di: u32) -> Vec<Item> {
         let doc = &self.c.docs[di as usize];
-        doc.reqs.iter().map(|&r| Item::Req(di, r)).collect()
+        if doc.ty.has_requirements() {
+            doc.reqs.iter().map(|&r| Item::Req(di, r)).collect()
+        } else {
+            vec![Item::Doc(di)]
+        }
+    }
+
+    /// True if the item is a research document: its findings are SD647.
+    fn is_note(&self, item: Item) -> bool {
+        matches!(item, Item::Doc(d) if self.c.docs[d as usize].ty == DocType::Research)
+    }
+
+    /// True if a pin id that names no document names a research document by
+    /// its place: the id is in the folder of a source layer that has only the
+    /// type `research`. The target was removed, and its type is gone with it.
+    fn names_a_removed_note(&self, id: &str) -> bool {
+        let layers = self.config.layers.layers();
+        self.config.layers.rollup_sources().into_iter().any(|i| {
+            layers[i].types == [DocType::Research]
+                && layers[i]
+                    .dir()
+                    .is_some_and(|dir| id.strip_prefix(dir).is_some_and(|r| r.starts_with('/')))
+        })
+    }
+
+    /// The decision that supersedes the decision `di`: an accepted decision
+    /// whose field `supersedes` resolves to it. `None` if there is none.
+    fn successor(&self, di: u32) -> Option<String> {
+        self.c
+            .docs
+            .iter()
+            .filter(|d| {
+                d.ty == DocType::Decision && d.status_str() == "accepted" && d.moved_to.is_none()
+            })
+            .find(|d| {
+                d.supersedes
+                    .iter()
+                    .any(|(id, _)| matches!(self.c.resolve(id), Res::Found(t, None, _) if t == di))
+            })
+            .map(|d| d.id.clone())
     }
 
     /// The level of a roll-up document, or `None` for a summary that has no
@@ -509,6 +577,19 @@ impl<'a> Rollup<'a> {
                 }
             }
             Item::Doc(_) => match doc.ty {
+                DocType::Decision | DocType::Research
+                    if source_area(self.config, doc).is_some()
+                        && in_typed_layer(self.config, doc) =>
+                {
+                    None
+                }
+                DocType::Decision | DocType::Research if !only_requirements(self.config) => {
+                    Some(format!(
+                        "a `{}` document outside {}, which no frontier holds",
+                        doc.ty.name(),
+                        sources_text(self.config)
+                    ))
+                }
                 DocType::Summary => match level {
                     Level::Summary(a) => (!summary_area(self.config, doc)
                         .is_some_and(|b| b.len() > a.len() && within(&b, a)))
@@ -581,6 +662,16 @@ impl<'a> Rollup<'a> {
                     ));
                     continue;
                 }
+                Resolved::Missing if pin.key.is_none() && self.names_a_removed_note(&pin.id) => {
+                    out.push(finding(
+                        Kind::Note,
+                        &target,
+                        format!(
+                            "the pin `{target}` is stale: the note was removed; edit the summary, then run `{fix}`"
+                        ),
+                    ));
+                    continue;
+                }
                 Resolved::Missing => {
                     out.push(finding(
                         Kind::Stale,
@@ -616,9 +707,33 @@ impl<'a> Rollup<'a> {
                 ));
                 continue;
             }
-            if !frontier.contains(&item) {
+            if let Item::Doc(t) = item
+                && self.c.docs[t as usize].ty == DocType::Decision
+                && self.c.docs[t as usize].status_str() != "accepted"
+            {
+                let status = self.c.docs[t as usize].status_str();
+                let status = if status.is_empty() {
+                    "not accepted"
+                } else {
+                    status
+                };
+                let successor = self
+                    .successor(t)
+                    .map(|s| format!(" (successor: `{s}`)"))
+                    .unwrap_or_default();
                 out.push(finding(
                     Kind::Stale,
+                    &id,
+                    format!(
+                        "the pin `{id}` is stale: the decision is `{status}`{successor}; describe the decision in force, then run `{fix}`"
+                    ),
+                ));
+                continue;
+            }
+            let note = self.is_note(item);
+            if !frontier.contains(&item) {
+                out.push(finding(
+                    if note { Kind::Note } else { Kind::Stale },
                     &id,
                     format!(
                         "the pin `{id}` is stale: it is no longer in the frontier of this document (it moved to another area, or a summary of a sub-area now stands for it); edit the summary, then run `{fix}`"
@@ -628,12 +743,22 @@ impl<'a> Rollup<'a> {
             }
             covered.insert(item);
             if !item.matches(self.c, &pin.hash) {
-                out.push(finding(
-                    Kind::Stale,
-                    &id,
+                let (kind, why) = match item {
+                    Item::Req(..) => (Kind::Stale, "its text changed"),
+                    Item::Doc(_) if note => (Kind::Note, "the note changed"),
+                    Item::Doc(_) => (Kind::Stale, "its text in force changed"),
+                };
+                let tail = if note {
                     format!(
-                        "the pin `{id}` is stale: its text changed; read it, edit the summary, then run `{fix}`"
-                    ),
+                        "read it, then edit the summary and run `{fix}`, or run `{fix} --holds`"
+                    )
+                } else {
+                    format!("read it, edit the summary, then run `{fix}`")
+                };
+                out.push(finding(
+                    kind,
+                    &id,
+                    format!("the pin `{id}` is stale: {why}; {tail}"),
                 ));
             }
         }
@@ -641,7 +766,11 @@ impl<'a> Rollup<'a> {
             if !covered.contains(&item) {
                 let id = item.id(self.c);
                 out.push(Finding {
-                    kind: Kind::Incomplete,
+                    kind: if self.is_note(item) {
+                        Kind::Note
+                    } else {
+                        Kind::Incomplete
+                    },
                     line,
                     target: id.clone(),
                     message: format!(
@@ -1899,6 +2028,55 @@ mod tests {
             ["summaries/valves"]
         );
         assert!(due_ids(&c, &cfg, &["requirements/valves/closing"]).is_empty());
+    }
+
+    #[test]
+    fn a_decision_and_a_note_are_whole_items_with_the_hash_in_force() {
+        let decision = "---\nstatus: accepted\n---\n# D\n\n## Context and Problem Statement\n\nA.\n\n## Decision Outcome\n\nUse X.\n";
+        let amended = format!("{decision}\n## Amendments\n\nMore.\n");
+        let note = "# N\n\nText.\n";
+        let area = || Level::Summary(vec!["storage".to_string()]);
+        let cfg = keyed_config("[\"decisions\", \"research\"]");
+        let item_hashes = |decision_text: &str| {
+            let c = corpus(
+                &cfg,
+                &[
+                    ("docs/decisions/storage/use-x.md", decision_text),
+                    (
+                        "docs/decisions/storage/draft.md",
+                        &decision_text.replace("accepted", "proposed"),
+                    ),
+                    ("docs/research/storage/load.md", note),
+                    ("docs/requirements/storage/r.md", &req("r")),
+                ],
+            );
+            let roll = Rollup::full(&cfg, &c);
+            roll.frontier(&area())
+                .into_iter()
+                .map(|i| (i.id(&c), i.hash(&c)))
+                .collect::<Vec<_>>()
+        };
+        let before = item_hashes(decision);
+        // An accepted decision and a note are items. A proposed decision and a
+        // requirement of a layer outside the key are not.
+        assert_eq!(
+            before.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
+            ["decisions/storage/use-x", "research/storage/load"]
+        );
+        // An amendment changes the hash of the decision, and not the note.
+        let after = item_hashes(&amended);
+        assert_ne!(before[0].1, after[0].1);
+        assert_eq!(before[1].1, after[1].1);
+        // With no key, a decision and a note are no items.
+        let plain = config();
+        let c = corpus(
+            &plain,
+            &[
+                ("docs/decisions/storage/use-x.md", decision),
+                ("docs/research/storage/load.md", note),
+            ],
+        );
+        assert!(ids(&c, &plain, &area()).is_empty());
     }
 
     #[test]
