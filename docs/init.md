@@ -284,6 +284,14 @@ With another tool, exclude the regular expression `(?:h:|@)[0-9a-f]{16}\b`.
 
 `init` and `upgrade` print the line `note:` for a project that runs the hook `typos` and has no such setting. The detection reads the text of the files with no YAML parser. A line of `.pre-commit-config.yaml` is the hook when, with its indent, a leading dash and a trailing comment removed, it is `id: <name>` or `entry: <command>`, and the name, or the first word of the command, is `typos` or starts with `typos-`. No note is printed if `.pre-commit-config.yaml`, `_typos.toml`, `typos.toml`, `.typos.toml` or `pyproject.toml` holds the text `[0-9a-f]{16}`. `init` prints the note in each mode (a preview, a write and `--reconfigure`), and `upgrade` prints it after the `next:` line.
 
+## A hook that runs the tests
+
+A pre-commit hook that runs the tests can write a test report again at each commit. The stamp of the report is then stale, and `check --reports` gives SD614. `init` and `upgrade` print one line `note:` for each hook that runs the tests and does not stamp. The note names the id of the hook. [Test reports](test-report.md#a-hook-that-runs-the-tests) gives the setup that keeps the stamp fresh.
+
+The detection reads the text of `.pre-commit-config.yaml` with no YAML parser. A line `- id: <name>` starts a hook. A hook runs the tests when the value of its `id:` or `entry:` has one of these words: `test`, `tests`, `pytest`, `nextest`, `jest`, `vitest`, `gotestsum`, `junit`, `junitxml`, `phpunit`, `rspec` or `unittest`. A word is a run of letters and digits, in any case. A hook whose `entry:` has `evidence stamp` gets no note.
+
+The scan misses a runner that is not in the list. It can name a hook that writes no report, so the note says "if it writes a report". `init` prints the note in each mode (a preview, a write and `--reconfigure`). `upgrade` prints it with the other notes. `init` and `upgrade` do not change the hook.
+
 ## Answers file
 
 An answers file is TOML. Each key is optional. An absent key keeps its default.

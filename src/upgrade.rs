@@ -896,15 +896,19 @@ pub fn report(tree: &Tree, plan: &Plan, proof: &Proof) -> Result<Report, Fatal> 
             .collect(),
         edits: plan.edits.clone(),
         from_old: plan.from_old,
-        notes: init::typos_note(&|p| {
-            if in_tree(tree, p) {
-                tree_text(tree, p).ok()
-            } else {
-                None
-            }
-        })
-        .into_iter()
-        .collect(),
+        notes: {
+            let read = |p: &str| {
+                if in_tree(tree, p) {
+                    tree_text(tree, p).ok()
+                } else {
+                    None
+                }
+            };
+            init::typos_note(&read)
+                .into_iter()
+                .chain(init::test_hook_notes(&read))
+                .collect()
+        },
     })
 }
 
