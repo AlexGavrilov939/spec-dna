@@ -138,7 +138,7 @@ Details of the steps 9 and 10:
 - With `--output-format stream-json --verbose`, `claude` writes one JSON event on each line. The runner reads the lines one by one.
 - A `result` event is a line that has the bytes `"result"` and whose top-level `type` is `result`. A tool result that holds these bytes does not count.
 - A background task can wake the agent after it stopped. Each wake-up ends with a new `result` event, and its `num_turns` counts only that segment.
-- The runner keeps at most 16 MiB of `result` events. It also keeps the first 64 KiB of the other lines, as the text of [a refusal](#runs-that-the-api-refuses). It discards a line of more than 16 MiB. Thus the memory does not grow with the stream.
+- The runner keeps at most 16 MiB of `result` events. An event is a line with a JSON object that has a `type`. The runner drops each other event. It keeps the first 64 KiB of the lines that are no event, as the text of [a refusal](#runs-that-the-api-refuses). It discards a line of more than 16 MiB. Thus the memory does not grow with the stream.
 - The agent and the checks run with a neutral git setup: `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME` and `GIT_COMMITTER_EMAIL` (`eval@example.invalid`), `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1`, and `commit.gpgsign` and `tag.gpgsign` set to `false` through `GIT_CONFIG_COUNT`. Thus a `git commit` of the agent or of a check never depends on the identity or the signing of the machine. The copy is always a git repository with one base commit.
 - The script of a check sources `check.sh` of the project, never the copy. Then it runs the `run` text of the check.
 - The environment of a check has `SPEC_DNA_CHECK_SH`, the absolute path of `check.sh`, and `SPEC_DNA_EVAL_BASE`, the id of the commit that `HEAD` has when the agent starts. If the eval has the key `change`, it is the commit of the change. Thus a check that compares a file with the base (`tests_unchanged`) does not see the change as an edit of the agent. The diff of the change against the branch `main` stays. The agent sees it, and so does an acceptor.
@@ -482,6 +482,8 @@ The runner treats a refused attempt as no run. A refused attempt is an account l
 3. There is no result object, and the stdout is empty. The exit code is not 0. The stderr gives the class. This is a decision of the design: an empty output is a failed connection more often than a failed run.
 4. There is no result object, the exit code is not 0, and the stdout is a text. A text with fewer than 600 bytes and a marker gives the class. Without a marker, the attempt is a silent error (see below): an agent never ends with a plain text.
 5. The result object has `"is_error": true`, no marker, and a cost of 0 or no cost: a silent error. A real agent run never costs 0.
+
+In the cases 3 and 4, an event of the stream is no part of the stdout. Thus an output with only an `init` event is empty, and the stderr gives the class.
 
 A marker is `API Error:` with the status 401, 403, 429 or 500 to 599, the word `429`, `hit your ... limit` (at most 40 characters between), `limit reached` together with `reset` (for example `5-hour limit reached ∙ resets 3pm`), a window of the account (`5-hour limit`, `weekly limit`, `session limit`, `opus limit`), or one of these phrases, in any case:
 

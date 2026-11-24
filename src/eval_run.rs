@@ -1391,8 +1391,8 @@ fn tee_stderr(mut r: impl Read) -> Vec<u8> {
     kept
 }
 
-/// The most bytes of the lines that are no result event, and that the runner
-/// keeps. A plain text of an error (a refusal) is read from them.
+/// The most bytes of the lines that are no event, and that the runner keeps.
+/// A plain text of an error (a refusal) is read from them.
 const MAX_TEXT: usize = 64 * 1024;
 
 /// Reads one line of at most `cap` bytes into `line`, with its end of line.
@@ -1429,20 +1429,29 @@ fn read_line_capped(
     (total, over)
 }
 
-/// True if `hay` has the bytes `needle`.
-fn has_bytes(hay: &[u8], needle: &[u8]) -> bool {
-    hay.windows(needle.len()).any(|w| w == needle)
+/// The `type` of an event of the stream: the line is a JSON object with a
+/// top-level `type` that is a string.
+fn event_type(line: &[u8]) -> Option<String> {
+    if !line.trim_ascii_start().starts_with(b"{") {
+        return None;
+    }
+    let value = json::parse(String::from_utf8_lossy(line).trim()).ok()?;
+    match value {
+        Value::Obj(_) => value.get("type").as_str().map(str::to_string),
+        _ => None,
+    }
 }
 
 /// Reads the stdout of `claude` line by line (`--output-format stream-json`,
-/// D95). It keeps each `result` event: a line that has the bytes `"result"`
-/// (with or with no space after the colon of `"type"`) and whose top-level
-/// `type` is `result`, so a tool result that holds these bytes does not count.
-/// It also keeps the first `MAX_TEXT` bytes of the other lines, for the text
-/// of a refusal. So the memory does not grow with the stream. It reads to the
-/// end, so the process never waits on a full pipe. A line of more than
-/// `MAX_STDOUT` bytes is discarded, and so is each result event after the
-/// first `MAX_STDOUT` bytes of them.
+/// D95). Of the events, it keeps the `result` events only: the top-level
+/// `type` decides, so a tool result that holds the bytes of one does not
+/// count. Another event is no text of the output: a run that ends with no
+/// result event then has the class of a refusal of an empty output, from its
+/// stderr. It also keeps the first `MAX_TEXT` bytes of the lines that are no
+/// event, for the text of a refusal. So the memory does not grow with the
+/// stream. It reads to the end, so the process never waits on a full pipe. A
+/// line of more than `MAX_STDOUT` bytes is discarded, and so is each result
+/// event after the first `MAX_STDOUT` bytes of them.
 fn read_events(r: impl Read) -> Vec<u8> {
     let mut r = std::io::BufReader::new(r);
     let (mut kept, mut line) = (Vec::new(), Vec::new());
@@ -1459,18 +1468,13 @@ fn read_events(r: impl Read) -> Vec<u8> {
         while line.last().is_some_and(|b| matches!(b, b'\n' | b'\r')) {
             line.pop();
         }
-        if has_bytes(&line, b"\"result\"") {
-            let is_result = json::parse(&String::from_utf8_lossy(&line)).is_ok_and(|v| {
-                matches!(v, Value::Obj(_)) && v.get("type").as_str() == Some("result")
-            });
-            if is_result {
-                if events + line.len() < MAX_STDOUT as usize {
-                    events += line.len() + 1;
-                    kept.extend_from_slice(&line);
-                    kept.push(b'\n');
-                }
-                continue;
+        if let Some(kind) = event_type(&line) {
+            if kind == "result" && events + line.len() < MAX_STDOUT as usize {
+                events += line.len() + 1;
+                kept.extend_from_slice(&line);
+                kept.push(b'\n');
             }
+            continue;
         }
         let room = MAX_TEXT.saturating_sub(text);
         if room > 0 {
@@ -2150,8 +2154,9 @@ mod tests {
         for i in 0..2000 {
             input.extend_from_slice(
                 format!(
-                    "{{\"type\":\"assistant\",\"n\":{i},\"pad\":\"{}\"}}\n",
-                    "x".repeat(900)
+                    "{{\"type\":\"assistant\",\"n\":{i},\"pad\":\"{}\"}}\nplain {i} {}\n",
+                    "x".repeat(900),
+                    "y".repeat(900)
                 )
                 .as_bytes(),
             );
@@ -2159,8 +2164,10 @@ mod tests {
         input.extend_from_slice(b"{\"type\":\"result\",\"total_cost_usd\":0.5}\n");
         input.extend_from_slice(b"{\"type\":\"result\",\"total_cost_usd\":0.7}");
         let kept = read_events(&input[..]);
-        // 64 KiB of the other lines, and the 2 events (the last has no end of line).
+        // 64 KiB of the plain lines and the 2 result events (the last has no
+        // end of line). No other event is kept.
         assert!(kept.len() < MAX_TEXT + 200, "{}", kept.len());
+        assert!(!String::from_utf8_lossy(&kept).contains("assistant"));
         assert_eq!(result_events(&kept).len(), 2);
         assert_eq!(read_result(&kept).0, Some(0.7));
         // A line with no end of line, and a plain text, are kept as text.
@@ -2169,6 +2176,63 @@ mod tests {
             b"API Error: 502 Bad Gateway\n"
         );
         assert!(read_events(&b""[..]).is_empty());
+    }
+
+    /// The class of an attempt that failed, as the runner reads it: the stream
+    /// through the reader, and then `refusal`.
+    fn class_of_stream(stdout: &[u8], stderr: &[u8]) -> Option<Refusal> {
+        refusal(1, &read_events(stdout), stderr)
+    }
+
+    const INIT: &[u8] = b"{\"type\":\"system\",\"subtype\":\"init\"}\n";
+
+    #[test]
+    fn an_init_event_and_a_login_error_on_stderr_is_an_account_refusal() {
+        let err = b"Not logged in. Please run /login";
+        assert_eq!(class_of_stream(INIT, err), Some(Refusal::Account));
+    }
+
+    #[test]
+    fn an_init_event_and_another_error_on_stderr_is_the_other_refusal() {
+        let err = b"Error: read ECONNRESET";
+        assert_eq!(class_of_stream(INIT, err), Some(Refusal::Other));
+        // Each event of the stream, not the first one only. A tool result that
+        // holds the words of a refusal is no text of the API.
+        let events = b"{\"type\":\"system\",\"subtype\":\"init\"}\n{\"type\": \"assistant\", \"message\": {}}\n{\"type\":\"user\",\"text\":\"usage limit \\\"result\\\"\"}\n";
+        assert_eq!(class_of_stream(events, err), Some(Refusal::Other));
+        // A stderr with no marker is silent, as with an empty output.
+        assert_eq!(
+            class_of_stream(INIT, b"Segmentation fault"),
+            Some(Refusal::Silent)
+        );
+    }
+
+    #[test]
+    fn empty_output_and_empty_stderr_is_silent() {
+        assert_eq!(class_of_stream(b"", b""), Some(Refusal::Silent));
+        assert_eq!(class_of_stream(INIT, b""), Some(Refusal::Silent));
+    }
+
+    #[test]
+    fn a_line_that_is_no_event_is_still_the_text_of_a_refusal() {
+        // A plain text after an event: the text decides, not stderr.
+        let mut out = INIT.to_vec();
+        out.extend_from_slice(b"Weekly limit reached, resets Mon 9am\n");
+        assert_eq!(class_of_stream(&out, b""), Some(Refusal::Account));
+        // A JSON value with no `type` is no event.
+        assert_eq!(
+            class_of_stream(b"{\"message\":\"API Error: 503 down\"}\n", b""),
+            Some(Refusal::Other)
+        );
+        assert_eq!(
+            class_of_stream(b"[\"overloaded\"]\n", b""),
+            Some(Refusal::Other)
+        );
+        // A line that is cut short does not parse, so it is a text.
+        assert_eq!(
+            class_of_stream(b"{\"type\":\"assistant\",\"text\":\"ov", b""),
+            Some(Refusal::Silent)
+        );
     }
 
     #[test]
