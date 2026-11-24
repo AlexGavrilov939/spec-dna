@@ -236,10 +236,12 @@ layer that the graph does not have, a types list on many lines that --types
 must grow, and a bad value. If the file has no
 [layers] table, it writes the default graph first. If the file has a types
 list, --types also appends each type that the list lacks, and the output says
-so. It ends with up to 3 lines that start with next: and give one action each:
-commit spec-dna.toml as a change of its own, run init when the agent skill
-lists other types, and write the first document with new. With --json, the
-fields types_added and next hold the same.
+so. When the types of the project change and the agent skill has no hand
+edit, it also writes the new skill, and the output says so. It ends with up
+to 3 lines that start with next: and give one action each: commit
+spec-dna.toml (and the skill) as a change of its own, run init when a skill
+with a hand edit lists other types, and write the first document with new.
+With --json, the fields types_added, skill_updated and next hold the same.
 `list` prints each layer: its level, its selection, its edges, its limits and
 the number of documents that each rule put in it. With --json, it also lists
 the rule of each document.",
@@ -2839,25 +2841,59 @@ fn layer_add(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     let read = Repo::parse_config(&out)?;
     let level = read.layers.index(name).map_or(0, |i| read.layers.level(i));
     mv::write(&path, &out)?;
+    // The adapter skill lists the types of the project (D90). A skill with no
+    // hand edit gets the new list in the same write as the configuration. A
+    // skill with a hand edit stays, and `init` updates it.
+    let new_types = adapters::project_types(&read.layers, &read.types);
+    let skill_path = repo.root.join(adapters::SKILL);
+    let mut skill_updated = false;
+    let mut skill_stays = false;
+    if adapters::project_types(&cfg.layers, &cfg.types) != new_types && skill_path.is_file() {
+        let generated = std::fs::read_to_string(&skill_path).ok().filter(|t| {
+            t.contains("<!-- spec-dna:begin skill ")
+                && !adapters::check(&[(adapters::SKILL, t.clone())], &new_types)
+                    .iter()
+                    .any(|d| d.code == diag::Code::AdapterModified)
+        });
+        if generated.is_some() {
+            mv::write(&skill_path, &adapters::skill_file(&new_types))?;
+            skill_updated = true;
+        } else {
+            skill_stays = true;
+        }
+    }
     let mut next = Vec::new();
-    next.push(format!(
-        "commit {} as a change of its own (SD503)",
-        config::FILE_NAME
-    ));
-    if adapters::project_types(&cfg.layers, &cfg.types)
-        != adapters::project_types(&read.layers, &read.types)
-        && repo.root.join(adapters::SKILL).is_file()
-    {
+    if skill_updated {
+        next.push(format!(
+            "commit {} and {} in a pull request of their own, and merge it (SD503)",
+            config::FILE_NAME,
+            adapters::SKILL
+        ));
+    } else if skill_stays {
         next.push(
             "run spec-dna init to update the agent skill, which lists the types of the project"
                 .to_string(),
         );
+        next.push(format!(
+            "commit {} and the files that init writes in a pull request of their own, and merge it (SD503)",
+            config::FILE_NAME
+        ));
+    } else {
+        next.push(format!(
+            "commit {} as a change of its own (SD503)",
+            config::FILE_NAME
+        ));
     }
     if let Some(first) = new.types.first() {
         // A layer with top files holds types that take no id.
         let id = if new.dir().is_some() { " <id>" } else { "" };
+        let after = if skill_updated {
+            "after the merge, "
+        } else {
+            ""
+        };
         next.push(format!(
-            "run spec-dna new {}{id} to write the first document of the layer",
+            "{after}run spec-dna new {}{id} to write the first document of the layer",
             first.name()
         ));
     }
@@ -2871,6 +2907,7 @@ fn layer_add(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
                 .bool("wrote_implied_graph", !cfg.layers_declared)
                 .strs("moved_from", &moved_from)
                 .strs("types_added", &types_added)
+                .bool("skill_updated", skill_updated)
                 .strs("next", &next)
                 .end()
         );
@@ -2890,6 +2927,12 @@ fn layer_add(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         }
         if !types_added.is_empty() {
             println!("added the types {} to `types`", ticked(&types_added));
+        }
+        if skill_updated {
+            println!(
+                "updated {}: it lists the types of the project",
+                adapters::SKILL
+            );
         }
         for line in &next {
             println!("next: {line}");

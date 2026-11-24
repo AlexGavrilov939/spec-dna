@@ -975,18 +975,21 @@ The command reads its own result before it writes it. The result must give the l
 
 If `spec-dna.toml` has a top-level `types` list, `--types` also appends each type that the list lacks. The command writes it in the same write as the layer, and each comment stays. Without a `types` key, or with an empty list, each type is valid already, and the command changes no `types` list. A list that the command cannot grow in place, such as a list on many lines, gives exit code 2. The file keeps its bytes. Add the types to the list by hand, and run the command again.
 
-The change goes into `spec-dna.toml` only. The output ends with `next:` lines, one action for each line. There are 3 lines at most:
+The change goes into `spec-dna.toml`. The adapter skill `.claude/skills/spec-dna/SKILL.md` lists the types of the project, so the command also writes the new skill when the new types change that list, the skill exists, and it has no hand edit (no SD501). It writes the skill in the same write as `spec-dna.toml`, and a line that starts with `updated` names it. Thus `check` gives no SD502 for the skill. A skill with a hand edit, or a file that spec-dna did not generate, stays as it is. The line `next: run spec-dna init ...` then comes first.
 
-1. `next: commit spec-dna.toml as a change of its own (SD503)`. `check` gives SD503 for a change of `spec-dna.toml` that has other files ([diagnostics.md](diagnostics.md)).
-2. `next: run spec-dna init to update the agent skill, which lists the types of the project`. The command writes this line only when the new types change the types of the project, and `.claude/skills/spec-dna/SKILL.md` exists.
-3. `next: run spec-dna new <first type> <id> to write the first document of the layer`. The command writes this line only when the layer has a type. A layer with `--files` holds top files, and its line has no `<id>`.
+The output ends with `next:` lines, one action for each line. There are 3 lines at most:
+
+1. With the skill written: `next: commit spec-dna.toml and .claude/skills/spec-dna/SKILL.md in a pull request of their own, and merge it (SD503)`. `check` gives SD503 for a change of `spec-dna.toml` that has other files ([diagnostics.md](diagnostics.md)). With a skill that stays: `next: run spec-dna init to update the agent skill, which lists the types of the project`, then `next: commit spec-dna.toml and the files that init writes in a pull request of their own, and merge it (SD503)`. Without a skill file, or when the types of the project do not change: `next: commit spec-dna.toml as a change of its own (SD503)`.
+2. `next: run spec-dna new <first type> <id> to write the first document of the layer`. The command writes this line only when the layer has a type. A layer with `--files` holds top files, and its line has no `<id>`. After the skill is written, the line starts with `after the merge,`.
+
+A new layer of new types and its first documents go in 2 pull requests. The first pull request holds `spec-dna.toml` and the skill. After it merges, `spec-dna new` writes the documents in a later pull request.
 
 When the command appended types, a line that starts with `added the types` comes before the `next:` lines.
 
-With `--json`, the output is one object. `types_added` lists the appended types. `next` lists the `next:` lines without their prefix.
+With `--json`, the output is one object. `types_added` lists the appended types. `skill_updated` is `true` when the command wrote the skill, else `false`. `next` lists the `next:` lines without their prefix.
 
 ```json
-{"layer":"interfaces","level":0,"path":"spec-dna.toml","wrote_implied_graph":false,"moved_from":["intent"],"types_added":[],"next":["commit spec-dna.toml as a change of its own (SD503)","run spec-dna new interface <id> to write the first document of the layer"]}
+{"layer":"interfaces","level":0,"path":"spec-dna.toml","wrote_implied_graph":false,"moved_from":["intent"],"types_added":[],"skill_updated":false,"next":["commit spec-dna.toml as a change of its own (SD503)","run spec-dna new interface <id> to write the first document of the layer"]}
 ```
 
 ### layer list
