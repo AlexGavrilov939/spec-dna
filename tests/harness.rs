@@ -222,6 +222,10 @@ fn lean_repo() -> Repo {
     r
 }
 
+/// The answer of question 13 of a test that reads the files of the advisor. A
+/// new project of `standard` has no advisor (D97).
+const ADVISOR: &str = "harness-models = [\"advisor=fable\"]\n";
+
 /// Replaces the version of the marker of a generated file with an old one. The
 /// hash covers the text above the marker, so it stays valid.
 fn age_marker(text: &str) -> String {
@@ -812,7 +816,8 @@ fn text_after_the_marker_is_a_hand_edit_for_init_and_check() {
 #[test]
 fn a_deny_rule_that_removes_each_tool_of_an_agent_is_refused() {
     let r = Repo::empty();
-    let (code, out, err) = r.init_with("harness-deny = [\"Read\", \"Bash\"]\n", &[]);
+    let answers = format!("harness-deny = [\"Read\", \"Bash\"]\n{ADVISOR}");
+    let (code, out, err) = r.init_with(&answers, &[]);
     assert_eq!(code, 2, "{out}{err}");
     assert!(err.contains("fallback-advisor"), "{err}");
     assert!(!r.exists("spec-dna.toml"));
@@ -1359,7 +1364,7 @@ fn the_haiku_rule_of_the_advisor_ignores_case() {
 fn a_deny_rule_for_a_whole_tool_counts_as_a_deny_of_the_tool() {
     let r = Repo::empty();
     for deny in ["[\"Read(*)\", \"Bash(*)\"]", "[\"Read(**)\", \"Bash\"]"] {
-        let (code, out, err) = r.init_with(&format!("harness-deny = {deny}\n"), &[]);
+        let (code, out, err) = r.init_with(&format!("harness-deny = {deny}\n{ADVISOR}"), &[]);
         assert_eq!(code, 2, "{deny}: {out}{err}");
         assert!(err.contains("fallback-advisor"), "{deny}: {err}");
     }
