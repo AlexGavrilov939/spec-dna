@@ -828,3 +828,53 @@ fn a_hand_edited_skill_stays_and_the_init_line_comes_first() {
     let (_, json, _) = r2.run(&["layer", "add", "summaries", "--json"]);
     assert!(json.contains("\"skill_updated\":false"), "{json}");
 }
+
+#[test]
+fn dry_run_writes_nothing_and_says_what_it_would_do() {
+    let r = initialized();
+    let toml = fs::read(r.dir.join("spec-dna.toml")).unwrap();
+    let skill = fs::read(r.dir.join(SKILL)).unwrap();
+    let (code, out, err) = r.run(&["layer", "add", "summaries", "--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(
+        fs::read(r.dir.join("spec-dna.toml")).unwrap(),
+        toml,
+        "{out}"
+    );
+    assert_eq!(fs::read(r.dir.join(SKILL)).unwrap(), skill, "{out}");
+    assert!(out.contains("would add layer `summaries`"), "{out}");
+    assert!(
+        out.contains(&format!(
+            "would update {SKILL}: it lists the types of the project"
+        )),
+        "{out}"
+    );
+    assert!(
+        out.ends_with("spec-dna layer add: dry run; nothing written\n"),
+        "{out}"
+    );
+    // The real run still works: the dry run left no layer.
+    let (code, out, err) = r.run(&["layer", "add", "summaries"]);
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+#[test]
+fn an_unwritable_skill_folder_leaves_the_configuration_as_it_was() {
+    use std::os::unix::fs::PermissionsExt;
+    let r = initialized();
+    let toml = fs::read(r.dir.join("spec-dna.toml")).unwrap();
+    let dir = r.dir.join(".claude/skills/spec-dna");
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).unwrap();
+    let (code, out, err) = r.run(&["layer", "add", "summaries"]);
+    let still = fs::read(r.dir.join("spec-dna.toml")).unwrap();
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+    // A process of the super user can write the folder: nothing to test.
+    if code == 0 {
+        return;
+    }
+    assert_eq!(code, 4, "{out}{err}");
+    assert_eq!(still, toml, "the file of the configuration changed");
+    // The second run does not refuse with "layer exists".
+    let (code, out, err) = r.run(&["layer", "add", "summaries"]);
+    assert_eq!(code, 0, "{out}{err}");
+}
