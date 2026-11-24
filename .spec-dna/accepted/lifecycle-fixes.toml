@@ -1,0 +1,155 @@
+format = 2
+change = "lifecycle-fixes"
+scope = ["CHANGELOG.md", "docs/commands.md", "docs/design/0.8.1-a-lifecycle-and-harness.md", "docs/diagnostics.md", "docs/evals.md", "docs/guides/change.md", "docs/init.md", "docs/types.md", "src/accept.rs", "src/acceptance.rs", "src/change.rs", "src/check.rs", "src/diag.rs", "src/finish.rs", "src/harness.rs", "src/harness_text.rs", "src/lifecycle.rs", "src/main.rs", "src/sdlc.rs", "src/split.rs", "src/stage.rs", "src/templates.rs", "src/tree.rs", "src/upgrade.rs", "tests/accept_cmd.rs", "tests/accept_next.rs", "tests/branch_approval.rs", "tests/finish.rs", "tests/golden/harness/acceptor*.md", "tests/golden/harness/acceptor-no-advisor.md", "tests/golden/harness/skills/spec-dna-execute.md", "tests/harness_roles.rs", "tests/harness_skills.rs", "tests/init_graph.rs", "tests/layer_cmd.rs", "tests/lifecycle_base.rs", "tests/lifecycle_checks.rs", "tests/lifecycle_finished.rs", "tests/owners.rs", "tests/proof_debt.rs", "tests/templates_new.rs", "tests/upgrade_cli.rs"]
+paths = ["src/accept.rs", "src/acceptance.rs", "src/change.rs", "src/check.rs", "src/diag.rs", "src/finish.rs", "src/harness.rs", "src/harness_text.rs", "src/lifecycle.rs", "src/main.rs", "src/sdlc.rs", "src/split.rs", "src/stage.rs", "src/templates.rs", "src/tree.rs", "src/upgrade.rs", "tests/accept_cmd.rs", "tests/accept_next.rs", "tests/branch_approval.rs", "tests/finish.rs", "tests/harness_roles.rs", "tests/harness_skills.rs", "tests/init_graph.rs", "tests/layer_cmd.rs", "tests/lifecycle_base.rs", "tests/lifecycle_checks.rs", "tests/lifecycle_finished.rs", "tests/owners.rs", "tests/proof_debt.rs", "tests/templates_new.rs", "tests/upgrade_cli.rs"]
+tree = "05d57fd44197c146"
+result = "accepted"
+acknowledged-by = []
+
+[[acceptor]]
+roles = ["acceptor"]
+brief = "bd13a9ea6e7a3a39"
+session = "c51acbf1-5aed-497f-8ed7-0e87fb4f43ac"
+agent = "claude-code"
+model = "claude-opus-5-5"
+result = "accepted"
+
+[[attempt]]
+acceptor = 1
+text = "Proof: ran the 15 test binaries of the plan (lifecycle_finished, lifecycle_checks, lifecycle_base, proof_debt, accept_next, accept_cmd, harness_skills, layer_cmd, upgrade_cli, harness_roles, templates_new, finish, branch_approval, owners, init_graph): 728 tests pass. The unit tests change::, harness_text::, templates::, stage:: pass (79). cargo fmt --check and cargo clippy --all-targets -D warnings pass. Each test name of Proof exists. check --base origin/master gives no SD102, SD602 or SD913."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "SD915, scratch repo (init, standard, approval branch): routine change with code merged and each task ticked, a pull request with only finish. The tree gives no SD915 and exit 0; 0.8.0 gives SD915 and exit 1."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "SD915 with an open task t1: finish stops at step 0; a deletion of the folder by hand gives SD915 that names t1 and the Skip: fix. A higher-risk change with a delta line, all tasks ticked, deleted by hand: SD915 on the unapplied delta line stays, as in 0.8.0."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "SD913: a small fix that edits src/dose.py (Files of an open change), README.md and src/other.py with no edit of the folder gives no SD913; 0.8.0 gives 2. With a tick of the plan in the branch, SD913 names README.md and src/other.py with the text 'a pull request of its own'."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "SD913 with 2 changes: a branch adds change other (Files src/other.py) and edits src/dose.py of change dose and README.md. Only README.md gets SD913: the Files of the change that only Files bring in stay in the scope."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "next and accept with a repeated deviation id d1 (higher-risk, approvals in base): next names the builder with SD939 and the fix text, accept --brief exits 1 and writes no acceptance.toml. 0.8.0 names the acceptor and writes the skeleton. With invariants = true and an item rules/none#x@..., next and accept stop on SD936 and name the spec."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Fallback of accept after a squash commit that adds the plan and the code: paths = [src/dose.py]; 0.8.0 gives []. A root commit with the plan and the code: paths has the 2 code files; 0.8.0 gives []."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "change_roles after a squash commit with [owners] src/dose.py = security-reviewer: finish --dry-run names the role in SD927, and the first line of the brief names security-reviewer. 0.8.0 names no role."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Root commit in a repository with object format SHA-256: accept exits 4 with git error bad revision 4b825dc6... (the SHA-1 empty tree); 0.8.0 writes the skeleton with exit 0. See finding 1."
+outcome = "broke"
+
+[[attempt]]
+acceptor = 1
+text = "layer add summaries --types summary: writes spec-dna.toml and the skill, next lines and JSON skill_updated as in D90; check --all gives no SD502 for the skill. 0.8.0 leaves SD502 on the skill."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "layer add --dry-run (text and --json): both files keep their sha1, the output says would add, would update, dry run; nothing written, and JSON has dry_run true. 0.8.0 writes spec-dna.toml despite --dry-run."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "layer add with a read-only skill folder: exit 4, spec-dna.toml unchanged. With a read-only repository root (skill written, configuration write fails): exit 4 and the old skill comes back byte for byte."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "layer add with a hand edit inside the skill block: the skill stays, the init line comes first, the commit line names the files that init writes."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "layer add with text appended after the end marker of the skill (no edit in the block): the command replaces the whole file and the appended text is gone. See finding 2."
+outcome = "broke"
+
+[[attempt]]
+acceptor = 1
+text = "acceptor.md: lean harness with no hook has one step 8 and names no hook (h:8d2fbb209d82b266). With protect-approvals = true it keeps steps 8 to 10 (h:ac3e6b19951dc492); advisor = true gives f541cad357de8926 with the hook and 74d4fa64dbae1bfb without. The 4 hashes match docs/evals.md."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Title rule: new requirements http-cache gives HTTP cache, new decision sql-limits gives SQL limits. finish of ADD requirements/mcp#serve and requirements/my-api_v2#x writes # MCP and # My api v2; 0.8.0 writes # Mcp."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "next note for Proof: tests/test_other.py outside Files gives the note; spans with ::test_x, ./ and :12, a double-backtick span, a covers id and tests/fixtures/x.py give 3 paths (first plus 2 more). 0.8.0 gives no note."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "upgrade --dry-run from pin 0.7.1 with 1 error code in check --all: last line ends with read the 1 item of report: above. With no item the line stays as in 0.8.0."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "stats --sdlc --json with [evidence] reports: clean tree gives passed_once 1 and reports_read true; a code edit with a fresh stamp gives tagged 1, reports_read false and the text reason (0.8.0 binds: passed_once 1); a doc edit or an untracked code file keeps reports_read true; a mode change of a code file gives false."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "SD401: a base-approved plan set to draft in the branch gives the rework message and the REWORK_FIX text. The plan template has the sentence on code spans."
+outcome = "held"
+
+[[finding]]
+acceptor = 1
+severity = "note"
+path = "src/acceptance.rs"
+line = 551
+text = "before_commit falls back to the SHA-1 empty tree. In a SHA-256 repository where the root commit added the plan, accept now exits 4 (git: bad revision), where 0.8.0 exited 0; change_roles returns the same error with [owners]. The comment calls it a known limit of other paths, but the result is a hard error. Get the empty tree from git (hash-object -t tree of empty input), or keep the old diff when the diff fails."
+
+[[finding]]
+acceptor = 1
+severity = "note"
+path = "src/main.rs"
+line = 2853
+text = "layer add replaces the whole skill file when the block has no hand edit (no SD501). Text outside the markers, such as an appended section or a changed description, is lost with no preview. init does the same and check reports such a file as SD502, so this follows the design of D90; the file is tracked, so git keeps a committed copy. Consider keeping the skill when the file differs outside the block, as for SD501."
+
+[[finding]]
+acceptor = 1
+severity = "note"
+path = "tests/owners.rs"
+text = "check --base origin/master gives SD910 reason 8 (warning, gate warn) on tests/owners.rs: commit 791376a edited it before 2491a7a added it to Files and 47e0dcb approved the plan again. The owner approved the plan with the path after the edit; no Deviations item records the order."
+
+[[finding]]
+acceptor = 1
+severity = "note"
+path = "docs/intent/lifecycle-fixes/plan.md"
+text = "The work honors --dry-run in layer add and adds the JSON key dry_run (commit 7639ff3). The spec, the plan and D90 do not name this change of output, no Deviations item records it, and CHANGELOG.md has no line for it, although 0.8.0 wrote spec-dna.toml with --dry-run."
+
+[[finding]]
+acceptor = 1
+severity = "note"
+path = "src/main.rs"
+line = 229
+text = "The usage line of layer add (spec-dna layer --help) and the synopsis in docs/commands.md do not list --dry-run, which the body text of docs/commands.md now documents."
+
+[[finding]]
+acceptor = 1
+severity = "note"
+path = "src/accept.rs"
+line = 250
+text = "The refusal of accept starts with 'spec-dna:' (the prefix of Fatal), but the format of D88 in docs/design/0.8.1-a-lifecycle-and-harness.md starts with 'spec-dna accept:'. docs/commands.md matches the code, so only the design text differs."

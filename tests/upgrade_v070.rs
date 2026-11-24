@@ -543,8 +543,19 @@ fn the_same_setup_gives_sd503_for_another_edit_and_sd913_for_a_stray_file() {
         !gate_lines(&repo, "SD503").is_empty(),
         "another edit of spec-dna.toml must give SD503"
     );
-    // A file that is outside the plan and that is not generated.
+    // A file that is outside the plan and that is not generated. SD913 runs for a
+    // change whose folder the diff touches (design 0.8.1, D92): with no edit of the
+    // folder, the stray file gives no SD913, because the script of `Files` alone
+    // brings the change into the diff.
     let repo = upgrade_with_work(&[("notes.txt", "A note.\n")]);
+    assert_eq!(gate_lines(&repo, "SD913"), Vec::<String>::new());
+    // The same work with a note in the plan of the change touches its folder.
+    let plan_path = "docs/intent/drip-schedule/plan.md";
+    let plan = project().read(plan_path);
+    let repo = upgrade_with_work(&[
+        ("notes.txt", "A note.\n"),
+        (plan_path, &format!("{plan}\nA note of the work.\n")),
+    ]);
     let lines = gate_lines(&repo, "SD913");
     assert_eq!(lines.len(), 1, "{lines:?}");
     assert!(lines[0].contains("notes.txt"), "{lines:?}");

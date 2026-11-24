@@ -237,7 +237,7 @@ After the list, the preview gives the diff of each file other than `spec-dna.tom
 
 A new project and `--reconfigure` also give `notes`, `warnings`, `codeowners` and `answers` with the 14 answers. The field `number` of an answer is the number of the question. The field `default_type` of a detected root is `null` for a mixed root with no `default-type`. With a `spec-dna.toml` that exists, `--dry-run --json` gives `files` with the same entries, and `harness`.
 
-The skill lists the types of the project: the types that a layer has. If `spec-dna.toml` has the key `types`, the skill lists only the types of that key. If you change the layers later, for example with `spec-dna layer add`, run `spec-dna init` to update the skill. Otherwise `check` reports SD502.
+The skill lists the types of the project: the types that a layer has. If `spec-dna.toml` has the key `types`, the skill lists only the types of that key. `spec-dna layer add` writes the new skill with `spec-dna.toml`, except a skill with a hand edit. If you change the layers in another way, or the skill has a hand edit, run `spec-dna init` to update the skill. Otherwise `check` reports SD502.
 
 For GitLab CI and lefthook, the preview gives the text to add manually. `init` checks that it can read the new `spec-dna.toml` before it writes a file.
 

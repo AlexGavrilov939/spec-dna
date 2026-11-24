@@ -231,6 +231,21 @@ fn spec_and_plan_have_their_required_sections() {
 }
 
 #[test]
+fn the_plan_template_asks_for_a_path_or_a_glob_in_a_code_span() {
+    // D93 item 3: a package or a symbol in a code span of `Files` would be a
+    // pattern of the scope, so the template says it before the author writes it.
+    let r = Repo::mixed();
+    assert_eq!(r.run(&["new", "intent", "drip"]).0, 0);
+    let (code, out, err) = r.run(&["new", "plan", "drip"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let text = r.read("docs/intent/drip/plan.md");
+    assert!(
+        text.contains("Put only a path or a glob in a code span."),
+        "{text}"
+    );
+}
+
+#[test]
 fn the_sections_of_prd_rfc_and_runbook_follow_the_design() {
     let sections = |text: &str| -> Vec<String> {
         text.lines()

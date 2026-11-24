@@ -318,6 +318,57 @@ fn the_next_line_says_that_a_pin_only_edit_can_ride_with_other_work() {
     assert_eq!(line_after_to_commit(&out), NEXT_PIN_ONLY, "{out}");
 }
 
+/// The last line of the text of `upgrade`.
+fn last_line(out: &str) -> &str {
+    out.trim_end().lines().last().unwrap_or_default()
+}
+
+#[test]
+fn the_last_line_names_the_items_of_the_report() {
+    // The names of 0.6 are an edit beyond the pin: one item in the list of the
+    // edits of `spec-dna.toml`, and the others of the block count too.
+    let repo = project_0_6_1("[\"intent\", \"spec\", \"plan\", \"review\"]");
+    let (code, out, err) = upgrade(&repo, &["--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let report: Vec<&str> = out
+        .lines()
+        .skip_while(|l| *l != "report:")
+        .skip(1)
+        .take_while(|l| l.starts_with("  "))
+        .collect();
+    // An entry of a list has 4 spaces. A warning has the prefix `warning:`. A
+    // code with errors is in the line of the errors, after its colon.
+    let entries = report.iter().filter(|l| l.starts_with("    ")).count();
+    let warnings = report
+        .iter()
+        .filter(|l| l.starts_with("  warning: "))
+        .count();
+    let errors = report
+        .iter()
+        .find_map(|l| l.strip_prefix("  errors of `check --all` on the new tree: "))
+        .map_or(0, |e| {
+            if e == "none" {
+                0
+            } else {
+                e.split(", ").count()
+            }
+        });
+    let items = entries + warnings + errors;
+    assert!(items > 0, "{out}");
+    let noun = if items == 1 { "item" } else { "items" };
+    let want = format!(
+        "spec-dna upgrade: dry run; nothing written; read the {items} {noun} of `report:` above"
+    );
+    assert_eq!(last_line(&out), want, "{out}");
+    // The text of the write has the count too.
+    let (code, out, err) = upgrade(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        last_line(&out).ends_with(&format!("; read the {items} {noun} of `report:` above")),
+        "{out}"
+    );
+}
+
 #[test]
 fn the_next_line_names_the_pull_request_of_its_own_for_other_edits() {
     // The names of 0.6 are an edit beyond the pin.

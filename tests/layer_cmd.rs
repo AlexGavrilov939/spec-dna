@@ -588,8 +588,9 @@ fn layer_add_appends_its_types_to_the_types_list_and_prints_the_next_steps() {
         out.contains("added the types `research` to `types`\n"),
         "{out}"
     );
+    // The skill has no generated block, so it stays and `init` updates it (D90).
     assert!(
-        out.contains("next: commit spec-dna.toml as a change of its own (SD503)\n"),
+        out.contains("next: commit spec-dna.toml and the files that init writes in a pull request of their own, and merge it (SD503)\n"),
         "{out}"
     );
     assert!(
@@ -623,7 +624,7 @@ fn layer_add_appends_its_types_to_the_types_list_and_prints_the_next_steps() {
     let (code, out, err) = r.run(&["layer", "add", "notes", "--types", "research", "--json"]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(
-        out.contains("\"types_added\":[\"research\"],\"next\":[\"commit spec-dna.toml as a change of its own (SD503)\",\"run spec-dna new research <id> to write the first document of the layer\"]"),
+        out.contains("\"types_added\":[\"research\"],\"skill_updated\":false,\"next\":[\"commit spec-dna.toml as a change of its own (SD503)\",\"run spec-dna new research <id> to write the first document of the layer\"]"),
         "{out}"
     );
 
@@ -666,7 +667,7 @@ fn layer_add_json_and_the_help() {
     assert_eq!(code, 0, "{out}{err}");
     assert_eq!(
         out.trim(),
-        "{\"layer\":\"interfaces\",\"level\":0,\"path\":\"spec-dna.toml\",\"wrote_implied_graph\":false,\"moved_from\":[\"intent\"],\"types_added\":[],\"next\":[\"commit spec-dna.toml as a change of its own (SD503)\",\"run spec-dna new interface <id> to write the first document of the layer\"]}"
+        "{\"layer\":\"interfaces\",\"level\":0,\"path\":\"spec-dna.toml\",\"wrote_implied_graph\":false,\"moved_from\":[\"intent\"],\"types_added\":[],\"skill_updated\":false,\"next\":[\"commit spec-dna.toml as a change of its own (SD503)\",\"run spec-dna new interface <id> to write the first document of the layer\"]}"
     );
     // `layer` without a command, and an unknown command, are usage errors.
     for args in [vec!["layer"], vec!["layer", "remove", "x"]] {
@@ -736,4 +737,144 @@ fn layer_add_summaries_with_its_own_types_keeps_the_types_of_the_user() {
     let (code, out, err) = r.run(&["layer", "add", "summaries", "--paths", "docs/summaries/**"]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(!r.text().contains("types = [\"summary\"]"), "{}", r.text());
+}
+
+const SKILL: &str = ".claude/skills/spec-dna/SKILL.md";
+
+/// A project that `init` wrote: it has the generated agent skill, which lists
+/// the types of the project.
+fn initialized() -> Repo {
+    let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("spec-dna-layer-{}-{n}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    git(&dir, &["init", "-q", "-b", "main"]);
+    let r = Repo { dir };
+    let answers = format!("{}-answers.toml", r.dir.display());
+    fs::write(&answers, "profile = \"standard\"\n").unwrap();
+    let (code, out, err) = r.run(&["init", "--answers", &answers]);
+    let _ = fs::remove_file(&answers);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(r.dir.join(SKILL).is_file());
+    // `check` reads the files that git tracks.
+    git(&r.dir, &["add", "-A"]);
+    r
+}
+
+#[test]
+fn layer_add_updates_the_adapter_skill() {
+    // D90: the skill lists the types of the project, so the same write gives
+    // the new skill and `check` has no SD502 for it.
+    let r = initialized();
+    let (code, out, err) = r.run(&["layer", "add", "summaries"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let (_, checked, _) = r.run(&["check", "--all"]);
+    assert!(!checked.contains("SD502"), "{checked}");
+    assert!(
+        out.contains(&format!(
+            "updated {SKILL}: it lists the types of the project\n"
+        )),
+        "{out}"
+    );
+    assert!(
+        out.contains(&format!("next: commit spec-dna.toml and {SKILL} in a pull request of their own, and merge it (SD503)\n")),
+        "{out}"
+    );
+    assert!(
+        out.ends_with("next: after the merge, run spec-dna new summary <id> to write the first document of the layer\n"),
+        "{out}"
+    );
+    assert!(!out.contains("run spec-dna init"), "{out}");
+    // The new skill lists the type.
+    assert!(r.dir.join(SKILL).is_file());
+    // `--json` has the key after `types_added`.
+    let r = initialized();
+    let (code, out, err) = r.run(&["layer", "add", "summaries", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("\"types_added\":[],\"skill_updated\":true,\"next\":["),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_hand_edited_skill_stays_and_the_init_line_comes_first() {
+    let r = initialized();
+    let text = fs::read_to_string(r.dir.join(SKILL)).unwrap();
+    let edited = text.replace(
+        "<!-- spec-dna:end skill -->",
+        "A line of the project.\n<!-- spec-dna:end skill -->",
+    );
+    assert_ne!(text, edited);
+    fs::write(r.dir.join(SKILL), &edited).unwrap();
+    let (code, out, err) = r.run(&["layer", "add", "summaries"]);
+    assert_eq!(code, 0, "{out}{err}");
+    // The file keeps its bytes.
+    assert_eq!(fs::read_to_string(r.dir.join(SKILL)).unwrap(), edited);
+    assert!(!out.contains("updated "), "{out}");
+    let lines: Vec<&str> = out.lines().filter(|l| l.starts_with("next: ")).collect();
+    assert_eq!(
+        lines[0],
+        "next: run spec-dna init to update the agent skill, which lists the types of the project",
+        "{out}"
+    );
+    assert_eq!(
+        lines[1],
+        "next: commit spec-dna.toml and the files that init writes in a pull request of their own, and merge it (SD503)",
+        "{out}"
+    );
+    let r2 = initialized();
+    fs::write(r2.dir.join(SKILL), &edited).unwrap();
+    let (_, json, _) = r2.run(&["layer", "add", "summaries", "--json"]);
+    assert!(json.contains("\"skill_updated\":false"), "{json}");
+}
+
+#[test]
+fn dry_run_writes_nothing_and_says_what_it_would_do() {
+    let r = initialized();
+    let toml = fs::read(r.dir.join("spec-dna.toml")).unwrap();
+    let skill = fs::read(r.dir.join(SKILL)).unwrap();
+    let (code, out, err) = r.run(&["layer", "add", "summaries", "--dry-run"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(
+        fs::read(r.dir.join("spec-dna.toml")).unwrap(),
+        toml,
+        "{out}"
+    );
+    assert_eq!(fs::read(r.dir.join(SKILL)).unwrap(), skill, "{out}");
+    assert!(out.contains("would add layer `summaries`"), "{out}");
+    assert!(
+        out.contains(&format!(
+            "would update {SKILL}: it lists the types of the project"
+        )),
+        "{out}"
+    );
+    assert!(
+        out.ends_with("spec-dna layer add: dry run; nothing written\n"),
+        "{out}"
+    );
+    // The real run still works: the dry run left no layer.
+    let (code, out, err) = r.run(&["layer", "add", "summaries"]);
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+#[test]
+fn an_unwritable_skill_folder_leaves_the_configuration_as_it_was() {
+    use std::os::unix::fs::PermissionsExt;
+    let r = initialized();
+    let toml = fs::read(r.dir.join("spec-dna.toml")).unwrap();
+    let dir = r.dir.join(".claude/skills/spec-dna");
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).unwrap();
+    let (code, out, err) = r.run(&["layer", "add", "summaries"]);
+    let still = fs::read(r.dir.join("spec-dna.toml")).unwrap();
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+    // A process of the super user can write the folder: nothing to test.
+    if code == 0 {
+        return;
+    }
+    assert_eq!(code, 4, "{out}{err}");
+    assert_eq!(still, toml, "the file of the configuration changed");
+    // The second run does not refuse with "layer exists".
+    let (code, out, err) = r.run(&["layer", "add", "summaries"]);
+    assert_eq!(code, 0, "{out}{err}");
 }

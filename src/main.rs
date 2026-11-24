@@ -236,10 +236,12 @@ layer that the graph does not have, a types list on many lines that --types
 must grow, and a bad value. If the file has no
 [layers] table, it writes the default graph first. If the file has a types
 list, --types also appends each type that the list lacks, and the output says
-so. It ends with up to 3 lines that start with next: and give one action each:
-commit spec-dna.toml as a change of its own, run init when the agent skill
-lists other types, and write the first document with new. With --json, the
-fields types_added and next hold the same.
+so. When the types of the project change and the agent skill has no hand
+edit, it also writes the new skill, and the output says so. It ends with up
+to 3 lines that start with next: and give one action each: commit
+spec-dna.toml (and the skill) as a change of its own, run init when a skill
+with a hand edit lists other types, and write the first document with new.
+With --json, the fields types_added, skill_updated and next hold the same.
 `list` prints each layer: its level, its selection, its edges, its limits and
 the number of documents that each rule put in it. With --json, it also lists
 the rule of each document.",
@@ -2838,61 +2840,133 @@ fn layer_add(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     // `add_layer` read the new text: this cannot fail.
     let read = Repo::parse_config(&out)?;
     let level = read.layers.index(name).map_or(0, |i| read.layers.level(i));
-    mv::write(&path, &out)?;
+    // The adapter skill lists the types of the project (D90). A skill with no
+    // hand edit gets the new list in the same write as the configuration. A
+    // skill with a hand edit stays, and `init` updates it.
+    let new_types = adapters::project_types(&read.layers, &read.types);
+    let skill_path = repo.root.join(adapters::SKILL);
+    let mut skill_updated = false;
+    let mut skill_stays = false;
+    // The old text and the new text of the skill that the command writes.
+    let mut skill_write: Option<(String, String)> = None;
+    if adapters::project_types(&cfg.layers, &cfg.types) != new_types && skill_path.is_file() {
+        let generated = std::fs::read_to_string(&skill_path).ok().filter(|t| {
+            t.contains("<!-- spec-dna:begin skill ")
+                && !adapters::check(&[(adapters::SKILL, t.clone())], &new_types)
+                    .iter()
+                    .any(|d| d.code == diag::Code::AdapterModified)
+        });
+        if let Some(old) = generated {
+            skill_write = Some((old, adapters::skill_file(&new_types)));
+            skill_updated = true;
+        } else {
+            skill_stays = true;
+        }
+    }
+    // With `--dry-run` the command writes nothing and prints what it would do.
+    // Else the skill comes first: if its folder cannot be written, the command
+    // exits with code 4 and leaves `spec-dna.toml` as it was, so a second run does
+    // not refuse with "layer exists". If the file of the configuration cannot be
+    // written after the skill, the old skill comes back.
+    if !a.dry_run {
+        if let Some((old, new_text)) = &skill_write {
+            mv::write(&skill_path, new_text)?;
+            if let Err(e) = mv::write(&path, &out) {
+                let _ = mv::write(&skill_path, old);
+                return Err(e);
+            }
+        } else {
+            mv::write(&path, &out)?;
+        }
+    }
+    let (added, updated) = if a.dry_run {
+        ("would add", "would update")
+    } else {
+        ("added", "updated")
+    };
     let mut next = Vec::new();
-    next.push(format!(
-        "commit {} as a change of its own (SD503)",
-        config::FILE_NAME
-    ));
-    if adapters::project_types(&cfg.layers, &cfg.types)
-        != adapters::project_types(&read.layers, &read.types)
-        && repo.root.join(adapters::SKILL).is_file()
-    {
+    if skill_updated {
+        next.push(format!(
+            "commit {} and {} in a pull request of their own, and merge it (SD503)",
+            config::FILE_NAME,
+            adapters::SKILL
+        ));
+    } else if skill_stays {
         next.push(
             "run spec-dna init to update the agent skill, which lists the types of the project"
                 .to_string(),
         );
+        next.push(format!(
+            "commit {} and the files that init writes in a pull request of their own, and merge it (SD503)",
+            config::FILE_NAME
+        ));
+    } else {
+        next.push(format!(
+            "commit {} as a change of its own (SD503)",
+            config::FILE_NAME
+        ));
     }
     if let Some(first) = new.types.first() {
         // A layer with top files holds types that take no id.
         let id = if new.dir().is_some() { " <id>" } else { "" };
+        let after = if skill_updated {
+            "after the merge, "
+        } else {
+            ""
+        };
         next.push(format!(
-            "run spec-dna new {}{id} to write the first document of the layer",
+            "{after}run spec-dna new {}{id} to write the first document of the layer",
             first.name()
         ));
     }
     if a.json {
-        println!(
-            "{}",
-            Obj::new()
-                .str("layer", name)
-                .num("level", level)
-                .str("path", config::FILE_NAME)
-                .bool("wrote_implied_graph", !cfg.layers_declared)
-                .strs("moved_from", &moved_from)
-                .strs("types_added", &types_added)
-                .strs("next", &next)
-                .end()
-        );
+        let mut o = Obj::new()
+            .str("layer", name)
+            .num("level", level)
+            .str("path", config::FILE_NAME)
+            .bool("wrote_implied_graph", !cfg.layers_declared)
+            .strs("moved_from", &moved_from)
+            .strs("types_added", &types_added)
+            .bool("skill_updated", skill_updated)
+            .strs("next", &next);
+        // The key is there only with `--dry-run`, so the shape of 0.8.0 stays.
+        if a.dry_run {
+            o = o.bool("dry_run", true);
+        }
+        println!("{}", o.end());
     } else {
         println!(
-            "added layer `{name}` (level {level}) to {}",
+            "{added} layer `{name}` (level {level}) to {}",
             config::FILE_NAME
         );
         if !cfg.layers_declared {
             println!(
-                "{} had no [layers] table: it now has the tables of the default graph, then `{name}`",
-                config::FILE_NAME
+                "{} had no [layers] table: it {} the tables of the default graph, then `{name}`",
+                config::FILE_NAME,
+                if a.dry_run { "would have" } else { "now has" }
             );
         }
         for from in &moved_from {
-            println!("`{from}` now moves to `{name}`");
+            println!(
+                "`{from}` {} to `{name}`",
+                if a.dry_run { "would move" } else { "now moves" }
+            );
         }
         if !types_added.is_empty() {
-            println!("added the types {} to `types`", ticked(&types_added));
+            println!("{added} the types {} to `types`", ticked(&types_added));
         }
-        for line in &next {
-            println!("next: {line}");
+        if skill_updated {
+            println!(
+                "{updated} {}: it lists the types of the project",
+                adapters::SKILL
+            );
+        }
+        if a.dry_run {
+            println!("spec-dna layer add: dry run; nothing written");
+        } else {
+            for line in &next {
+                println!("next: {line}");
+            }
         }
     }
     Ok(0)

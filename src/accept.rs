@@ -234,6 +234,27 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
     let (intent_path, plan_path) = (path_of(intent), path_of(plan));
     let spec_path = ch.spec.as_ref().map(path_of);
 
+    // The acceptor edits neither the plan nor the spec, so an item that is not
+    // valid is a refusal before any write and before the brief (D88).
+    // The codes follow the configuration of the need, as `finish` and `next` read
+    // them: a branch cannot turn a code off with its own `spec-dna.toml`.
+    let need = match base_rev.as_deref() {
+        Some(r) => crate::acceptance::need_config(&cfg, &repo.git, r).map_err(Fatal::Io)?,
+        None => crate::acceptance::need_config_of_head(&cfg),
+    };
+    let sections =
+        crate::acceptance::sections_of(need.gate(), &repo.git, base_rev.as_deref(), ch, &head)
+            .map_err(Fatal::Io)?;
+    if let Some(d) = crate::acceptance::section_stop(need.gate(), &sections) {
+        return Err(Fatal::Refused(format!(
+            "`{}` has an item that is not valid ({} at line {}: {}); the acceptor does not edit the plan or the spec: the builder fixes the item and commits, then run accept again",
+            d.path,
+            d.code.code(),
+            d.line,
+            d.message
+        )));
+    }
+
     // The scope, the paths and the tree (D3 item 4).
     let scope = scope_of(&cfg, ch, &head);
     let is_code = |p: &str| tree::is_code_path(&cfg, p, &intent_dirs);
@@ -250,9 +271,13 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
     let mut paths = record::select_paths(&scope, &changed, &is_code);
     if paths.is_empty() {
         // The code merged before this pull request: take the code paths that
-        // changed since the commit that added the plan.
+        // changed since the commit that added the plan. The diff starts at the
+        // first parent of that commit, so a squash commit that holds the plan
+        // and the code gives its code (Q8). A root commit has no parent: the
+        // diff then starts at the empty tree.
         if let Some(added) = repo.git.added_by(&plan_path).map_err(Fatal::Io)? {
-            let since = Diff::read(&repo.git, &added, false).map_err(Fatal::Io)?;
+            let from = crate::acceptance::before_commit(&repo.git, &added);
+            let since = Diff::read(&repo.git, &from, false).map_err(Fatal::Io)?;
             changed = since.files.iter().map(|f| f.0.clone()).collect();
             paths = record::select_paths(&scope, &changed, &is_code);
         }

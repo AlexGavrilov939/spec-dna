@@ -964,7 +964,7 @@ pub fn stats(
     let rows = indicators(repo, cfg, &measured, shallow)?;
     // In `lite` each proof code is off: `stats` reads no report there.
     let proof_on = evidence::proof_codes_on(cfg);
-    let proof = proof_counts(repo, cfg, proof_on)?;
+    let (proof, reports) = proof_counts(repo, cfg, proof_on)?;
     let finished = measured
         .iter()
         .filter(|m| m.outcome == Some(Outcome::Finished))
@@ -992,7 +992,13 @@ pub fn stats(
         // debt or the test reports, so the others get the JSON of 0.7.1.
         let mut out = Obj::new().raw("indicators", &json::array(list));
         if proof.marked > 0 || (proof_on && !cfg.evidence_reports.is_empty()) {
-            out = out.raw("proof", &proof.states_json());
+            // The key `reports_read` comes last, after the 6 counts.
+            let states = proof.states_json();
+            let counts = states.strip_suffix('}').unwrap_or(&states);
+            out = out.raw(
+                "proof",
+                &format!("{counts},\"reports_read\":{}}}", reports == Reports::Read),
+            );
         }
         println!("{}", out.end());
         return Ok(0);
@@ -1037,9 +1043,27 @@ pub fn stats(
             .iter()
             .map(|s| format!("{} {}", s.name(), proof.count(*s)))
             .collect();
-        println!("proof: {}", parts.join(", "));
+        let why = if reports == Reports::TreeDiffers {
+            "; no report read: the working tree has code edits that HEAD does not have"
+        } else {
+            ""
+        };
+        println!("proof: {}{why}", parts.join(", "));
     }
     Ok(0)
+}
+
+/// What `stats` did with the test reports (D92).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Reports {
+    /// The reports were read and the tags were bound.
+    Read,
+    /// No report was read: the key `[evidence] reports` is not set, the proof
+    /// codes are off, or the folder of the reports cannot be read.
+    NotRead,
+    /// No report was read: the code tree of the working tree is not the code
+    /// tree of `HEAD`, so a fresh report proves the working tree, not `HEAD`.
+    TreeDiffers,
 }
 
 /// The count of the requirements of each proof state in the tree of `HEAD`, as
@@ -1047,32 +1071,47 @@ pub fn stats(
 /// `[evidence] reports`, it also reads the reports from the disk and binds the
 /// tags, as `check --reports` does. A problem of a report gives no finding
 /// here: a tag that no fresh report proves is `tagged`. A folder of reports
-/// that cannot be read is no report.
+/// that cannot be read is no report. The tags come from the tree of `HEAD`, and
+/// the bind reads the test files and the stamps of the working tree. So `stats`
+/// reads the reports only when the code tree of the working tree is the code
+/// tree of `HEAD` (D92).
 fn proof_counts(
     repo: &Repo,
     cfg: &Config,
     read_reports: bool,
-) -> Result<evidence::ProofCounts, Fatal> {
+) -> Result<(evidence::ProofCounts, Reports), Fatal> {
     let Some(head) = repo.head_commit() else {
-        return Ok(evidence::ProofCounts::default());
+        return Ok((evidence::ProofCounts::default(), Reports::NotRead));
     };
     let snap = Snapshot::at(repo, &head)?;
     let mut corpus = repo::load(repo, cfg, &[&snap], true, false)?
         .corpora
         .remove(0);
     corpus.covers = evidence::load(repo, cfg, Some(&head), false)?;
-    if read_reports
-        && !cfg.evidence_reports.is_empty()
-        && let Ok(reads) = crate::report::read(repo, cfg)
-    {
-        evidence::bind_covers(&repo.root, &mut corpus.covers, &reads);
+    let mut reports = Reports::NotRead;
+    if read_reports && !cfg.evidence_reports.is_empty() {
+        if !same_code_tree(repo, cfg, &head) {
+            reports = Reports::TreeDiffers;
+        } else if let Ok(reads) = crate::report::read(repo, cfg) {
+            evidence::bind_covers(&repo.root, &mut corpus.covers, &reads);
+            reports = Reports::Read;
+        }
     }
     let (ev, _) = evidence::Evidence::build(&corpus);
-    Ok(evidence::ProofCounts::of(
-        &corpus,
-        &ev,
-        cfg.evidence_reliable_runs as usize,
-    ))
+    let counts = evidence::ProofCounts::of(&corpus, &ev, cfg.evidence_reliable_runs as usize);
+    Ok((counts, reports))
+}
+
+/// True if the code tree of the working tree has the hash of the code tree of
+/// `head`. A tree that git cannot list gives false: no report is read.
+fn same_code_tree(repo: &Repo, cfg: &Config, head: &str) -> bool {
+    let (Ok((now, _)), Ok(then)) = (
+        crate::tree::compute(repo, cfg),
+        crate::tree::hash_at(repo, cfg, head),
+    ) else {
+        return false;
+    };
+    crate::tree::matches(&now, &then)
 }
 
 /// The rows of the indicator table of the design, in its order.

@@ -2814,3 +2814,77 @@ fn the_revert_of_a_move_with_the_record_deleted_ends_the_life_too() {
     assert_eq!(code, 0, "{out}");
     assert!(!has(&out, "SD932"), "{out}");
 }
+
+#[test]
+fn next_notes_a_proof_test_outside_files() {
+    // D93 item 5: `Proof` names 2 test files that no item of `Files` matches.
+    // `next` notes the first one and counts the other, in the text and in the
+    // JSON.
+    let r = start("");
+    r.write(INTENT, &intent("accepted", "routine"));
+    r.write(SPEC, &spec("approved"));
+    let proof = "Run `tests/test_valves.py`, `tests/test_extra.py` and `tests/test_more.py`.";
+    let covers = "The test covers `requirements/valves#sensor-timeout`.";
+    r.write(PLAN, &plan("approved", &FILES).replace(covers, proof));
+    r.commit("the change");
+    let want = "`Proof` names `tests/test_extra.py` (and 1 more), and no item of `Files` matches it; add it to `Files`, or SD913 reports the edit of the test";
+    let (code, out, err) = r.run(&["next", "valve-timeout"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.lines().any(|l| l == format!("note: {want}")), "{out}");
+    let (_, json, _) = r.run(&["next", "valve-timeout", "--json"]);
+    assert!(json.contains(&format!("\"notes\":[\"{want}\"")), "{json}");
+    // One path alone has no count.
+    r.write(
+        PLAN,
+        &plan("approved", &FILES).replace(
+            covers,
+            "Run `tests/test_valves.py` and `tests/test_extra.py`.",
+        ),
+    );
+    r.commit("one path");
+    let (_, out, _) = r.run(&["next", "valve-timeout"]);
+    assert!(
+        out.contains(
+            "note: `Proof` names `tests/test_extra.py`, and no item of `Files` matches it;"
+        ),
+        "{out}"
+    );
+    // A `covers:` id in `Proof` gives no note (guard).
+    r.write(PLAN, &plan("approved", &FILES));
+    r.commit("a covers id");
+    let (_, out, _) = r.run(&["next", "valve-timeout"]);
+    assert!(!out.contains("`Proof` names"), "{out}");
+    // A project with `[evidence] tests = []` gives no note.
+    let cfg = r.read("spec-dna.toml");
+    r.write("spec-dna.toml", &format!("{cfg}\n[evidence]\ntests = []\n"));
+    r.write(PLAN, &plan("approved", &FILES).replace(covers, proof));
+    r.commit("no tests glob");
+    let (_, out, _) = r.run(&["next", "valve-timeout"]);
+    assert!(!out.contains("`Proof` names"), "{out}");
+}
+
+#[test]
+fn next_gives_no_false_note_for_a_path_that_files_already_lists() {
+    // The forms that name a path that `Files` lists, and the paths that are no
+    // test file by name, give no note. A suffix is removed before the match.
+    let r = start("");
+    r.write(INTENT, &intent("accepted", "routine"));
+    r.write(SPEC, &spec("approved"));
+    let covers = "The test covers `requirements/valves#sensor-timeout`.";
+    let quiet = "Run `tests/test_valves.py::test_x`, `tests/test_valves.py:12`, `./tests/test_valves.py`, ``tests/test_valves.py``, the folder `tests/` and the data `tests/fixtures/data.json`.";
+    r.write(PLAN, &plan("approved", &FILES).replace(covers, quiet));
+    r.commit("the change");
+    let (code, out, err) = r.run(&["next", "valve-timeout"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!out.contains("`Proof` names"), "{out}");
+    // A node id of a test that `Files` lacks names the file, with no suffix.
+    let loud = "Run `tests/test_extra.py::test_y` and ``tests/test_more.py:7``.";
+    r.write(PLAN, &plan("approved", &FILES).replace(covers, loud));
+    r.commit("a test outside Files");
+    let (_, out, _) = r.run(&["next", "valve-timeout"]);
+    assert!(
+        out.lines().any(|l| l
+            .starts_with("note: `Proof` names `tests/test_extra.py` (and 1 more), and no item")),
+        "{out}"
+    );
+}

@@ -1205,13 +1205,32 @@ fn line_of(text: &str, pos: usize) -> u32 {
 /// parent session and from the repository.
 const SCRATCH_RULES: &str = "Scratch folder: These rules cover temporary files only. They never limit an edit of the repository that your task needs. A temporary file is the one write that a read-only role may make, and only in the folder below. Make your own new subfolder in the scratchpad folder that the session names. If the session names none, make a new folder with `mktemp -d`. Put each temporary file in that subfolder. Put there also each screenshot and each file of a browser tool. Never write them into the repository. Delete only the files that you put in the scratchpad, and the subfolder that you made. Never delete or change another file of the scratchpad. Never delete the scratchpad folder itself.";
 
+/// The step of the acceptor file with no hook `protect-approvals` (D93, item 2).
+/// It replaces the steps 8 to 10, which name the hook and the form of the call
+/// that the hook accepts.
+const ACCEPTOR_NO_HOOK_STEP: &str = "8. Make the commit in a call of its own, after the write: `cd '<root>' && git add <path> && git commit -m '<text>' <path>`. Use the literal path of `acceptance.toml` for `<path>`. A new record is not tracked, so `git commit` alone refuses its path.";
+
+/// The body of the acceptor with no hook: the lines of the steps 8, 9 and 10
+/// become one step.
+fn acceptor_body_without_hook(body: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    for line in body.lines() {
+        if line.starts_with("8. ") {
+            out.push(ACCEPTOR_NO_HOOK_STEP);
+        } else if !(line.starts_with("9. ") || line.starts_with("10. ")) {
+            out.push(line);
+        }
+    }
+    out.join("\n")
+}
+
 fn render_agent(
     def: &AgentDef,
     model: &Model,
     effort: Effort,
     deny: &[String],
     profile: Profile,
-    advisor: bool,
+    (advisor, hook): (bool, bool),
 ) -> String {
     let mut s = format!(
         "---\nname: {}\ndescription: {}\nmodel: {}\n",
@@ -1233,6 +1252,12 @@ fn render_agent(
         s += "omitClaudeMd: true\n";
     }
     let body = harness_text::agent_body(def.role, profile, def.body);
+    // The acceptor of a project with no hook `protect-approvals` names no hook.
+    let body = if def.role == Role::Acceptor && !hook {
+        acceptor_body_without_hook(body)
+    } else {
+        body.to_string()
+    };
     // The acceptor with `advisor = false` has one more paragraph (D81 item 3).
     let line = if def.role == Role::Acceptor && !advisor {
         format!("{}\n\n", harness_text::ACCEPTOR_NO_ADVISOR)
@@ -1469,7 +1494,7 @@ pub fn generated_files(h: &Harness) -> Vec<Generated> {
                 c.effort,
                 &h.deny,
                 h.profile,
-                h.acceptor_advisor(),
+                (h.acceptor_advisor(), h.approvals_hook_on()),
             ),
             agent: Some(def.name),
             skill: None,

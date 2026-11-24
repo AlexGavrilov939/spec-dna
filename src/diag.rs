@@ -134,7 +134,7 @@ codes! {
     GateApprovalMissing = "SD910", "gate-approval-missing", Warning, "Get the approval of the earlier artifact in place before the work. The order of artifacts is `intent.md`, `spec.md`, `plan.md`, then code. A `draft` spec or plan needs no approval of the artifact before it. The message names one of 9 reasons. 1: the base tree has no approval. Approve the earlier artifact in its own pull request and merge it, or use `[change] approval = \"branch\"`. 2: no approval commit comes before the work. Commit the approval alone, with the `status` line only, by an approver, before the work. 3: the author of the approval commit is not in `[change] approvers`. Ask an approver to commit it. 4: the commit changes more than the `status` line. Split it. 5: the clone is shallow. Fetch the full history (`fetch-depth: 0`). 6: a merge commit stops the rule. Rebase the branch, or merge only the base into it. 7: the change was added and finished in this branch. Merge the artifacts and their approvals in a pull request first, then finish in a later one. 8: the path is not in the `Files` of the plan at the approval commit. Put it in `Files` before the approval commit, or move the edit to a change of its own. 9: a later commit set the artifact back after its approval, so the approval no longer holds. Approve it again with an approval commit before the work, or take the work out of the branch.";
     ChangeStale = "SD911", "change-stale", Warning, "Finish the change, or close it. To drop it, set the status of its intent to `closed` in a pull request. A later pull request runs `spec-dna finish`.";
     StartedLimit = "SD912", "started-limit", Warning, "Finish or close a started change before you start a new one. The number of `accepted` intents is above `max-started`.";
-    OutsidePlan = "SD913", "outside-plan", Warning, "Add the path to `Files` of the plan, or move the edit to a change of its own. Each edited file must match an item of `Files`. An item is a path or a glob in a code span, or a plain path with no white space.";
+    OutsidePlan = "SD913", "outside-plan", Warning, "Add the path to `Files` of the plan, or move the edit to a pull request of its own. Each edited file must match an item of `Files`. An item is a path or a glob in a code span, or a plain path with no white space.";
     DeltaInvalid = "SD914", "delta-invalid", Warning, "Fix the delta line. Use `ADD <id>#<key>: <sentence>`, `CHANGE <id>#<key>@<hash>: <sentence>` or `REMOVE <id>#<key>@<hash>`. Name an existing target in a layer that `moves-to` allows. Copy the hash from `spec-dna show`.";
     FinishIncomplete = "SD915", "finish-incomplete", Warning, "Apply the delta, or set the intent to `closed` before you delete the folder. Run `spec-dna finish <slug>` to apply the delta and delete the folder in one step.";
     DeltaEvidenceMissing = "SD916", "delta-evidence-missing", Warning, "Link a test for each requirement that the change adds or changes. Add `covers: <doc-id>#<key>` in a test file, or `<!-- verified-by: <path> -->` at the end of the requirement. A `covers: partial` tag alone is not evidence.";
@@ -198,6 +198,13 @@ pub const NO_SUMMARY_LAYER_FIX: &str = "Use a type of the root and of the `types
 /// The part of the message of SD303 that selects `NO_SUMMARY_LAYER_FIX`.
 pub const NO_SUMMARY_LAYER_MARK: &str = "no layer of spec-dna.toml has type `summary`";
 
+/// The part of the message of SD401 for a spec or a plan that moves from
+/// `approved` to `draft` (design 0.8.1, D91). It selects `REWORK_FIX`.
+pub const REWORK_MARK: &str = "this is the step back of a rework: a hook that runs `spec-dna check` rejects its commit, so skip only that hook for this commit, name the skip in its body, and make the approval commit next";
+
+/// The fix of SD401 for the step back of a rework.
+pub const REWORK_FIX: &str = "To rework an approved spec or plan, set `status: draft` in the commit of the edit. Skip only the hook that runs `spec-dna check` for that commit, and name the skip in the body of the commit. Then the approver makes the approval commit, and SD401 is gone. For another document, write a new document.";
+
 /// The fix of SD929 for an archive file, after `finish`.
 pub const STALE_AFTER_FINISH_FIX: &str = "Run `git revert --no-commit` on the commit of `finish`, delete `<folder>/acceptance.toml`, and commit. The revert commit then holds no record, so it gives no SD932. Merge the base, run `spec-dna accept <slug>` again from a new brief, and run `spec-dna finish <slug>` again.";
 
@@ -228,6 +235,7 @@ impl Diag {
         match self.code {
             Code::RecordEdited if said(crate::acceptance::CUT_MARK) => CUT_HISTORY_FIX,
             Code::TypeInvalid if said(NO_SUMMARY_LAYER_MARK) => NO_SUMMARY_LAYER_FIX,
+            Code::StatusTransition if said(REWORK_MARK) => REWORK_FIX,
             // The message names the place: the fix follows it.
             Code::AcceptanceStale if said(crate::acceptance::STALE_AFTER_FINISH) => {
                 STALE_AFTER_FINISH_FIX

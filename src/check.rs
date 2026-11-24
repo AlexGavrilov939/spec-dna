@@ -1315,12 +1315,25 @@ pub fn transitions(config: &Config, base: &Corpus, head: &Corpus) -> Vec<Diag> {
             && let (Some(from), Some(to)) = (b.status.as_deref(), h.status.as_deref())
             && !transition_ok(b.ty, from, to)
         {
+            // A spec or a plan that moves from `approved` to `draft` is the
+            // step back of a rework (D91): the message names the steps.
+            let rework = matches!(h.ty, DocType::Spec | DocType::Plan)
+                && from == "approved"
+                && to == "draft";
+            let message = if rework {
+                format!(
+                    "status cannot move from `{from}` to `{to}`; {}",
+                    crate::diag::REWORK_MARK
+                )
+            } else {
+                format!("status cannot move from `{from}` to `{to}`")
+            };
             out.push(diag(
                 h,
                 1,
                 Code::StatusTransition,
                 format!("{from}->{to}"),
-                format!("status cannot move from `{from}` to `{to}`"),
+                message,
             ));
         }
         if b.ty == DocType::Decision

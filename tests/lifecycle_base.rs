@@ -443,6 +443,17 @@ fn approved_change(r: &Repo, files: &[&str]) {
     r.write(PLAN, &plan("approved", files));
 }
 
+/// Ticks the task of the plan, so the pull request touches the folder of the
+/// change. SD913 runs for a change whose folder the diff touches, not for a
+/// change that only its `Files` bring into the diff (design 0.8.1, D92).
+fn tick_plan(r: &Repo) {
+    let text = r.read(PLAN);
+    r.write(
+        PLAN,
+        &text.replace("- Edit the code.", "- [x] t1: Edit the code."),
+    );
+}
+
 #[test]
 fn a_path_that_no_files_item_matches_gives_sd913() {
     let r = start(|r| approved_change(r, &["src/dose.py", "docs/requirements/"]));
@@ -512,6 +523,7 @@ fn the_scope_has_the_folder_and_the_documents_of_the_delta() {
 fn a_routine_change_needs_its_requirement_document_in_files() {
     let r = start(|r| approved_change(r, &["src/dose.py"]));
     r.write("src/dose.py", "x = 2\n");
+    tick_plan(&r);
     r.write(
         "docs/requirements/valves.md",
         &VALVES.replace("5 seconds", "4 seconds"),
@@ -580,6 +592,7 @@ fn sd913_reads_each_path_once_a_draft_plan_exists() {
 fn a_change_with_no_plan_beside_a_change_with_a_plan_keeps_sd913() {
     let r = start(|r| approved_change(r, &["src/dose.py"]));
     r.write("src/dose.py", "x = 2\n");
+    tick_plan(&r);
     r.write("docs/intent/flow/intent.md", &intent("draft", "routine"));
     r.write("README.md", "Read me.\n");
     let (code, out) = check(&r);
@@ -602,12 +615,19 @@ fn a_plan_that_the_branch_deletes_still_counts_when_the_base_has_it() {
 }
 
 #[test]
-fn the_changes_that_files_match_are_changes_of_the_diff() {
-    // The folder is not in the diff. The code matches `Files`, so the change
-    // is a change of the diff, and the file outside `Files` is outside its scope.
+fn a_change_that_only_files_match_gives_sd913_only_once_its_folder_is_touched() {
+    // The folder is not in the diff. The code matches `Files`, so the change is
+    // a change of the diff for the scope (SD910), but it starts no SD913: a small
+    // fix that edits a file of an open change needs no change of its own (D92).
     let r = start(|r| approved_change(r, &["src/dose.py"]));
     r.write("src/dose.py", "x = 2\n");
     r.write("README.md", "Read me.\n");
+    let (code, out) = check(&r);
+    assert!(!has(&out, "SD913"), "{out}");
+    assert_eq!(code, 0, "{out}");
+    // A tick of the plan touches the folder: the file outside `Files` is outside
+    // the scope of the change.
+    tick_plan(&r);
     let (code, out) = check(&r);
     let found = lines(&out, "SD913");
     assert_eq!(found.len(), 1, "{out}");
@@ -627,6 +647,7 @@ fn each_path_outside_all_scopes_is_reported_once_for_two_changes() {
     });
     r.write("src/dose.py", "x = 2\n");
     r.write("src/other.py", "y = 2\n");
+    tick_plan(&r);
     r.write("README.md", "Read me.\n");
     let (_, out) = check(&r);
     let found = lines(&out, "SD913");
@@ -639,12 +660,14 @@ fn sd913_is_off_in_lite_and_for_a_gate_that_is_off_it_stays_on() {
     let setup = |r: &Repo| approved_change(r, &["src/dose.py"]);
     let r = start_with("lite", "gate = \"block\"\n", setup);
     r.write("src/dose.py", "x = 2\n");
+    tick_plan(&r);
     r.write("README.md", "Read me.\n");
     let (_, out) = check(&r);
     assert!(!has(&out, "SD913"), "{out}");
     // The gate does not set SD913.
     let r = start_with("standard", "gate = \"off\"\n", setup);
     r.write("src/dose.py", "x = 2\n");
+    tick_plan(&r);
     r.write("README.md", "Read me.\n");
     let (_, out) = check(&r);
     assert!(has(&out, "SD913"), "{out}");
@@ -1401,6 +1424,7 @@ fn the_config_base_without_origin_head_does_not_start_the_rule() {
     r.git(&["checkout", "-q", "main"]);
     r.git(&["merge", "-q", "--ff-only", "feature"]);
     r.write("src/other.py", "y = 2\n");
+    tick_plan(&r);
     r.commit("outside the plan");
     let older = r.git_out(&["rev-parse", "HEAD~2"]);
     let (_, out, err) = r.run(&["check", "--base", &older]);

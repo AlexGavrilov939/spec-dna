@@ -494,6 +494,84 @@ fn after_the_code_merged_the_paths_are_the_paths_since_the_commit_of_the_plan() 
 }
 
 #[test]
+fn a_squash_commit_that_holds_the_plan_and_the_code_gives_the_code_paths() {
+    // The pull request merged as one commit: it adds the plan and the code. The
+    // fallback diffs from the first parent of that commit, so the code is in
+    // `paths` (Q8 of the design 0.8.1).
+    let r = start(&config("standard", ""));
+    r.write(INTENT, INTENT_TEXT);
+    r.write(SPEC, SPEC_TEXT);
+    r.write(PLAN, PLAN_TEXT);
+    r.write(CODE, CODE_NEW);
+    r.write(TEST, TEST_NEW);
+    r.commit("the squash commit");
+    // The base is the head now: the diff against the base is empty.
+    origin_head(&r.dir, "HEAD");
+    let t = write_record(&r);
+    assert!(
+        t.contains("paths = [\"src/valves.py\", \"tests/test_valves.py\"]\n"),
+        "{t}"
+    );
+}
+
+#[test]
+fn a_root_commit_that_holds_the_plan_and_the_code_gives_the_code_paths() {
+    // The first commit of the repository holds everything. It has no parent, so
+    // the diff since the plan starts at the empty tree.
+    let r = Repo::with_config(&config("standard", ""));
+    r.write(".gitignore", "reports/\n");
+    r.write(REQ, VALVES);
+    r.write(INTENT, INTENT_TEXT);
+    r.write(SPEC, SPEC_TEXT);
+    r.write(PLAN, PLAN_TEXT);
+    r.write(CODE, CODE_NEW);
+    r.write(TEST, TEST_NEW);
+    r.commit("the root commit");
+    origin_head(&r.dir, "HEAD");
+    let t = write_record(&r);
+    assert!(
+        t.contains("paths = [\"src/valves.py\", \"tests/test_valves.py\"]\n"),
+        "{t}"
+    );
+}
+
+/// The pull request of a change whose plan has the section `Deviations`.
+fn built_with_deviations(devs: &str) -> Repo {
+    let r = start(&config("standard", ""));
+    r.write(INTENT, INTENT_TEXT);
+    r.write(SPEC, SPEC_TEXT);
+    r.write(PLAN, &format!("{PLAN_TEXT}\n## Deviations\n\n{devs}\n"));
+    r.commit("plan");
+    r.write(CODE, CODE_NEW);
+    r.write(TEST, TEST_NEW);
+    r.commit("code");
+    r
+}
+
+#[test]
+fn accept_refuses_a_plan_with_a_repeated_deviation_id() {
+    // D88: the acceptor edits neither the plan nor the spec, so an item that is
+    // not valid is a refusal before any write and before the brief.
+    let r = built_with_deviations("- d1 (plan): The check moved.\n- d1 (plan): The test moved.");
+    for args in [&[SLUG, "--session", "s1"][..], &[SLUG, "--brief"][..]] {
+        let (code, out, err) = accept(&r, args);
+        assert_eq!(code, 1, "{args:?}: {out}{err}");
+        assert!(
+            err.contains("has an item that is not valid (SD939 at line ")
+                && err.contains("the id `d1` is used already in `Deviations`")
+                && err.contains("the builder fixes the item and commits, then run accept again"),
+            "{args:?}: {err}"
+        );
+        assert!(out.is_empty(), "{args:?}: {out}");
+        assert!(!r.dir.join(RECORD).exists());
+    }
+    // A valid list is no refusal (guard).
+    let r = built_with_deviations("- d1 (plan): The check moved.\n- d2 (plan): The test moved.");
+    let (code, out, err) = accept(&r, &[SLUG, "--session", "s1"]);
+    assert_eq!(code, 0, "{out}{err}");
+}
+
+#[test]
 fn a_second_run_adds_an_acceptor_and_keeps_every_other_byte() {
     let r = built();
     write_record(&r);
@@ -1145,7 +1223,12 @@ fn commit_plan_at_0_8_0(r: &Repo) {
 /// plan has the section `Deviations` with `devs` (a section with no text is not
 /// written).
 fn s5_built(keys: &str, items: &dyn Fn(&str) -> String, devs: &str) -> Repo {
-    let r = Repo::with_config(&s5_config(keys));
+    s5_built_in(&s5_config(keys), items, devs)
+}
+
+/// Like `s5_built`, with the text of the configuration.
+fn s5_built_in(config_text: &str, items: &dyn Fn(&str) -> String, devs: &str) -> Repo {
+    let r = Repo::with_config(config_text);
     r.write(REQ, VALVES);
     r.write("docs/rules/safety.md", RULE_DOC);
     r.write(CODE, CODE_OLD);
@@ -1189,7 +1272,7 @@ fn pin_item(h: &str) -> String {
     format!("- rules/safety#valve-closed@{h}")
 }
 
-const DEVS: &str = "- d1 (plan): The timeout check moved to `src/sensors.rs`.\n- d2 (spec): The valve closes after 2 reads. Follow-up: later-change.";
+const DEVS: &str = "- d1 (plan): The timeout check moved to `src/sensors.rs`.\n- d2 (spec): The valve closes after 2 reads. Delta: ADD requirements/valves#sensor-timeout.";
 
 #[test]
 fn with_the_key_the_skeleton_has_one_pending_invariant_entry_for_each_item() {
@@ -1245,22 +1328,36 @@ fn the_skeleton_and_the_brief_list_the_deviations_with_no_key() {
     assert!(t.contains("id = \"d2\"\nkind = \"spec\""), "{t}");
     let b = brief(&r, &[]);
     assert!(
-        b.contains("=== deviations ===\n- d1 (plan): The timeout check moved to `src/sensors.rs`.\n- d2 (spec): The valve closes after 2 reads. Follow-up: later-change.\n"),
+        b.contains("=== deviations ===\n- d1 (plan): The timeout check moved to `src/sensors.rs`.\n- d2 (spec): The valve closes after 2 reads. Delta: ADD requirements/valves#sensor-timeout.\n"),
         "{b}"
     );
 }
 
 #[test]
-fn an_item_that_is_not_valid_gives_no_entry_and_none_gives_no_entry() {
+fn none_gives_no_entry_and_an_item_that_is_not_valid_is_a_refusal() {
+    // The item `none` is valid and gives no entry.
     let r = s5_built(
         "invariants = true\n",
         &|_| "- none".to_string(),
-        "- d1: no kind\n- d2 (plan): fine",
+        "- d2 (plan): fine",
     );
     let t = write_record(&r);
     assert!(!t.contains("[[invariant]]"), "{t}");
     assert_eq!(t.matches("[[deviation]]").count(), 1, "{t}");
     assert!(t.contains("id = \"d2\""), "{t}");
+    // An item that is not valid is a refusal, and it writes no record (D88).
+    let r = s5_built(
+        "invariants = true\n",
+        &|_| "- none".to_string(),
+        "- d1: no kind\n- d2 (plan): fine",
+    );
+    let (code, out, err) = accept(&r, &[SLUG, "--session", "s1"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        err.contains("has an item that is not valid (SD939 at line "),
+        "{err}"
+    );
+    assert!(!r.dir.join(RECORD).exists(), "no write");
 }
 
 #[test]
@@ -1282,9 +1379,18 @@ fn the_brief_changes_when_an_invariant_or_a_deviation_changes() {
 fn s5_in_base(pin: &str, keys: &str) -> Repo {
     let cfg = s5_config(keys);
     let r = Repo::new();
-    r.write("spec-dna.toml", &format!("spec-dna = \"{pin}\"\n{cfg}"));
+    // The binary reads the hash of the rule under its own pin.
+    r.write("spec-dna.toml", &format!("spec-dna = \"{VERSION}\"\n{cfg}"));
     r.write(REQ, VALVES);
     r.write("docs/rules/safety.md", RULE_DOC);
+    let (_, out, _) = r.run(&["show", "rules/safety#valve-closed", "--json"]);
+    let h = out
+        .split("\"hash\":\"")
+        .nth(1)
+        .and_then(|t| t.split('"').next())
+        .unwrap()
+        .to_string();
+    r.write("spec-dna.toml", &format!("spec-dna = \"{pin}\"\n{cfg}"));
     r.write(CODE, CODE_OLD);
     r.write(TEST, TEST_OLD);
     r.write("README.md", "# Project\n");
@@ -1293,7 +1399,7 @@ fn s5_in_base(pin: &str, keys: &str) -> Repo {
         SPEC,
         &SPEC_TEXT.replace(
             "## Concerns",
-            "## Invariants\n\n- rules/safety#valve-closed@00112233aabbccdd\n\n## Concerns",
+            &format!("## Invariants\n\n- rules/safety#valve-closed@{h}\n\n## Concerns"),
         ),
     );
     r.write(
@@ -1332,8 +1438,7 @@ fn a_spec_and_a_plan_of_0_8_0_in_the_base_declare_their_items() {
     let r = s5_in_base("0.8.0", "invariants = true\n");
     let t = write_record(&r);
     assert!(
-        t.contains("id = \"rules/safety#valve-closed@00112233aabbccdd\"")
-            && t.contains("[[deviation]]\nid = \"d1\""),
+        t.contains("id = \"rules/safety#valve-closed@") && t.contains("[[deviation]]\nid = \"d1\""),
         "{t}"
     );
     let b = brief(&r, &[]);
@@ -1376,7 +1481,11 @@ fn a_record_over_the_size_limit_names_the_largest_part_and_its_fix() {
             .map(|n| format!("- rules/safety#rule-{n}@{h}\n"))
             .collect()
     };
-    let r = s5_built("invariants = true\n", &inv, "");
+    // The pins name rules that the fixture does not have: SD936 is off in the
+    // base, so that the check of the size of the record is the one that refuses.
+    let cfg = s5_config("invariants = true\n")
+        .replace("SD608 = \"off\"", "SD608 = \"off\"\nSD936 = \"off\"");
+    let r = s5_built_in(&cfg, &inv, "");
     let (code, out, err) = accept(&r, &[SLUG, "--session", "s1"]);
     assert_eq!(code, 1, "{out}{err}");
     assert!(

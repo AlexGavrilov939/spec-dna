@@ -357,6 +357,51 @@ fn a_pull_request_with_only_finish_reads_the_paths_since_the_plan() {
     assert!(out.contains("security-reviewer"), "{out}");
 }
 
+#[test]
+fn a_squash_commit_that_holds_the_plan_and_the_code_still_gives_the_role() {
+    // The same pull request, merged as one commit that adds the plan and the
+    // code. The paths since the plan start at the first parent of that commit, as
+    // the fallback of `accept` does (Q8 of the design 0.8.1).
+    let text = config(
+        "standard",
+        "",
+        &owners("\"src/valves.py\" = [\"security-reviewer\"]\n"),
+    );
+    let r = Repo::with_config(&text);
+    base_files(&r);
+    r.commit("base");
+    change_files(&r);
+    r.write(CODE, CODE_NEW);
+    r.write(TEST, TEST_NEW);
+    r.commit("the squash commit");
+    origin_head(&r.dir, "main");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    let (code, out, err) = finish(&r);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(has(&out, "SD927"), "{out}");
+    assert!(out.contains("security-reviewer"), "{out}");
+}
+
+#[test]
+fn a_root_commit_that_holds_the_plan_and_the_code_still_gives_the_role() {
+    let text = config(
+        "standard",
+        "",
+        &owners("\"src/valves.py\" = [\"security-reviewer\"]\n"),
+    );
+    let r = Repo::with_config(&text);
+    base_files(&r);
+    change_files(&r);
+    r.write(CODE, CODE_NEW);
+    r.write(TEST, TEST_NEW);
+    r.commit("the root commit");
+    origin_head(&r.dir, "main");
+    let (code, out, err) = finish(&r);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(has(&out, "SD927"), "{out}");
+    assert!(out.contains("security-reviewer"), "{out}");
+}
+
 // The roles of the brief and the record.
 
 #[test]

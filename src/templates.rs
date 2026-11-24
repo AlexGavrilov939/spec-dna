@@ -246,7 +246,7 @@ Chosen option: {{option}}, because {{reason}}.
         DocType::Plan,
         "## Files
 
-- `{{path}}` {{Why this change touches the path.}}
+- `{{path}}` {{Why this change touches the path. Put only a path or a glob in a code span.}}
 
 ## Order
 
@@ -552,16 +552,45 @@ pub fn with_invariants(text: &str) -> String {
 /// title. SD306 reports the placeholder until then (design 0.7.0, section 15).
 pub const CHANGE_TITLE: &str = "{{The title of the change.}}";
 
-/// Makes a title from the last segment of an id: `cache-policy` gives
-/// "Cache policy".
+/// Makes a title from the last segment of an id (design 0.8.1, D93 item 4).
+/// `new`, `finish` and the split all use this one rule:
+///
+/// 1. Read `-` and `_` as spaces.
+/// 2. A word of 2 to 5 ASCII letters with no vowel (`a`, `e`, `i`, `o`, `u` or
+///    `y`) is an acronym. Write it in upper case.
+/// 3. Write the first letter of the title in upper case. Each other letter
+///    keeps its case.
+///
+/// Examples: `cache-policy` gives "Cache policy", `mcp` gives "MCP", and
+/// `http-cache` gives "HTTP cache". A word with a vowel, such as `api`, is no
+/// acronym for this rule.
 pub fn title_of(id: &str) -> String {
     let slug = id.rsplit('/').next().unwrap_or(id);
-    let words = slug.replace(['-', '_'], " ");
-    let mut c = words.chars();
+    let words: Vec<String> = slug
+        .split(['-', '_'])
+        .map(|w| {
+            if is_acronym(w) {
+                w.to_uppercase()
+            } else {
+                w.to_string()
+            }
+        })
+        .collect();
+    let text = words.join(" ");
+    let mut c = text.chars();
     match c.next() {
         Some(f) => f.to_uppercase().chain(c).collect(),
         None => String::new(),
     }
+}
+
+/// True for a word of 2 to 5 ASCII letters with no vowel.
+fn is_acronym(word: &str) -> bool {
+    (2..=5).contains(&word.len())
+        && word.chars().all(|c| c.is_ascii_alphabetic())
+        && !word
+            .chars()
+            .any(|c| matches!(c.to_ascii_lowercase(), 'a' | 'e' | 'i' | 'o' | 'u' | 'y'))
 }
 
 #[cfg(test)]
@@ -622,6 +651,31 @@ mod tests {
     }
 
     #[test]
+    fn the_title_rule_writes_an_acronym_with_no_vowel_in_upper_case() {
+        // D93 item 4: 2 to 5 ASCII letters and no `a`, `e`, `i`, `o`, `u` or `y`.
+        for (id, want) in [
+            ("mcp", "MCP"),
+            ("http-cache", "HTTP cache"),
+            ("sql-limits", "SQL limits"),
+            ("cache-policy", "Cache policy"),
+            ("api-keys", "Api keys"),
+            ("ops/db_pool", "DB pool"),
+            ("my-cache", "My cache"),
+            ("x", "X"),
+            ("toolkits", "Toolkits"),
+        ] {
+            assert_eq!(title_of(id), want, "{id}");
+        }
+        // The limit is 5 letters: 5 letters with no vowel are an acronym, and 6
+        // are not. A word with a vowel or with a digit is no acronym either.
+        assert_eq!(title_of("bcdfg"), "BCDFG");
+        assert_eq!(title_of("bcdfgh"), "Bcdfgh");
+        assert_eq!(title_of("bc"), "BC");
+        assert_eq!(title_of("rhythms"), "Rhythms");
+        assert_eq!(title_of("b2b"), "B2b");
+    }
+
+    #[test]
     fn the_spec_and_plan_templates_hold_the_items_that_the_parser_reads() {
         use crate::change::{plan_tasks, section_items};
         use crate::parse::ItemSection;
@@ -638,7 +692,7 @@ mod tests {
         assert!(change.files(&c).is_empty());
         assert_eq!(
             change.files_not_paths(&c),
-            ["`{{path}}` {{Why this change touches the path.}}"]
+            ["`{{path}}` {{Why this change touches the path. Put only a path or a glob in a..."]
         );
         assert!(change.tasks(&c).iter().all(|t| t.files.is_empty()));
         let text = {
