@@ -1330,6 +1330,7 @@ pub fn next(
     // the base, which the text prints as the reason of the missing base.
     let mut notes = view.notes.clone();
     notes.extend(rollup_note(cfg, &view.head, ch, r.stage));
+    notes.extend(proof_note(repo, cfg, &view.head, ch, r.stage));
     if json {
         let items = r.items.iter().map(|i| {
             let o = Obj::new()
@@ -1381,6 +1382,53 @@ pub fn next(
         println!("note: {note}");
     }
     Ok(0)
+}
+
+/// The note for a test file that `Proof` of the plan names and that no item of
+/// `Files` matches (design 0.8.1, D93 item 5), in the stages `plan` and `build`.
+/// SD913 reports the edit of such a test later, after the approval of the plan,
+/// and with `branch` a path that `Files` gets after the approval needs a new
+/// approval (SD910, reason 8). A note is not a code: the check reads prose, and
+/// its false positives would block nothing useful. Each code span of `Proof`
+/// with no white space and no `#` that is a test file (`[evidence] tests`) counts.
+/// With `[evidence] tests = []` no span is a test file, so there is no note.
+fn proof_note(
+    repo: &Repo,
+    cfg: &Config,
+    head: &Corpus,
+    ch: &Change,
+    stage: Stage,
+) -> Option<String> {
+    if !matches!(stage, Stage::Plan | Stage::Build) {
+        return None;
+    }
+    let plan = &head.docs[ch.plan.as_ref()?.doc as usize];
+    let text = std::fs::read_to_string(repo.root.join(&plan.path)).ok()?;
+    let files = ch.files(head);
+    let proof = record::section_text(&text, "Proof");
+    let mut outside: Vec<&str> = Vec::new();
+    // The spans of one backtick, in the order of the text.
+    for (n, span) in proof.split('`').enumerate() {
+        let odd = n % 2 == 1;
+        if odd
+            && !span.is_empty()
+            && !span.contains(char::is_whitespace)
+            && !span.contains('#')
+            && cfg.is_test_file(span)
+            && !change::in_scope(&files, span)
+            && !outside.contains(&span)
+        {
+            outside.push(span);
+        }
+    }
+    let first = outside.first()?;
+    let more = match outside.len() - 1 {
+        0 => String::new(),
+        n => format!(" (and {n} more)"),
+    };
+    Some(format!(
+        "`Proof` names `{first}`{more}, and no item of `Files` matches it; add it to `Files`, or SD913 reports the edit of the test"
+    ))
 }
 
 /// The note for the roll-up documents that the delta of a change makes due at
