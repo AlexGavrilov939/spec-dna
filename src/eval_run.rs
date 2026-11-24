@@ -159,8 +159,12 @@ pub(crate) struct RunResult {
     pub(crate) models: Vec<String>,
     /// The sums of the token counts over `modelUsage`, or `None`.
     pub(crate) tokens: Option<Tokens>,
-    /// The `num_turns` of the result of `claude`, or `None`.
+    /// The sum of `num_turns` over the result events of `claude` (D95), or
+    /// `None` if one event has no valid count.
     pub(crate) turns: Option<u32>,
+    /// The number of result events, the segments of the run. `None` for an
+    /// interrupted run.
+    pub(crate) segments: Option<u32>,
     /// The wall time of the agent process, in seconds with 1 decimal.
     pub(crate) seconds: f64,
 }
@@ -942,6 +946,7 @@ pub(crate) fn one_attempt(
             models: Vec::new(),
             tokens: None,
             turns: None,
+            segments: None,
             seconds: 0.0,
         });
     }
@@ -963,6 +968,7 @@ pub(crate) fn one_attempt(
     let models = result_models(&stdout);
     let tokens = result_tokens(&stdout);
     let turns = result_turns(&stdout);
+    let segments = Some(result_events(&stdout).len() as u32);
 
     let mut checks = Vec::new();
     for c in &p.eval.checks {
@@ -1003,6 +1009,7 @@ pub(crate) fn one_attempt(
                 models,
                 tokens,
                 turns,
+                segments,
                 seconds,
             });
         }
@@ -1026,6 +1033,7 @@ pub(crate) fn one_attempt(
         models,
         tokens,
         turns,
+        segments,
         seconds,
     })
 }
@@ -1389,15 +1397,24 @@ fn result_models(stdout: &[u8]) -> Vec<String> {
     names
 }
 
-/// The `num_turns` of the result of `claude`: an integer of 0 or more, else
-/// `None`.
+/// The turns of a run (D95): the sum of `num_turns` over the result events,
+/// one for each segment. Each count is an integer of 0 or more. The result is
+/// `None` if there is no result event, or if one event has no valid count.
 fn result_turns(stdout: &[u8]) -> Option<u32> {
-    match result_object(stdout)?.get("num_turns") {
-        Value::Num(n) if n.is_finite() && *n >= 0.0 && n.fract() == 0.0 && *n <= 1e6 => {
-            Some(*n as u32)
-        }
-        _ => None,
+    let events = result_events(stdout);
+    if events.is_empty() {
+        return None;
     }
+    let mut sum = 0u32;
+    for event in &events {
+        match event.get("num_turns") {
+            Value::Num(n) if n.is_finite() && *n >= 0.0 && n.fract() == 0.0 && *n <= 1e6 => {
+                sum = sum.checked_add(*n as u32)?;
+            }
+            _ => return None,
+        }
+    }
+    Some(sum)
 }
 
 /// The sums over the entries of `modelUsage` of `inputTokens`, `outputTokens`,
@@ -1770,6 +1787,10 @@ fn report_json(r: &Report) -> String {
                 Some(n) => obj.num("turns", n),
                 None => obj.raw("turns", "null"),
             };
+            let obj = match x.segments {
+                Some(n) => obj.num("segments", n),
+                None => obj.raw("segments", "null"),
+            };
             obj.num("seconds", x.seconds).end()
         }));
         Obj::new()
@@ -2009,6 +2030,24 @@ mod tests {
     }
 
     #[test]
+    fn the_turns_are_the_sum_over_the_result_events() {
+        let text = b"{\"type\":\"system\",\"num_turns\":50}\n{\"type\":\"result\",\"num_turns\":101}\n{\"type\":\"user\",\"x\":\"\\\"result\\\"\"}\n{\"type\":\"result\",\"num_turns\":8}\n{\"type\": \"result\", \"num_turns\": 0}\n";
+        assert_eq!(result_turns(text), Some(109));
+        assert_eq!(result_events(text).len(), 3);
+        // One event with no valid count, or no result event: unknown.
+        for bad in [
+            &b"{\"type\":\"result\",\"num_turns\":2}\n{\"type\":\"result\"}\n"[..],
+            b"{\"type\":\"result\",\"num_turns\":-1}\n",
+            b"{\"type\":\"result\",\"num_turns\":1.5}\n",
+            b"{\"type\":\"result\",\"num_turns\":\"2\"}\n",
+            b"{\"type\":\"assistant\",\"num_turns\":2}\n",
+            b"",
+        ] {
+            assert_eq!(result_turns(bad), None, "{}", String::from_utf8_lossy(bad));
+        }
+    }
+
+    #[test]
     fn a_line_over_the_limit_is_discarded_and_the_next_line_is_read() {
         let mut input = Vec::new();
         input.extend_from_slice(b"{\"type\":\"assistant\",\"pad\":\"");
@@ -2086,6 +2125,7 @@ mod tests {
                     models: Vec::new(),
                     tokens: None,
                     turns: None,
+                    segments: None,
                     seconds: 0.0,
                 })
                 .collect(),

@@ -319,6 +319,12 @@ fn turns_is_the_sum_over_the_segments() {
         out.contains("\"tokens\":{\"in\":10,\"out\":20,\"cache_read\":30,\"cache_write\":40}"),
         "{out}"
     );
+    // D95: the turns are the sum over the 2 result events, 5 and 2. The count
+    // of the tool result (99) counts nothing.
+    assert!(
+        out.contains("\"turns\":7,\"segments\":2,\"seconds\":"),
+        "{out}"
+    );
     fx.assert_clean();
 }
 
@@ -340,6 +346,10 @@ fn a_run_that_stops_at_the_turn_limit() {
     assert!(out.contains("\"claude_exit\":1"), "{out}");
     assert!(out.contains("\"subtype\":\"error_max_turns\""), "{out}");
     assert!(out.contains("\"cost_usd\":0.4"), "{out}");
+    assert!(
+        out.contains("\"turns\":3,\"segments\":1,\"seconds\":"),
+        "{out}"
+    );
     assert_eq!(fx.runs().len(), 1, "a refusal would start a new attempt");
 }
 
@@ -349,7 +359,7 @@ fn the_result_after_16_mib_of_events_is_read() {
     let (code, out, err) = fx.run_env(&["--json"], &[("STUB_SHAPE", "big"), ("STUB_COST", "0.6")]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(out.contains("\"cost_usd\":0.6"), "{out}");
-    assert!(out.contains("\"turns\":4,"), "{out}");
+    assert!(out.contains("\"turns\":4,\"segments\":1,"), "{out}");
     fx.assert_clean();
 }
 
@@ -361,7 +371,20 @@ fn a_result_event_with_a_space_after_each_colon_is_read() {
     assert_eq!(code, 0, "{out}{err}");
     assert!(out.contains("\"cost_usd\":0.1"), "{out}");
     assert!(out.contains("\"subtype\":\"success\""), "{out}");
-    assert!(out.contains("\"turns\":4,"), "{out}");
+    assert!(out.contains("\"turns\":4,\"segments\":1,"), "{out}");
+}
+
+#[test]
+fn a_compact_result_object_on_one_line_is_one_segment() {
+    // Guard: the result of 0.8.0 had one object, and it is a stream of one
+    // event. Its turns are the turns of the result.
+    let fx = Fx::with(&[ev("example")]);
+    let (code, out, err) = fx.run_env(&["--json"], &[("STUB_SHAPE", "turns")]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("\"turns\":7,\"segments\":1,\"seconds\":"),
+        "{out}"
+    );
 }
 
 #[test]
@@ -819,10 +842,15 @@ fn a_plain_result_has_the_tokens_the_models_the_turns_and_the_seconds_of_each_ru
 #[test]
 fn a_run_with_no_usage_has_null_turns_tokens_and_no_models() {
     let fx = Fx::with(&[ev("example")]);
-    for shape in ["", "badturns", "garbage"] {
+    // The segments are the result events: a result with no count of turns is
+    // one segment, and no result event is none.
+    for (shape, segments) in [("", 1), ("badturns", 1), ("garbage", 0)] {
         let (code, out, err) = fx.run_env(&["--json"], &[("STUB_SHAPE", shape)]);
         assert_eq!(code, 0, "{shape}: {out}{err}");
-        assert!(out.contains("\"turns\":null"), "{shape}: {out}");
+        assert!(
+            out.contains(&format!("\"turns\":null,\"segments\":{segments},")),
+            "{shape}: {out}"
+        );
         assert!(out.contains("\"tokens\":null"), "{shape}: {out}");
         assert!(out.contains("\"models\":[]"), "{shape}: {out}");
         assert!(out.contains("\"seconds\":"), "{shape}: {out}");
