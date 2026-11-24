@@ -236,9 +236,16 @@ pub fn run(repo: &Repo, slug: &str, o: &Opts) -> Result<u8, Fatal> {
 
     // The acceptor edits neither the plan nor the spec, so an item that is not
     // valid is a refusal before any write and before the brief (D88).
-    let sections = crate::acceptance::sections_of(&cfg, &repo.git, base_rev.as_deref(), ch, &head)
-        .map_err(Fatal::Io)?;
-    if let Some(d) = crate::acceptance::section_stop(&cfg, &sections) {
+    // The codes follow the configuration of the need, as `finish` and `next` read
+    // them: a branch cannot turn a code off with its own `spec-dna.toml`.
+    let need = match base_rev.as_deref() {
+        Some(r) => crate::acceptance::need_config(&cfg, &repo.git, r).map_err(Fatal::Io)?,
+        None => crate::acceptance::need_config_of_head(&cfg),
+    };
+    let sections =
+        crate::acceptance::sections_of(need.gate(), &repo.git, base_rev.as_deref(), ch, &head)
+            .map_err(Fatal::Io)?;
+    if let Some(d) = crate::acceptance::section_stop(need.gate(), &sections) {
         return Err(Fatal::Refused(format!(
             "`{}` has an item that is not valid ({} at line {}: {}); the acceptor does not edit the plan or the spec: the builder fixes the item and commits, then run accept again",
             d.path,

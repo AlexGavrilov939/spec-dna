@@ -540,12 +540,12 @@ A change whose intent has the status `closed` does not proceed, so its spec give
 - SD915:
   - The check applies to a change that the diff deletes: the base tree has its folder, and the head tree has not.
   - A change whose base status is `closed` gives no SD915, SD916 and SD920, because it is dropped, not finished.
-  - The check reads the delta and `Files` from the base tree. So an edit of the spec or the plan in the same pull request has no effect.
+  - The check reads the delta and `Files` from the base tree. So an edit of the spec or the plan in the same pull request has no effect on them. The tasks are the one exception: for a change with no delta, the check reads the tasks of the newest plan of the branch, so a tick of the branch counts.
   - A change with a delta gives one diagnostic for each line that the head does not apply. An `ADD` or `CHANGE` line needs the requirement with the text of the line. A `REMOVE` line needs the key to be absent. A `REMOVE` line for a key that neither tree has gives no SD915.
   - A change with no delta line gives one diagnostic on its intent if the diff changes none of these, and the newest plan of the branch has no task or has an open task:
     - a requirement hash;
     - a path that the plan matches (outside the folder).
-  - The newest plan is the last text of `plan.md` in the commits of the branch before the deletion, else the plan of the base tree. A task is open when it is not done, not skipped with `Skip:`, not a duplicate, and does not name `spec-dna finish <slug>`. `finish` stops at step 0 on the same tasks. A plan that states no files passes when each of its tasks is closed. A plan with no task, and a change with no plan, give the diagnostic when the diff changes none of the 2 items above. The message names the open tasks.
+  - The newest plan is the last text of `plan.md` in the commits of the branch before the deletion, else the plan of the base tree. A task is open when it is not done, not skipped with `Skip:`, not a duplicate, and does not name `spec-dna finish <slug>` (or `spec-dna accept <slug>`, where the acceptance is on). `finish` stops at step 0 on the same tasks. A plan that states no files passes when each of its tasks is closed. A plan with no task, and a change with no plan, give the diagnostic when the diff changes none of the 2 items above. The message names the open tasks.
   - The paths of the plan are the section `Files` and the `Files:` paths of its tasks.
   - The plan of the base tree can list no path, and have an item of `Files` that is not a path. Then the message names the first such item.
   - A pull request that sets `closed` and deletes the folder gives SD915, because the base status is not `closed`. Set `closed` in an earlier pull request, and merge it.

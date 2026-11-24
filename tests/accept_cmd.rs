@@ -1202,7 +1202,12 @@ fn commit_plan_at_0_8_0(r: &Repo) {
 /// plan has the section `Deviations` with `devs` (a section with no text is not
 /// written).
 fn s5_built(keys: &str, items: &dyn Fn(&str) -> String, devs: &str) -> Repo {
-    let r = Repo::with_config(&s5_config(keys));
+    s5_built_in(&s5_config(keys), items, devs)
+}
+
+/// Like `s5_built`, with the text of the configuration.
+fn s5_built_in(config_text: &str, items: &dyn Fn(&str) -> String, devs: &str) -> Repo {
+    let r = Repo::with_config(config_text);
     r.write(REQ, VALVES);
     r.write("docs/rules/safety.md", RULE_DOC);
     r.write(CODE, CODE_OLD);
@@ -1455,15 +1460,11 @@ fn a_record_over_the_size_limit_names_the_largest_part_and_its_fix() {
             .map(|n| format!("- rules/safety#rule-{n}@{h}\n"))
             .collect()
     };
-    let r = s5_built("invariants = true\n", &inv, "");
-    // The pins name rules that the fixture does not have: SD936 is off here, so
-    // that the check of the size of the record is the one that refuses.
-    let cfg = r.read("spec-dna.toml");
-    r.write(
-        "spec-dna.toml",
-        &cfg.replace("SD608 = \"off\"", "SD608 = \"off\"\nSD936 = \"off\""),
-    );
-    r.commit("turn SD936 off");
+    // The pins name rules that the fixture does not have: SD936 is off in the
+    // base, so that the check of the size of the record is the one that refuses.
+    let cfg = s5_config("invariants = true\n")
+        .replace("SD608 = \"off\"", "SD608 = \"off\"\nSD936 = \"off\"");
+    let r = s5_built_in(&cfg, &inv, "");
     let (code, out, err) = accept(&r, &[SLUG, "--session", "s1"]);
     assert_eq!(code, 1, "{out}{err}");
     assert!(

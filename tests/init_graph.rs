@@ -679,18 +679,15 @@ fn a_new_project_follows_the_demo_layout_with_a_layer_added_later() {
         "intent",
     ]);
     assert_eq!(code, 0, "{out}{err}");
-    // The skill lists the types of the layers, so it is outdated now.
-    let (code, out, _) = r.run(&["check", "--all"]);
-    assert_eq!(code, 1, "{out}");
-    assert!(out.contains("SD502"), "{out}");
-    let (code, out, err) = r.run(&["init"]);
-    assert_eq!(code, 0, "{out}{err}");
+    // The skill lists the types of the layers, so `layer add` writes it too
+    // (D90): `check` gives no SD502, and `init` has nothing to write.
     assert!(
-        out.contains("wrote .claude/skills/spec-dna/SKILL.md"),
+        out.contains("updated .claude/skills/spec-dna/SKILL.md: it lists the types of the project"),
         "{out}"
     );
     let (code, out, _) = r.run(&["check", "--all"]);
     assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("SD502"), "{out}");
     r.commit("build: add the interfaces layer");
     fs::rename(&parked, r.dir.join("docs")).unwrap();
     assert!(
