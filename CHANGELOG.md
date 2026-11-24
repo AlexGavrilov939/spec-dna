@@ -2,6 +2,12 @@
 
 This file lists the changes of each version. The project uses [Semantic Versioning](https://semver.org). Diagnostic codes are in [docs/diagnostics.md](docs/diagnostics.md).
 
+## Unreleased
+
+### Changed
+
+- The tier `summary` of `context` serves the summary of the area. It fills the title section of each document first, from the deepest summary up to `product`, and then the other sections in the same order. In 0.8.0, it filled `product` first, so a project with large top documents got no summary. The tier gets at most a half of the budget in place of a quarter. The half is a cap: the tier never takes the room that the entry and the citing sections need in full. The output keeps its order from the top down, and `--json` keeps its form. In a test project with a `product` and a `system` document of about 4,100 bytes each, `context` gave no summary at the budgets 4,000 to 20,000. Now it gives the 2 summaries of the area in full at 8,000. A tree with no roll-up document gets the same output as before.
+
 ## 0.8.0 - 2026-11-23
 
 0.8.0 adds an independent acceptance of a change in one pass, test reports as evidence, a roll-up of requirements into summaries, and agent roles in `[owners]`. It adds 31 diagnostic codes in 5 new rule groups, 5 commands or command forms and 5 options of commands. A project of 0.7.1 moves with `spec-dna upgrade`. In `lite`, each new mechanism is off, and each generated file keeps its text of 0.7.1. In `standard`, only the acceptance of a `higher-risk` change and the roll-up are on. The other mechanisms need a key, or a marker for the proof debt.

@@ -20,7 +20,7 @@ status: approved
 - [x] t3: Give the tier at most a half of the budget, and update the 3 tests of the share and of the modes at 8,000. Files: `src/context.rs`, `tests/context_layers.rs`. Verify: `cargo test --test context_layers -- --nocapture`. Hours: 2.
 - [x] t4: Write the fill order and the share in the section of context. Files: `docs/commands.md`. Verify: `pre-commit run --all-files`. Hours: 1.
 - [x] t5: Run the retrieval benchmark on the synthetic medium corpus at the budget 8,000 again, and compare the 3 numbers of the proof. Files: `bench/results/retrieval-synthetic-medium.json`. Verify: `python3 bench/retrieval/run.py --budgets 8000` on the corpus of `python3 bench/gen/gen.py --model spec-dna --size medium`, with a release build, and the 3 numbers equal. Hours: 1.
-- [ ] t6: Write the entry of the change. Files: `CHANGELOG.md`. Verify: `pre-commit run --all-files`. Hours: 1.
+- [x] t6: Write the entry of the change. Files: `CHANGELOG.md`. Verify: `pre-commit run --all-files`. Hours: 1.
 - [ ] t7: Run the independent review and the acceptance pass, and finish the change. Files: none: finish deletes the folder of the change. Verify: `spec-dna finish summary-tier --dry-run`. Hours: 2.
 
 ## Risks
