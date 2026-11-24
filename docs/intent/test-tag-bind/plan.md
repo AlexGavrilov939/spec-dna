@@ -1,5 +1,5 @@
 ---
-status: approved
+status: draft
 ---
 # A tag binds the test under it: plan
 
@@ -38,6 +38,7 @@ status: approved
 - `docs/init.md` The note of a test hook.
 - `docs/README.md` The line of the new page in the map. The main session adds it.
 - `.claude/agents/ownership.md` The row of the new page.
+- `examples/first-project/README.md` The output of show in the example, which now has the test under the tag.
 - `CHANGELOG.md` The entry of the change.
 
 ## Order
