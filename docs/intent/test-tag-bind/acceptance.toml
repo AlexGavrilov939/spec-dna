@@ -1,0 +1,112 @@
+format = 2
+change = "test-tag-bind"
+scope = [".claude/agents/ownership.md", "CHANGELOG.md", "docs/README.md", "docs/adr/0024-test-report-as-evidence.md", "docs/commands.md", "docs/config.md", "docs/design/0.8.1-a-evidence-and-context.md", "docs/design/0.8.1-a-lifecycle-and-harness.md", "docs/diagnostics.md", "docs/guides/change.md", "docs/init.md", "docs/profiles.md", "docs/test-report.md", "examples/first-project/README.md", "src/check.rs", "src/config.rs", "src/context.rs", "src/detect.rs", "src/diag.rs", "src/evidence.rs", "src/finish.rs", "src/init.rs", "src/json.rs", "src/lifecycle.rs", "src/main.rs", "src/report.rs", "src/upgrade.rs", "tests/accept_cmd.rs", "tests/cli.rs", "tests/evidence_reports.rs", "tests/golden/check-binds.json", "tests/golden/show-binds.json", "tests/golden/show-requirement.json", "tests/init_change.rs", "tests/upgrade_cli.rs"]
+paths = ["src/check.rs", "src/config.rs", "src/context.rs", "src/detect.rs", "src/diag.rs", "src/evidence.rs", "src/finish.rs", "src/init.rs", "src/lifecycle.rs", "src/main.rs", "src/report.rs", "src/upgrade.rs", "tests/accept_cmd.rs", "tests/cli.rs", "tests/evidence_reports.rs", "tests/golden/check-binds.json", "tests/golden/show-binds.json", "tests/golden/show-requirement.json", "tests/init_change.rs", "tests/upgrade_cli.rs"]
+tree = "844cb32eabd87cb3"
+result = "rejected"
+acknowledged-by = []
+
+[[acceptor]]
+roles = ["acceptor"]
+brief = "7a97f5179acd213b"
+session = "c51acbf1-5aed-497f-8ed7-0e87fb4f43ac"
+agent = "unknown"
+model = "opus"
+result = "rejected"
+
+[[attempt]]
+acceptor = 1
+text = "Proof: cargo test --test evidence_reports (88), accept_cmd (46), cli (138), init_change (40), upgrade_cli (90), and --bin spec-dna evidence:: (36), detect:: (18), diag:: (5), config:: (128): all pass. spec-dna check --all on the tree: no SD102, no SD602."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "The defect: a Vitest file with 5 tags on lines 1 to 5 above `import { describe, it, expect }`, and only the passed case `Pumps > stops it` of another file. New: SD616 no-test for each of the 5 requirements. 0.8.0: all 5 read as proven."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Go with testify: ASuite and BSuite in 2 files of one package, each run by its own Test function, methods TestOpen and TestClose (pointer and value receiver) in both, and a plain TestFlush. The skipped cases of ASuite and of TestFlush give SD616 skipped. 0.8.0: all 3 read as proven by the passed BSuite cases."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "pytest: a BOM and CRLF file, a multi-line parametrize with `)` and `]` in strings, a non-ASCII path and a path with a space: each tag binds its test. An untracked test file with a passed case and a stamp: outside-tree, also after an edit after the stamp (issue 113). After git add with no commit, a new stamp: bound and proven."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "jest-junit defaults: SD621 off in lite, warning in standard (exit 0), error in strict (exit 1). An exact case:\"Valves opens\" with one case: no SD621. show gives [test closes on timeout], show --reports gives [passed Valves closes on timeout, by name], --json binds has not-read and passed, --reports with --conventions exits 2, and check --json has binds after approvals only with --reports."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "PHPUnit with an absolute file and data sets: skipped. Kotlin `runs with`(n) with cases `runs with(int)[1]`: bound. A Kotlin case of a nested class (`PumpTest$Cold`): no bind to another tag. RSpec context with the same title as a top test: bound in file."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Templates: a Vitest file with it.skip('opens') tagged and it.each(['fast'])('%s opens') in the same describe. The passed case `Valves > fast opens` proves the tag (fit classname, shared false, no SD616). The same with it.each(...)('closes') next to it.skip('closes'), test.each`...`('slowly flushes') next to it.skip('flushes'), and it(`often ${x} logs`) next to it.skip('logs'). RSpec: a shared example `closes` (it_behaves_like) proves the tag above `it 'closes', skip:` (fit file). 0.8.0 the same."
+outcome = "broke"
+
+[[attempt]]
+acceptor = 1
+text = "Display names: xUnit [Fact(Skip)] Closes() tagged, and [Fact(DisplayName = \"Closes when cold\")] Cold() passed, classname Valves.Tests.ValveTest. The tag reads as proven by `Closes when cold`. The same for JUnit 5 @Disabled closes() and @DisplayName(\"closes when cold\") cold() with display names in the report. 0.8.0 gave SD616 skipped for both."
+outcome = "broke"
+
+[[attempt]]
+acceptor = 1
+text = "Dotted classname by its part before the last dot: pytest app/tests.py with a skipped test_close tagged, and a passed module-level test_close of tests/test_close.py (classname tests.test_close). The tag reads as proven. cargo-nextest: tests/app.rs with an ignored fn closes tagged (no case), and the lib unit case valves::tests::closes with classname app: proven, fit classname, no SD621."
+outcome = "broke"
+
+[[attempt]]
+acceptor = 1
+text = "Go: TestAll runs suite.Run(t, new(BSuite)) and then new(ASuite), both with a method TestOpen. Go names the cases TestAll/TestOpen (B, passed) and TestAll/TestOpen#01 (A, skipped). The tag above ASuite.TestOpen reads as proven by the case of BSuite."
+outcome = "broke"
+
+[[attempt]]
+acceptor = 1
+text = "Kotlin backtick name with a bracket: fun `stops (fast)`() with the case `stops (fast)()` in its class gives no-case. 0.8.0 bound it."
+outcome = "broke"
+
+[[attempt]]
+acceptor = 1
+text = "init --dry-run with a .pre-commit-config.yaml: name-tests-test, an `- entry:` first key, a stamped folded block and a quoted `#` held. False notes for `mvn -q -DskipTests package`, `./gradlew build -x test`, `npx eslint --plugin jest` and `pytest --collect-only`. No note for `bun test` and `tox -e py312`."
+outcome = "broke"
+
+[[finding]]
+acceptor = 1
+severity = "blocker"
+path = "src/evidence.rs"
+line = 972
+text = "False proof by a template test. `tests_of` keeps only `Under::Test`, so `belongs_elsewhere` never sees a test with a template name (it.each, test.each, a literal with `${}`) or a test of another file that runs in this one (an RSpec shared example). The form call binds each case whose name ends with ` <literal>`, so `Valves > fast opens` of it.each(['fast'])('%s opens') proves the tag above it.skip('opens') in the same file, with fit classname or file and no SD621. The core promise breaks: a case of another test proves the requirement. A fix: count the templates of the file as tests that can own a case, or make a template name a shared set."
+[[finding]]
+acceptor = 1
+severity = "blocker"
+path = "src/evidence.rs"
+line = 1024
+text = "False proof by a display name, and a regression from 0.8.0. For the forms def and method, the head of a case name ends at the first space, so a display name of another test that starts with the method name names the method. xUnit: the tag above [Fact(Skip)] Closes() reads as proven by the passed `Closes when cold` of Cold(). The same for JUnit 5 @DisplayName with display names in the report. 0.8.0 gave SD616 skipped. The data-set form of PHPUnit (`testOne with data set #0`) needs the space; a narrower rule (for example ` with data set `, or a space only after `(...)`) keeps it."
+[[finding]]
+acceptor = 1
+severity = "blocker"
+path = "src/evidence.rs"
+line = 1544
+text = "False proof by the dotted classname rule. `Names::class` adds the part before the last `.` as a key, also when the whole classname already names a test file. pytest: the module-level case of tests/test_close.py (classname tests.test_close) fits app/tests.py by the key `tests`, so a skipped tagged test_close of app/tests.py reads as proven (a Django layout). cargo-nextest: the lib case valves::tests::closes (classname app) fits tests/app.rs, so the tag above an ignored fn closes there reads as proven, with no SD621. Not the known monorepo suffix case: the case names another file of the same tree. A fix: use the module key only when the whole classname names no test file, and do not fit a one-segment crate classname to a file stem."
+[[finding]]
+acceptor = 1
+severity = "blocker"
+path = "src/evidence.rs"
+line = 1397
+text = "False proof for 2 testify suites in one Test function. When TestAll runs new(BSuite) then new(ASuite), and both have a method TestOpen, Go names B's case TestAll/TestOpen and A's case TestAll/TestOpen#01. The tag above ASuite.TestOpen keeps the case TestAll/TestOpen, because TestAll runs ASuite, so the passed case of BSuite proves it while A's case was skipped. The 2 methods are no twins, because `recv` differs. A fix: treat methods of one name whose suites share a Test function as a shared set, or read the `#NN` suffix."
+[[finding]]
+acceptor = 1
+severity = "blocker"
+path = "src/evidence.rs"
+line = 1080
+text = "A legit Kotlin tag does not bind, a regression from 0.8.0. `without_tail` cuts a case name at the first `(` or ` [`, also inside the backtick text. fun `stops (fast)`() with the case `stops (fast)()` (and names such as `returns [] for empty`) gives no-case, so SD617 stops the finish of a change whose test passed. Cut only the last `(...)` and the parameter tail after the full backtick text."
+[[finding]]
+acceptor = 1
+severity = "note"
+path = "src/detect.rs"
+line = 1647
+text = "The hook scan gives false notes for `mvn -q -DskipTests package`, `./gradlew build -x test`, `npx eslint --plugin jest` and `pytest --collect-only`, and no note for `bun test` or `tox`. docs/init.md says that a build tool counts only with a goal that runs the tests, but -DskipTests and -x test turn the tests off. The rule also differs from D89 item 3 of docs/design/0.8.1-a-lifecycle-and-harness.md (words of id or entry), and the design page is not amended."
