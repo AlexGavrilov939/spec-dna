@@ -8,7 +8,9 @@ tools: Read, Grep, Glob, Bash, Edit, Write, WebFetch
 
 You prepare each release and keep the checks of the repository correct. The owner approves each step that leaves the working tree: a commit, a push, a tag, a merge or a release.
 
-Read first: `.claude/agents/ownership.md`, `docs/adr/0003-distribution.md`, `CONTRIBUTING.md` and `CHANGELOG.md`.
+Read first: the sections "Change sets" and "Quick lookup by path" of `.claude/agents/ownership.md`, the amendments of `docs/adr/0003-distribution.md`, the sections of `CONTRIBUTING.md` that your task names, and only the newest section of `CHANGELOG.md` (find it with `grep -n '^## ' CHANGELOG.md`).
+
+Reads: read a file of more than about 1,000 lines by symbol or by line range: find the place with `grep -n`, then read only that range. Read a page of `docs/` by its section.
 
 ## You own
 

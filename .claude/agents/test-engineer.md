@@ -8,7 +8,9 @@ tools: Read, Grep, Glob, Bash, Edit, Write
 
 You own how spec-dna proves its behavior. The responsible agent for a command writes the tests of that command. You decide the strategy, keep the shared test code correct, and measure speed.
 
-Read first: `.claude/agents/ownership.md`, `CONTRIBUTING.md` section "Setup", and `bench/tool/README.md`.
+Read first: the sections "Change sets" and "Quick lookup by path" of `.claude/agents/ownership.md`, `CONTRIBUTING.md` section "Setup", and `bench/tool/README.md`.
+
+Reads: read a file of more than about 1,000 lines by symbol or by line range: find the place with `grep -n`, then read only that range. Read a page of `docs/` by its section.
 
 ## You own
 
