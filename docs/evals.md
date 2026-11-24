@@ -541,11 +541,13 @@ The skill texts of the profiles `standard` and `strict` of 0.8.0 are frozen at t
 | `spec-dna-write-plan.md` | `8757f6f2dd550c22` |
 | `spec-dna-review.md` | `5e2e6537227c836b` |
 | `acceptor.md` (the agent file) with `advisor = true`: the default of `strict` | `f541cad357de8926` |
-| `acceptor.md` (the agent file) with `advisor = false`: the default of `standard` | `ac3e6b19951dc492` |
+| `acceptor.md` (the agent file) with `advisor = false`: the default of `standard` | `8d2fbb209d82b266` |
 
-The golden files `tests/golden/harness/skills/*.md`, `tests/golden/harness/acceptor.md` (`advisor = true`) and `tests/golden/harness/acceptor-no-advisor.md` (`advisor = false`) hold the same hashes. The texts of the profile `lite` are the texts of 0.7.1, so they are not part of the freeze. A change of one of these texts after the reruns makes the verdicts apply to an older text. Thus the next change of one of these hashes needs a new rerun, with the one exception below.
+The golden files `tests/golden/harness/skills/*.md`, `tests/golden/harness/acceptor.md` (`advisor = true`) and `tests/golden/harness/acceptor-no-advisor.md` (`advisor = false`) hold the same hashes. The texts of the profile `lite` are the texts of 0.7.1, so they are not part of the freeze. A change of one of these texts after the reruns makes the verdicts apply to an older text. Thus the next change of one of these hashes needs a new rerun, with the 2 exceptions below.
 
 The exception is the line of the key `advisor` of the entry `acceptor` (design D81, 2026-11-23). The line changed the hash of the file of `standard` from `f541cad357de8926` to `ac3e6b19951dc492`. The file of `strict`, and each file with `advisor = true`, keep `f541cad357de8926`. No rerun is necessary, because the body of `acceptor.md` was in no measured prompt. The measured agent of each eval is the main session of `claude -p`, and no eval lists the tool `Agent` in its `allowed-tools`. The records cannot show that no run started a subagent `acceptor`: that rests on the design of the evals. No skill file changed, so each hash of a skill holds.
+
+The second exception is the steps of the hook in `acceptor.md` (design D93 item 2, 2026-11-24). The steps 8 to 10 name the hook `protect-approvals`. The file of a project with no such hook, such as `standard`, now has one step for the commit and names no hook. The file of `standard` changed its hash from `ac3e6b19951dc492` to `8d2fbb209d82b266`. The file of `strict`, which writes the hook, keeps its bytes and `f541cad357de8926`. No rerun is necessary, for the reason of the first exception: no measured prompt holds the body of `acceptor.md`. The skill `execute` is not in the table, so its new sentence on the ids of the deviations (design D88) needs no rerun either.
 
 The records of the reruns are in `bench/results/evals/`. The newest batch of a skill gives its row in the table `RELEASE` of `src/verdict.rs`. `spec-dna eval verdict --release` prints the table.
 
