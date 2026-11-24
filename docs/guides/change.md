@@ -175,7 +175,7 @@ A spike is a short task that tries or measures one option before you decide. Som
 
 ### Test reports in CI
 
-A tag is a claim of the author. With `[evidence] reports`, a tag proves a requirement only when a test case that binds to it passed ([Test reports](../config.md#test-reports)). `init` writes `reports = []` and no `--reports`, because its CI job runs no tests and does not know your test command. To use the reports, make 3 steps:
+A tag is a claim of the author. With `[evidence] reports`, a tag proves a requirement only when a test case that binds to it passed ([Test reports](../test-report.md)). `init` writes `reports = []` and no `--reports`, because its CI job runs no tests and does not know your test command. To use the reports, make 3 steps:
 
 1. Set the globs of the report files of your runner in `spec-dna.toml`, for example `reports = ["target/nextest/ci/junit.xml"]`. Add the folder of the reports to `.gitignore`. A report that git tracks gives SD615.
 2. In the CI job that runs the tests, run the tests so that they write the report. Then, in the same job, run `spec-dna evidence stamp`. The stamp binds the report to the code tree.
@@ -189,7 +189,7 @@ spec-dna check --reports --base origin/HEAD
 
 Run the same 2 commands on your machine before `finish`: the tests, then `spec-dna evidence stamp`. Stage new files with `git add` first, because an untracked file is not in the code tree. `finish` reads the reports when the key is set. It stops at step 5 if a report is missing, stale or unreadable (SD613 to SD615) or if a tag has no passed test case (SD617). A change of code after the stamp makes the report stale (SD614). A change of Markdown does not. The hook `check --staged` needs no report.
 
-A runner with no JUnit output can write the line format: `spec-dna-report 1`, then one line `pass`, `fail` or `skip`, a tab, a path or `-`, a tab and the name of the case. If the tag is not above the test, add the name of the case to the tag: `// covers: requirements/valves/closing#sensor-timeout case:closes_on_timeout`.
+A runner with no JUnit output can write the line format: `spec-dna-report 1`, then one line `pass`, `fail` or `skip`, a tab, a path or `-`, a tab and the name of the case. Put the tag in a comment on the line above the test, or above its decorators: a tag binds to the test directly below it ([How a tag binds to a test case](../test-report.md#how-a-tag-binds-to-a-test-case)). If a layout does not allow this, add the whole name of the case to the tag: `// covers: requirements/valves/closing#sensor-timeout case:closes_on_timeout`. A pre-commit hook that runs the tests needs the stamp in its entry ([A hook that runs the tests](../test-report.md#a-hook-that-runs-the-tests)).
 
 ## The approval commit
 
