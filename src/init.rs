@@ -575,8 +575,18 @@ impl Plan {
             return String::new();
         }
         let e = &self.evals_table;
+        // `init` proposes no floor (D100). `--reconfigure` keeps the value of
+        // the file, and a default value needs no line.
+        let floor = if e.min_free_mib == config::DEFAULT_EVALS_MIN_FREE_MIB {
+            String::new()
+        } else {
+            format!(
+                "min-free-mib = {}  # the free space that each run needs, in MiB; 0: no check\n",
+                e.min_free_mib
+            )
+        };
         format!(
-            "[evals]  # agent evals (docs/config.md)\ndir = {}\nmin-pass-rate = {}  # the share of evals that must pass\nruns = {}  # the runs of an eval that sets no `runs`\nmax-total-usd = {}  # eval run refuses or stops above this spend\n\n",
+            "[evals]  # agent evals (docs/config.md)\ndir = {}\nmin-pass-rate = {}  # the share of evals that must pass\nruns = {}  # the runs of an eval that sets no `runs`\nmax-total-usd = {}  # eval run refuses or stops above this spend\n{floor}\n",
             toml_str(&e.dir),
             e.min_pass_rate,
             e.runs,

@@ -748,6 +748,58 @@ fn reconfigure_keeps_the_area_budget_and_adds_none() {
     assert_eq!(area_budget(&r), None, "{}", r.read("spec-dna.toml"));
 }
 
+/// The key `[evals] min-free-mib` (D100). `init` writes none, so `--reconfigure`
+/// keeps a value that is not the default, and writes the key at most once.
+#[test]
+fn reconfigure_keeps_min_free_mib_when_it_is_not_the_default() {
+    let r = repo();
+    let answers = "profile = \"standard\"\nharness = \"lean\"\nevals = \"skeleton\"\n";
+    let (code, out, err) = init_with(&r, answers, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let fresh = r.read("spec-dna.toml");
+    assert!(fresh.contains("\n[evals]"), "{fresh}");
+    assert!(!fresh.contains("min-free-mib"), "{fresh}");
+    r.commit("adopt spec-dna");
+    for value in [0_i64, 512, 20_000] {
+        let text = r.read("spec-dna.toml");
+        let at = text.find("\n[evals]").unwrap() + 1;
+        let line_end = at + text[at..].find('\n').unwrap() + 1;
+        let rest: String = text[line_end..]
+            .split_inclusive('\n')
+            .filter(|l| !l.starts_with("min-free-mib"))
+            .collect();
+        r.write(
+            "spec-dna.toml",
+            &format!("{}min-free-mib = {value}\n{rest}", &text[..line_end]),
+        );
+        r.commit("set the floor");
+        for round in 1..=2 {
+            let (code, out, err) = init_with(&r, answers, &["--reconfigure"]);
+            assert_eq!(code, 0, "{value} {round}: {out}{err}");
+            let new = r.read("spec-dna.toml");
+            assert_eq!(
+                table(&r)["evals"]
+                    .get("min-free-mib")
+                    .and_then(|v| v.as_integer()),
+                Some(value),
+                "{value} {round}: {new}"
+            );
+            assert_eq!(new.matches("min-free-mib").count(), 1, "{new}");
+        }
+        r.commit("reconfigure");
+    }
+    // The default value needs no line.
+    let text = r
+        .read("spec-dna.toml")
+        .replace("min-free-mib = 20000", "min-free-mib = 2048");
+    r.write("spec-dna.toml", &text);
+    r.commit("the default");
+    let (code, out, err) = init_with(&r, answers, &["--reconfigure"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let new = r.read("spec-dna.toml");
+    assert!(!new.contains("min-free-mib"), "{new}");
+}
+
 /// The key `[change] acceptance-for` (design 0.8.0, D70). `init` writes none,
 /// so `--reconfigure` keeps the value that the file sets, also a value that is
 /// the default of the profile. It never writes the key twice.
