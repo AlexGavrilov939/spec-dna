@@ -147,3 +147,15 @@ ADR 0001, ADR 0005 and ADR 0017 are accepted and locked, so this ADR does not ed
 - ADR 0017, "What `init` writes": `init` writes `[budgets.area]` for `standard` and `strict`.
 
 ## Amendments
+
+### 2026-11-24: the tier `summary` and the source layers (0.8.1)
+
+Status: accepted by the owner's word of 2026-11-24. The design is D83 and D84 of [part A of 0.8.1, evidence and context](../design/0.8.1-a-evidence-and-context.md).
+
+These rules apply in place of the named text.
+
+- "`context`", the sentence "Its full text uses at most a quarter of the budget": The tier, in full text and in stubs together, uses at most a half of the budget. It fills the title section of each document first, from the deepest summary up to `product`, then the other sections in the same order. From the first section that does not fit in full, the later sections are stubs while the share has room. The output keeps the order from the top down.
+- "The type and the levels": the layer of the type `summary` has the key `rolls-up`, a list of source layers. The default is the layer of the type `requirements`. `<summaries folder>/<area>.md` is the summary of the folder `<area>` under the folder of each source layer.
+- "The pins", the frontier: each active requirement of a source layer of the type `requirements`, `interface` or `rule`; each `accepted` decision of a source layer of the type `decision`, as a whole document; and each research document of a source layer of the type `research`, as a whole document. A pin to a whole decision or research document matches the hash of its text outside the history and live sections, without link destinations. This is a second hash definition: the pin of a decision must see an amendment, and `frozen_hash` does not.
+- "The codes": SD646 reports a roll-up document with no pin and an empty frontier that another roll-up document pins. SD647 reports a pin to a research document that no longer holds, and a research document of the frontier with no pin. Both are in the group `rollup`: off in `lite`; SD646 a warning in `standard` and an error in `strict`; SD647 a warning in `standard` and `strict`.
+- "What the gate cannot check", the item "Rules, interfaces and decisions. They have no roll-up in this version": a project chooses its source layers with `rolls-up`. Procedures, intents, incidents and the pending layer have no roll-up.
