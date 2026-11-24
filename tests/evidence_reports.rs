@@ -2063,9 +2063,9 @@ fn a_tag_binds_the_test_under_its_attributes_and_annotations() {
         ),
         // C#: the attribute and the method on one line.
         (
-            "Tests/ValveTest.cs",
+            "Valves/Tests/ValveTest.cs",
             "public class ValveTest {\n    // covers: requirements/valves#flush\n    [Fact] public void ClosesOnTimeout() {\n    }\n}\n",
-            "Tests.ValveTest",
+            "Valves.Tests.ValveTest",
             "ClosesOnTimeout",
         ),
         // A Go test with a comment line between the tag and the function.
@@ -2440,6 +2440,15 @@ fn the_setup_of_the_hook_keeps_the_stamp_fresh() {
 
 // A bind by name: SD621 (design 0.8.1, D82 items 6 and 9)
 
+/// The lines of a state code: they say that the requirement "is active". The
+/// check of a change gives its own lines of the same code.
+fn state_lines<'a>(out: &'a str, code: &str) -> Vec<&'a str> {
+    lines(out, code)
+        .into_iter()
+        .filter(|l| l.contains("` is active, and "))
+        .collect()
+}
+
 /// The report of jest-junit with its defaults: the `classname` and the `name`
 /// are the same title, and the case has no `file`.
 const JEST_DEFAULTS: [(&str, &str, &str); 1] =
@@ -2456,7 +2465,7 @@ fn jest_junit_with_its_defaults_binds_by_name_and_gives_sd621() {
         assert!(!has(&out, "SD617"), "{profile}: {out}");
         // SD621 is a state code, so `--all` shows it.
         let (exit, out) = check(&r, &["--all"]);
-        let found = lines(&out, "SD621");
+        let found = state_lines(&out, "SD621");
         assert_eq!(found.len(), 1, "{profile}: {out}");
         assert!(found[0].contains(&format!(": {severity} SD621 ")), "{out}");
         assert!(
@@ -2524,6 +2533,108 @@ fn an_exact_case_name_that_one_case_has_gives_no_sd621() {
     );
     stamp(&r);
     let (code, out) = check(&r, &["--all"]);
-    assert_eq!(lines(&out, "SD621").len(), 1, "{out}");
+    assert_eq!(state_lines(&out, "SD621").len(), 1, "{out}");
     assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn a_bind_by_name_of_a_requirement_of_the_change_gives_sd621_where_sd617_runs() {
+    // The diff deletes the folder of the change `dose`, which adds `flush`.
+    for (profile, severity, code) in [("standard", "warning", 0), ("strict", "error", 1)] {
+        let r = pr(profile, REPORTS, &[("tests/valves.test.js", JS_TEST)]);
+        r.write("reports/r.xml", &junit("jest", &JEST_DEFAULTS));
+        stamp(&r);
+        let (exit, out) = check(&r, &[]);
+        let found = lines(&out, "SD621");
+        assert_eq!(found.len(), 1, "{profile}: {out}");
+        assert!(found[0].contains(&format!(": {severity} SD621 ")), "{out}");
+        assert!(found[0].contains("the change `dose`"), "{out}");
+        assert!(found[0].contains("`requirements/valves#flush`"), "{out}");
+        assert_eq!(exit, code, "{profile}: {out}");
+        assert!(!has(&out, "SD617"), "{out}");
+    }
+}
+
+#[test]
+fn a_bind_by_name_of_a_requirement_that_no_change_touches_shows_only_with_all() {
+    // `close` has a tag in a Jest file (by name), and `flush`, the requirement
+    // of the change, has an exact tag.
+    let close = "describe('Valves', () => {\n  // covers: requirements/valves#close\n  it('closes on timeout', () => {\n    expect(1).toBe(1);\n  });\n});\n";
+    let r = pr(
+        "strict",
+        REPORTS,
+        &[
+            ("tests/valves.test.js", close),
+            ("tests/test_valves.py", PY_TEST),
+        ],
+    );
+    r.write(
+        "reports/r.xml",
+        &junit(
+            "mixed",
+            &[
+                ("Valves closes on timeout", "Valves closes on timeout", ""),
+                ("tests.test_valves", "test_closes_on_timeout", ""),
+            ],
+        ),
+    );
+    stamp(&r);
+    let (code, out) = check(&r, &[]);
+    assert!(!has(&out, "SD621"), "{out}");
+    assert_eq!(code, 0, "{out}");
+    let (code, out) = check(&r, &["--all"]);
+    let found = lines(&out, "SD621");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(found[0].contains("`requirements/valves#close`"), "{out}");
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn finish_stops_on_sd621_in_strict_and_goes_on_in_standard() {
+    // The report names a `classname` that names no test file, so the case fits
+    // the tag by its name only.
+    let setup = |profile: &str| {
+        let r = Repo::with_config(&config(profile, REPORTS));
+        r.write(".gitignore", "reports/\n");
+        r.write("docs/requirements/valves.md", VALVES);
+        r.write("src/valves.py", "x = 1\n");
+        r.write(
+            &format!("{FOLDER}/intent.md"),
+            "---\nstatus: accepted\nclass: higher-risk\n---\n# Dose\n\n## Intent\n\nFlush the line.\n",
+        );
+        r.write(
+            &format!("{FOLDER}/plan.md"),
+            "---\nstatus: approved\n---\n# Plan\n\n## Files\n\n- `src/valves.py`\n- `tests/test_valves.py`\n\n## Order\n\n- Edit the code.\n\n## Risks\n\n- None.\n\n## Proof\n\n- A test.\n",
+        );
+        r.write(
+            &format!("{FOLDER}/spec.md"),
+            &format!("---\nstatus: approved\n---\n# Spec\n\n## Delta\n\n- ADD {TAG}: The controller SHALL flush the line.\n"),
+        );
+        r.commit_base_of_0_7_1("base");
+        origin_head(&r.dir, "main");
+        r.git(&["checkout", "-q", "-b", "feature"]);
+        r.write("tests/test_valves.py", PY_TEST);
+        r.commit("test");
+        r.write(
+            "reports/junit.xml",
+            &junit("pytest", &[("pytest.valves", "test_closes_on_timeout", "")]),
+        );
+        stamp(&r);
+        r
+    };
+    let r = setup("strict");
+    let (code, out, err) = r.run(&["finish", "dose"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(err.contains("step 5"), "{err}");
+    // Step 5.4 names the cause, as it does for SD617 and SD620.
+    assert!(err.contains("SD621"), "{err}");
+    assert!(err.contains("binds a case by its name only"), "{err}");
+    assert!(out.contains("SD621"), "{out}");
+    assert!(out.contains("by its name only"), "{out}");
+    assert!(r.dir.join(FOLDER).exists());
+    // In `standard` SD621 is a warning, and it never stops `finish`.
+    let r = setup("standard");
+    let (code, out, err) = r.run(&["finish", "dose"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!r.dir.join(FOLDER).exists());
 }

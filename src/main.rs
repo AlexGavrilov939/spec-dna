@@ -1895,7 +1895,7 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     }
     // A state code is never new, whichever check made it.
     for (d, new) in outcome.head.iter().zip(outcome.new.iter_mut()) {
-        if d.code.is_state() {
+        if d.is_state() {
             *new = false;
         }
     }

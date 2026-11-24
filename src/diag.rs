@@ -224,6 +224,15 @@ const ROLLUP_NO_AREA_FIX: &str = "A summary is the file `<summaries folder>/<are
 pub const STALE_AFTER_FINISH_FIX: &str = "Run `git revert --no-commit` on the commit of `finish`, delete `<folder>/acceptance.toml`, and commit. The revert commit then holds no record, so it gives no SD932. Merge the base, run `spec-dna accept <slug>` again from a new brief, and run `spec-dna finish <slug>` again.";
 
 impl Diag {
+    /// True if the diagnostic reports the state of the tree and is never new
+    /// (`Code::is_state`). SD621 is the exception for a requirement of a change:
+    /// the check of the change names the requirement in full (`<doc-id>#<key>`)
+    /// as the target, and that diagnostic is new where SD617 is (design 0.8.1,
+    /// D82). The state diagnostic has the key alone.
+    pub fn is_state(&self) -> bool {
+        self.code.is_state() && !(self.code == Code::CaseBoundByName && self.target.contains('#'))
+    }
+
     /// The gate compares diagnostics with the base by this fingerprint (ADR
     /// 0001, "Growth controls").
     pub fn fingerprint(&self) -> (Code, &str, &str) {

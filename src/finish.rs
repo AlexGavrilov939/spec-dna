@@ -658,26 +658,34 @@ pub fn plan(cx: &Ctx) -> Result<Plan, Failure> {
     let class = cx.acceptance.map_or(ch.class, |f| f.class);
     let reliable = crate::evidence::reliable_for(cx.config, class);
     let mut missing = lifecycle::evidence_missing(&rebuilt, base, head, ch, &scope, reliable);
-    // SD617 and SD620 are results of the test reports. A project that turned
-    // one off keeps the tags as evidence.
-    missing.retain(|d| {
-        !matches!(d.code, Code::ChangeUnproven | Code::ProofNotReliable)
-            || !cx.config.is_off(d.code)
+    // SD617, SD620 and SD621 are results of the test reports. A project that
+    // turned one off keeps the tags as evidence. SD621 stops `finish` only where
+    // its severity is an error: in `standard` it is a warning and never stops.
+    missing.retain(|d| match d.code {
+        Code::ChangeUnproven | Code::ProofNotReliable => !cx.config.is_off(d.code),
+        Code::CaseBoundByName => {
+            cx.config.severity(d.code, cx.config.root_of(&d.path)) == Some(Severity::Error)
+        }
+        _ => true,
     });
     if !missing.is_empty() {
-        let unproven = missing.iter().all(|d| d.code == Code::ChangeUnproven);
-        let unreliable = missing.iter().all(|d| d.code == Code::ProofNotReliable);
+        let only = |codes: &[Code]| missing.iter().all(|d| codes.contains(&d.code));
         return stop(
             5,
-            if unproven {
+            if only(&[Code::ChangeUnproven]) {
                 "a requirement that the change adds or changes has a tag, and no bound test case passed in the reports (the lines are lines of the result of `finish`)"
-            } else if unreliable {
+            } else if only(&[Code::ProofNotReliable]) {
                 "a requirement that the change adds or changes passed fewer times than `[evidence] reliable-runs` in the reports (the lines are lines of the result of `finish`)"
-            } else if missing
-                .iter()
-                .all(|d| matches!(d.code, Code::ChangeUnproven | Code::ProofNotReliable))
-            {
+            } else if only(&[Code::CaseBoundByName]) {
+                "a requirement that the change adds or changes has a tag that binds a case by its name only (SD621); add `case:\"<name>\"` to the tag, or make the runner write the file of each case (the lines are lines of the result of `finish`)"
+            } else if only(&[Code::ChangeUnproven, Code::ProofNotReliable]) {
                 "a requirement that the change adds or changes has a tag that no bound test case proves (SD617), or its bound case passed fewer times than `[evidence] reliable-runs` in the reports (SD620); the lines are lines of the result of `finish`"
+            } else if only(&[
+                Code::ChangeUnproven,
+                Code::ProofNotReliable,
+                Code::CaseBoundByName,
+            ]) {
+                "a requirement that the change adds or changes has a tag that no bound test case proves (SD617), a bound case that passed fewer times than `[evidence] reliable-runs` in the reports (SD620), or a tag that binds a case by its name only (SD621); the lines are lines of the result of `finish`"
             } else {
                 "a requirement that the change adds or changes has no evidence (the lines are lines of the result of `finish`)"
             },
