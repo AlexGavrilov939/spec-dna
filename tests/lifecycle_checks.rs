@@ -1354,6 +1354,16 @@ fn scoped(change: &str) -> Repo {
 
 const QUESTIONS: &str = "---\ntype: research\n---\n# Questions\n";
 
+/// Ticks the task of the plan of the change `dose`. The pull request then
+/// touches the folder of the change, so the change is a part of it (D92).
+fn tick_plan(r: &Repo) {
+    let plan = r.read("docs/intent/dose/plan.md");
+    r.write(
+        "docs/intent/dose/plan.md",
+        &plan.replace("- Edit the code.", "- [x] t1: Edit the code."),
+    );
+}
+
 /// The paths of the SD913 lines of `check` on the branch.
 fn outside(r: &Repo) -> Vec<String> {
     let (_, out, _) = r.run(&["check"]);
@@ -1367,6 +1377,7 @@ fn outside(r: &Repo) -> Vec<String> {
 fn sd913_skips_the_files_that_the_tool_writes() {
     let r = scoped("");
     r.write("src/dose.py", "x = 2\n");
+    tick_plan(&r);
     for p in [
         "AGENTS.md",
         "CLAUDE.md",
@@ -1386,14 +1397,51 @@ fn sd913_skips_the_files_that_the_tool_writes() {
 }
 
 #[test]
-fn sd913_skips_a_path_of_shared_paths() {
-    // The edit of `src/dose.py` ties the diff to the change.
+fn a_small_fix_that_edits_files_of_an_open_change_gives_no_sd913() {
+    // The change `dose` is open, and the fix edits `src/dose.py` and
+    // `README.md`. The fix touches no file of the folder of the change, so the
+    // change is no part of the pull request (D92).
     let r = scoped("");
     r.write("src/dose.py", "x = 2\n");
+    r.write("README.md", "# Valves\n");
+    assert_eq!(outside(&r), Vec::<String>::new());
+}
+
+#[test]
+fn a_touched_change_still_gives_sd913() {
+    // Guard: the same diff with a tick in the plan of the change.
+    let r = scoped("");
+    r.write("src/dose.py", "x = 2\n");
+    r.write("README.md", "# Valves\n");
+    tick_plan(&r);
+    assert_eq!(outside(&r), ["README.md"]);
+}
+
+#[test]
+fn the_message_of_sd913_names_a_pull_request() {
+    let r = scoped("");
+    r.write("src/other.py", "y = 1\n");
+    tick_plan(&r);
+    let (_, out, _) = r.run(&["check"]);
+    let found = messages(&out, "SD913");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].ends_with("or move the edit to a pull request of its own"),
+        "{out}"
+    );
+}
+
+#[test]
+fn sd913_skips_a_path_of_shared_paths() {
+    // The tick of the plan ties the diff to the change.
+    let r = scoped("");
+    r.write("src/dose.py", "x = 2\n");
+    tick_plan(&r);
     r.write("docs/questions.md", QUESTIONS);
     assert_eq!(outside(&r), ["docs/questions.md"]);
     let r = scoped("shared-paths = [\"docs/questions.md\", \"notes/**\"]\n");
     r.write("src/dose.py", "x = 2\n");
+    tick_plan(&r);
     r.write("docs/questions.md", QUESTIONS);
     r.write("notes/a/b.txt", "text\n");
     r.write("src/other.py", "y = 1\n");
@@ -1442,6 +1490,7 @@ fn scoped_rollup() -> Repo {
 fn sd913_skips_a_summary_and_a_system_document_with_rests_on() {
     let r = scoped_rollup();
     r.write("src/dose.py", "x = 2\n");
+    tick_plan(&r);
     let summary = r.read("docs/summaries/pumps.md");
     r.write(
         "docs/summaries/pumps.md",
@@ -1463,6 +1512,7 @@ fn sd913_skips_a_summary_and_a_system_document_with_rests_on() {
 fn sd913_still_reports_a_system_document_that_has_no_rests_on() {
     let r = scoped_rollup();
     r.write("src/dose.py", "x = 2\n");
+    tick_plan(&r);
     // A `system` document with no field is no roll-up document.
     r.write(
         "docs/system.md",

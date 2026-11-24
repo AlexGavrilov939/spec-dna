@@ -2344,13 +2344,19 @@ fn approval_missing(
 }
 
 /// SD913: a path of the diff is outside the scope of each change of the diff.
-/// It runs only if a change of the diff has a plan: before a plan exists, a
-/// change has no `Files`, so it has no scope to check against. It does not
+/// It runs only if a change of the diff has a plan and the diff touches its
+/// folder or the branch added it (D92): before a plan exists, a change has no
+/// `Files`, so it has no scope to check against. A change that only its
+/// `Files` bring into the diff does not start the check, but its `Files` stay
+/// in the scope. It does not
 /// report a file that SD503 does not count (`init::is_tool_file`), a roll-up
 /// document (D54: `execute` must not stop and ask for a summary that is due),
 /// or a path that a glob of `[change] shared-paths` matches.
 fn outside_plan(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
-    if !changes.iter().any(|c| c.has_plan(ctx)) {
+    if !changes
+        .iter()
+        .any(|c| c.origin != Origin::FilesMatch && c.has_plan(ctx))
+    {
         return Vec::new();
     }
     let mut out = Vec::new();
@@ -2380,7 +2386,7 @@ fn outside_plan(ctx: &Ctx, changes: &[DiffChange]) -> Vec<Diag> {
             Code::OutsidePlan,
             "",
             format!(
-                "`{p}` is in the diff, and no `Files` item of a change in the diff matches it; add it to `Files` of the plan, or move the edit to a change of its own{cause}"
+                "`{p}` is in the diff, and no `Files` item of a change in the diff matches it; add it to `Files` of the plan, or move the edit to a pull request of its own{cause}"
             ),
         ));
     }
