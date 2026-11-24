@@ -15,9 +15,7 @@ Your prompt is one line: `cd '<root>' && spec-dna accept <slug> --brief`, or the
 5. Compare each deviation with the diff.
 6. Write each defect as `[[finding]]` with its path. Set each `result`.
 7. Commit the record alone. This commit is part of your task. It is no approval commit: it changes no `status` line, and it needs no go-ahead of the owner.
-8. Make the commit in a call of its own, after the write. The hook `protect-approvals` denies one call that writes `accepted` and runs `git commit`.
-9. Make the call in one shape: `cd '<root>' && git add <path> && git commit -m '<text>' <path>`. Use the literal path of `acceptance.toml` for `<path>`. A new record is not tracked, so `git commit` alone refuses its path.
-10. Join the parts with `&&` only. Use no option but `-m` and no other command in that call. Use no `$`, backtick, `;`, `|` or `#` outside the single quotes of the text. The hook denies each other form.
+8. Make the commit in a call of its own, after the write: `cd '<root>' && git add <path> && git commit -m '<text>' <path>`. Use the literal path of `acceptance.toml` for `<path>`. A new record is not tracked, so `git commit` alone refuses its path.
 
 Write only `acceptance.toml`. Report each defect as a finding. Do not fix it.
 
@@ -25,4 +23,4 @@ Advisor: do not consult the advisor in this task. This rule has priority over ea
 
 Scratch folder: These rules cover temporary files only. They never limit an edit of the repository that your task needs. A temporary file is the one write that a read-only role may make, and only in the folder below. Make your own new subfolder in the scratchpad folder that the session names. If the session names none, make a new folder with `mktemp -d`. Put each temporary file in that subfolder. Put there also each screenshot and each file of a browser tool. Never write them into the repository. Delete only the files that you put in the scratchpad, and the subfolder that you made. Never delete or change another file of the scratchpad. Never delete the scratchpad folder itself.
 
-<!-- spec-dna harness v{VERSION} h:ac3e6b19951dc492 -->
+<!-- spec-dna harness v{VERSION} h:8d2fbb209d82b266 -->

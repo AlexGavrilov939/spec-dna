@@ -662,11 +662,12 @@ fn the_acceptor_runs_the_prompt_line_and_commits_the_record_with_its_path() {
         "Your prompt is one line: `cd '<root>' && spec-dna accept <slug> --brief`, or the same with `--follow-up`. Run it first. Read its output as your brief.",
         "Start each shell call with that `cd '<root>' &&`. If the `cd` fails, stop.",
         "Put each test repository under your scratch folder, never in another checkout.",
-        "Make the call in one shape: `cd '<root>' && git add <path> && git commit -m '<text>' <path>`. Use the literal path of `acceptance.toml` for `<path>`. A new record is not tracked, so `git commit` alone refuses its path.",
-        "Join the parts with `&&` only. Use no option but `-m` and no other command in that call. Use no `$`, backtick, `;`, `|` or `#` outside the single quotes of the text. The hook denies each other form.",
+        // `standard` writes no hook, so one step names the call (D93, item 2).
+        "Make the commit in a call of its own, after the write: `cd '<root>' && git add <path> && git commit -m '<text>' <path>`. Use the literal path of `acceptance.toml` for `<path>`. A new record is not tracked, so `git commit` alone refuses its path.",
     ] {
         assert!(t.contains(part), "{part}\n{t}");
     }
+    assert!(!t.contains("Join the parts with `&&` only"), "{t}");
     assert!(!t.contains("Your prompt is the output of"), "{t}");
 }
 
@@ -674,6 +675,19 @@ fn the_acceptor_runs_the_prompt_line_and_commits_the_record_with_its_path() {
 
 /// The line that `acceptor.md` has with `advisor = false` (D81 item 4).
 const NO_ADVISOR: &str = "Advisor: do not consult the advisor in this task. This rule has priority over each project instruction that tells you to consult the advisor.";
+
+/// The steps 8 to 10 of the acceptor file of a project with the hook
+/// `protect-approvals` (strict).
+const HOOK_STEPS: &str = "8. Make the commit in a call of its own, after the write. The hook `protect-approvals` denies one call that writes `accepted` and runs `git commit`.\n9. Make the call in one shape: `cd '<root>' && git add <path> && git commit -m '<text>' <path>`. Use the literal path of `acceptance.toml` for `<path>`. A new record is not tracked, so `git commit` alone refuses its path.\n10. Join the parts with `&&` only. Use no option but `-m` and no other command in that call. Use no `$`, backtick, `;`, `|` or `#` outside the single quotes of the text. The hook denies each other form.";
+
+/// The one step of the file of a project with no such hook (D93, item 2).
+const NO_HOOK_STEP: &str = "8. Make the commit in a call of its own, after the write: `cd '<root>' && git add <path> && git commit -m '<text>' <path>`. Use the literal path of `acceptance.toml` for `<path>`. A new record is not tracked, so `git commit` alone refuses its path.";
+
+/// The text above the marker line.
+fn above_marker(t: &str) -> String {
+    let n = t.lines().count() - 1;
+    t.lines().take(n).collect::<Vec<_>>().join("\n")
+}
 
 /// A project that `init` wrote in `profile` at the level `lean`. Then the key
 /// `advisor` of the entry `acceptor` is set to `key`, and `None` removes it.
@@ -701,6 +715,9 @@ fn acceptor_project(profile: &str, key: Option<bool>) -> Repo {
 #[test]
 fn the_key_advisor_selects_the_text_of_the_acceptor() {
     // No key: false in `standard` and true in `strict`. A key of the file wins.
+    // `standard` writes no hook `protect-approvals`, and `strict` writes it, so
+    // the steps 8 to 10 follow the profile (D93, item 2). A case that is not
+    // one of the 2 golden files differs from one of them by those steps only.
     for (profile, key, want) in [
         ("standard", None, "acceptor-no-advisor.md"),
         ("standard", Some(true), "acceptor.md"),
@@ -712,11 +729,26 @@ fn the_key_advisor_selects_the_text_of_the_acceptor() {
         let r = acceptor_project(profile, key);
         let (code, out, err) = r.run(&["init", "--reconfigure", "--non-interactive"]);
         assert_eq!(code, 0, "{profile} {key:?}: {out}{err}");
-        assert_eq!(
-            normalize_marker(&r.read(ACCEPTOR)),
-            golden(want),
-            "{profile} {key:?}"
-        );
+        let actual = normalize_marker(&r.read(ACCEPTOR));
+        let exact = (profile == "standard") == (want == "acceptor-no-advisor.md");
+        if exact {
+            assert_eq!(actual, golden(want), "{profile} {key:?}");
+        } else {
+            // The same text with the steps of the other profile. The marker
+            // hash covers the text, so only the text above it compares.
+            let g = golden(want);
+            let other = if profile == "standard" {
+                g.replace(HOOK_STEPS, NO_HOOK_STEP)
+            } else {
+                g.replace(NO_HOOK_STEP, HOOK_STEPS)
+            };
+            assert_ne!(other, g, "{profile} {key:?}");
+            assert_eq!(
+                above_marker(&actual),
+                above_marker(&other),
+                "{profile} {key:?}"
+            );
+        }
         // `init` writes the default of the profile, or keeps the key.
         let cfg = r.read("spec-dna.toml");
         let value = key.unwrap_or(profile == "strict");
@@ -727,6 +759,29 @@ fn the_key_advisor_selects_the_text_of_the_acceptor() {
         let (code, out, err) = r.run(&["check"]);
         assert_eq!(code, 0, "{profile} {key:?}: {out}{err}");
     }
+}
+
+#[test]
+fn the_acceptor_names_no_hook_that_the_project_lacks() {
+    // `standard` writes no hook `protect-approvals`: its acceptor file has one
+    // step for the commit and does not name the hook.
+    let r = acceptor_project("standard", None);
+    let (code, out, err) = r.run(&["init", "--reconfigure", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let t = r.read(ACCEPTOR);
+    assert!(!t.contains("protect-approvals"), "{t}");
+    assert!(t.contains(NO_HOOK_STEP), "{t}");
+    assert!(
+        !t.contains("9. Make the call") && !t.contains("10. Join"),
+        "{t}"
+    );
+    // `strict` writes the hook, and its file keeps the 3 steps.
+    let r = acceptor_project("strict", None);
+    let (code, out, err) = r.run(&["init", "--reconfigure", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let t = r.read(ACCEPTOR);
+    assert!(t.contains(HOOK_STEPS), "{t}");
+    assert!(!t.contains(NO_HOOK_STEP), "{t}");
 }
 
 #[test]
@@ -744,20 +799,20 @@ fn a_project_with_no_advisor_key_resolves_to_the_default_of_its_profile() {
 }
 
 #[test]
-fn both_golden_files_of_the_acceptor_differ_by_the_line_only() {
+fn both_golden_files_of_the_acceptor_differ_by_the_line_and_the_steps_of_the_hook_only() {
     let strict = golden("acceptor.md");
     let standard = golden("acceptor-no-advisor.md");
     // The frozen file keeps its hash.
     assert!(strict.ends_with(" h:f541cad357de8926 -->\n"), "{strict}");
     assert!(!strict.contains("Advisor:"), "{strict}");
     assert_eq!(standard.matches(NO_ADVISOR).count(), 1, "{standard}");
-    let drop_marker = |t: &str| {
-        let n = t.lines().count() - 1;
-        t.lines().take(n).collect::<Vec<_>>().join("\n")
-    };
+    assert!(strict.contains(HOOK_STEPS) && !strict.contains(NO_HOOK_STEP));
+    assert!(standard.contains(NO_HOOK_STEP) && !standard.contains("protect-approvals"));
     assert_eq!(
-        drop_marker(&standard).replace(&format!("{NO_ADVISOR}\n\n"), ""),
-        drop_marker(&strict)
+        above_marker(&standard)
+            .replace(&format!("{NO_ADVISOR}\n\n"), "")
+            .replace(NO_HOOK_STEP, HOOK_STEPS),
+        above_marker(&strict)
     );
     assert_eq!(md_lint(&standard), []);
     assert_eq!(md_lint(&strict), []);
@@ -807,7 +862,11 @@ fn a_change_of_the_key_with_no_init_gives_sd502_and_reconfigure_clears_it() {
     );
     let (code, out, err) = r.run(&["init", "--reconfigure", "--non-interactive"]);
     assert_eq!(code, 0, "{out}{err}");
-    assert_eq!(normalize_marker(&r.read(ACCEPTOR)), golden("acceptor.md"));
+    // `standard` has no hook, so the file is `acceptor.md` with the one step.
+    assert_eq!(
+        above_marker(&normalize_marker(&r.read(ACCEPTOR))),
+        above_marker(&golden("acceptor.md").replace(HOOK_STEPS, NO_HOOK_STEP))
+    );
     let (code, out, err) = r.run(&["check"]);
     assert_eq!(code, 0, "{out}{err}");
 }
