@@ -112,7 +112,7 @@ A failed case, a skipped case and a shared set give their own text, with the nam
 
 ### The report shapes of the runners
 
-The shapes below are those that the tests of spec-dna use. A layout that this table does not read binds by name only, or gives the reason `no-case`. `case:` is the way out.
+The shapes below come from the documentation or the source of each runner. The tests of spec-dna run the reports of 7 runners (pytest, cargo-nextest, Jest, Vitest, go-junit-report, Surefire and PHPUnit), and a table of unit tests covers the file rule for the other rows. A layout that this table does not read binds by name only, or gives the reason `no-case`. `case:` is the way out.
 
 | Runner and producer | `classname` | `name` | `file` | Name form | Result of the file rule |
 | --- | --- | --- | --- | --- | --- |
