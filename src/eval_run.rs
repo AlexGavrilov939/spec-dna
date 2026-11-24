@@ -24,7 +24,8 @@ use std::time::{Duration, Instant};
 /// The tolerance of a comparison of USD sums. A sum of floating-point costs
 /// such as 3 x 0.1 must not give a false refusal.
 pub(crate) const EPS: f64 = 1e-9;
-/// The most bytes of the stdout of `claude` that the runner keeps in memory.
+/// The most bytes of one line of the stdout of `claude`, and of the result
+/// events together, that the runner keeps in memory.
 const MAX_STDOUT: u64 = 16 * 1024 * 1024;
 /// The date of the base commit of each run.
 const BASE_DATE: &str = "2000-01-01T00:00:00Z";
@@ -886,7 +887,8 @@ pub(crate) fn one_attempt(
     }
     cmd.args([
         "--output-format",
-        "json",
+        "stream-json",
+        "--verbose",
         "--max-turns",
         &p.eval.max_turns.to_string(),
         "--max-budget-usd",
@@ -914,7 +916,7 @@ pub(crate) fn one_attempt(
     let out_reader = child
         .stdout
         .take()
-        .map(|r| std::thread::spawn(move || read_capped(r)));
+        .map(|r| std::thread::spawn(move || read_events(r)));
     let err_reader = child
         .stderr
         .take()
@@ -1242,32 +1244,116 @@ fn tee_stderr(mut r: impl Read) -> Vec<u8> {
     kept
 }
 
-/// Reads at most `MAX_STDOUT` bytes, and discards the rest, so the process
-/// never waits on a full pipe.
-fn read_capped(mut r: impl Read) -> Vec<u8> {
-    let mut buf = Vec::new();
-    let _ = (&mut r).take(MAX_STDOUT).read_to_end(&mut buf);
-    let _ = std::io::copy(&mut r, &mut std::io::sink());
-    buf
-}
+/// The most bytes of the lines that are no result event, and that the runner
+/// keeps. A plain text of an error (a refusal) is read from them.
+const MAX_TEXT: usize = 64 * 1024;
 
-/// The object `result` of the output of `claude`: the output if it is one
-/// object, or the last event `result` of a list of events.
-fn result_object(stdout: &[u8]) -> Option<Value> {
-    let text = String::from_utf8_lossy(stdout);
-    let value = json::parse(text.trim()).ok()?;
-    match value {
-        Value::Arr(items) => items
-            .into_iter()
-            .rev()
-            .find(|v| v.get("type").as_str() == Some("result")),
-        v @ Value::Obj(_) => Some(v),
-        _ => None,
+/// Reads one line of at most `cap` bytes into `line`, with its end of line.
+/// It discards the bytes of a longer line, and it returns the number of bytes
+/// that it read and whether the line was longer than `cap`.
+fn read_line_capped(
+    r: &mut impl std::io::BufRead,
+    line: &mut Vec<u8>,
+    cap: usize,
+) -> (usize, bool) {
+    let (mut total, mut over) = (0, false);
+    loop {
+        let buf = match r.fill_buf() {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        };
+        if buf.is_empty() {
+            break;
+        }
+        let (take, done) = match buf.iter().position(|b| *b == b'\n') {
+            Some(at) => (at + 1, true),
+            None => (buf.len(), false),
+        };
+        let room = cap.saturating_sub(line.len());
+        over |= take > room;
+        line.extend_from_slice(&buf[..take.min(room)]);
+        r.consume(take);
+        total += take;
+        if done {
+            break;
+        }
     }
+    (total, over)
 }
 
-/// Reads `total_cost_usd` and `subtype` of the result of `claude`. The result
-/// is one object, or a list of events with the object `result` at its end.
+/// True if `hay` has the bytes `needle`.
+fn has_bytes(hay: &[u8], needle: &[u8]) -> bool {
+    hay.windows(needle.len()).any(|w| w == needle)
+}
+
+/// Reads the stdout of `claude` line by line (`--output-format stream-json`,
+/// D95). It keeps each `result` event: a line that has the bytes `"result"`
+/// (with or with no space after the colon of `"type"`) and whose top-level
+/// `type` is `result`, so a tool result that holds these bytes does not count.
+/// It also keeps the first `MAX_TEXT` bytes of the other lines, for the text
+/// of a refusal. So the memory does not grow with the stream. It reads to the
+/// end, so the process never waits on a full pipe. A line of more than
+/// `MAX_STDOUT` bytes is discarded, and so is each result event after the
+/// first `MAX_STDOUT` bytes of them.
+fn read_events(r: impl Read) -> Vec<u8> {
+    let mut r = std::io::BufReader::new(r);
+    let (mut kept, mut line) = (Vec::new(), Vec::new());
+    let (mut events, mut text) = (0usize, 0usize);
+    loop {
+        line.clear();
+        let (n, over) = read_line_capped(&mut r, &mut line, MAX_STDOUT as usize);
+        if n == 0 {
+            break;
+        }
+        if over {
+            continue;
+        }
+        while line.last().is_some_and(|b| matches!(b, b'\n' | b'\r')) {
+            line.pop();
+        }
+        if has_bytes(&line, b"\"result\"") {
+            let is_result = json::parse(&String::from_utf8_lossy(&line)).is_ok_and(|v| {
+                matches!(v, Value::Obj(_)) && v.get("type").as_str() == Some("result")
+            });
+            if is_result {
+                if events + line.len() < MAX_STDOUT as usize {
+                    events += line.len() + 1;
+                    kept.extend_from_slice(&line);
+                    kept.push(b'\n');
+                }
+                continue;
+            }
+        }
+        let room = MAX_TEXT.saturating_sub(text);
+        if room > 0 {
+            let part = &line[..line.len().min(room - 1)];
+            text += part.len() + 1;
+            kept.extend_from_slice(part);
+            kept.push(b'\n');
+        }
+    }
+    kept
+}
+
+/// The `result` events of the output of `claude`, in order: the lines that hold
+/// the bytes `"result"`, whose top-level `type` is `result`.
+fn result_events(stdout: &[u8]) -> Vec<Value> {
+    String::from_utf8_lossy(stdout)
+        .lines()
+        .filter(|l| l.contains("\"result\""))
+        .filter_map(|l| json::parse(l.trim()).ok())
+        .filter(|v| matches!(v, Value::Obj(_)) && v.get("type").as_str() == Some("result"))
+        .collect()
+}
+
+/// The last `result` event of the output of `claude`. The cost, the subtype,
+/// the models and the tokens of a run are those of the session at its end.
+fn result_object(stdout: &[u8]) -> Option<Value> {
+    result_events(stdout).pop()
+}
+
+/// Reads `total_cost_usd` and `subtype` of the last result event of `claude`.
 /// Nothing else is read.
 fn read_result(stdout: &[u8]) -> (Option<f64>, Option<String>) {
     let Some(obj) = result_object(stdout) else {
@@ -1866,26 +1952,78 @@ mod tests {
             br#"{"type":"result","subtype":"success","total_cost_usd":0.12,"result":"TEXT"}"#,
         );
         assert_eq!(r, (Some(0.12), Some("success".to_string())));
-        let r = read_result(br#"{"total_cost_usd":0,"subtype":"error_max_turns"}"#);
+        let r = read_result(br#"{"type":"result","total_cost_usd":0,"subtype":"error_max_turns"}"#);
         assert_eq!(r, (Some(0.0), Some("error_max_turns".to_string())));
     }
 
     #[test]
-    fn a_list_of_events_gives_the_last_result() {
-        let text = br#"[{"type":"system","subtype":"init","total_cost_usd":9},{"type":"assistant"},{"type":"result","subtype":"error_max_budget_usd","total_cost_usd":0.5}]"#;
+    fn a_stream_of_events_gives_the_last_result() {
+        let text = br#"{"type":"system","subtype":"init","total_cost_usd":9}
+{"type":"assistant"}
+{"type":"result","subtype":"error_max_turns","total_cost_usd":0.2}
+{"type": "result", "subtype": "error_max_budget_usd", "total_cost_usd": 0.5}
+"#;
         assert_eq!(
             read_result(text),
             (Some(0.5), Some("error_max_budget_usd".to_string()))
         );
-        // No event `result`: nothing is read.
-        assert_eq!(read_result(br#"[{"type":"system"}]"#), (None, None));
+        // No event `result`: nothing is read. An object with no `type`, and an
+        // event of another type that holds the bytes, are no result.
+        assert_eq!(read_result(br#"{"type":"system"}"#), (None, None));
+        assert_eq!(
+            read_result(br#"{"total_cost_usd":1,"subtype":"x"}"#),
+            (None, None)
+        );
+        assert_eq!(
+            read_result(br#"{"type":"user","text":"\"result\"","total_cost_usd":1}"#),
+            (None, None)
+        );
         assert_eq!(read_result(b"[]"), (None, None));
+    }
+
+    #[test]
+    fn the_reader_keeps_the_result_events_and_a_head_of_the_other_lines() {
+        let mut input = Vec::new();
+        for i in 0..2000 {
+            input.extend_from_slice(
+                format!(
+                    "{{\"type\":\"assistant\",\"n\":{i},\"pad\":\"{}\"}}\n",
+                    "x".repeat(900)
+                )
+                .as_bytes(),
+            );
+        }
+        input.extend_from_slice(b"{\"type\":\"result\",\"total_cost_usd\":0.5}\n");
+        input.extend_from_slice(b"{\"type\":\"result\",\"total_cost_usd\":0.7}");
+        let kept = read_events(&input[..]);
+        // 64 KiB of the other lines, and the 2 events (the last has no end of line).
+        assert!(kept.len() < MAX_TEXT + 200, "{}", kept.len());
+        assert_eq!(result_events(&kept).len(), 2);
+        assert_eq!(read_result(&kept).0, Some(0.7));
+        // A line with no end of line, and a plain text, are kept as text.
+        assert_eq!(
+            read_events(&b"API Error: 502 Bad Gateway"[..]),
+            b"API Error: 502 Bad Gateway\n"
+        );
+        assert!(read_events(&b""[..]).is_empty());
+    }
+
+    #[test]
+    fn a_line_over_the_limit_is_discarded_and_the_next_line_is_read() {
+        let mut input = Vec::new();
+        input.extend_from_slice(b"{\"type\":\"assistant\",\"pad\":\"");
+        input.resize(MAX_STDOUT as usize + 100, b'x');
+        input.extend_from_slice(b"\"}\n{\"type\":\"result\",\"total_cost_usd\":0.4}\n");
+        let kept = read_events(&input[..]);
+        assert_eq!(read_result(&kept).0, Some(0.4));
+        assert!(kept.len() < 100, "{}", kept.len());
     }
 
     #[test]
     fn a_bad_cost_or_subtype_is_dropped() {
         for bad in ["-1", "\"1\"", "null", "true", "1e999"] {
-            let text = format!("{{\"total_cost_usd\":{bad},\"subtype\":\"ok\"}}");
+            let text =
+                format!("{{\"type\":\"result\",\"total_cost_usd\":{bad},\"subtype\":\"ok\"}}");
             assert_eq!(read_result(text.as_bytes()).0, None, "{bad}");
         }
         for bad in [
@@ -1895,7 +2033,7 @@ mod tests {
             "5",
             "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
         ] {
-            let text = format!("{{\"subtype\":{bad}}}");
+            let text = format!("{{\"type\":\"result\",\"subtype\":{bad}}}");
             assert_eq!(read_result(text.as_bytes()).1, None, "{bad}");
         }
         assert_eq!(read_result(b"not json"), (None, None));
@@ -2063,8 +2201,8 @@ mod tests {
             );
             assert!(is_refused(1, out.as_bytes()), "{status}");
         }
-        // A list of events: the last result decides.
-        let events = br#"[{"type":"system"},{"type":"result","is_error":true,"result":"API Error: 503 down"}]"#;
+        // A stream of events: the last result decides.
+        let events = b"{\"type\":\"system\"}\n{\"type\":\"result\",\"is_error\":true,\"result\":\"API Error: 503 down\"}\n";
         assert!(is_refused(1, events));
     }
 
@@ -2275,12 +2413,12 @@ mod tests {
     fn the_models_are_the_names_of_model_usage() {
         let out = br#"{"type":"result","modelUsage":{"claude-b-1":{"costUSD":1},"claude-a-2":{}}}"#;
         assert_eq!(result_models(out), ["claude-a-2", "claude-b-1"]);
-        assert!(result_models(b"{}").is_empty());
+        assert!(result_models(br#"{"type":"result"}"#).is_empty());
         assert!(result_models(b"x").is_empty());
         // The tokens: sums over the models; an absent field is 0; `thinkingTokens`
         // is not added.
         let t = result_tokens(
-        br#"{"modelUsage":{"a":{"inputTokens":1,"outputTokens":2,"cacheReadInputTokens":3,"cacheCreationInputTokens":4,"thinkingTokens":9},"b":{"inputTokens":10}}}"#,
+        br#"{"type":"result","modelUsage":{"a":{"inputTokens":1,"outputTokens":2,"cacheReadInputTokens":3,"cacheCreationInputTokens":4,"thinkingTokens":9},"b":{"inputTokens":10}}}"#,
     );
         assert_eq!(
             t,
@@ -2292,22 +2430,24 @@ mod tests {
             })
         );
         for bad in [
-            &br#"{}"#[..],
+            &br#"{"type":"result"}"#[..],
             b"x",
-            br#"{"modelUsage":{}}"#,
-            br#"{"modelUsage":[]}"#,
-            br#"{"modelUsage":{"a":3}}"#,
-            br#"{"modelUsage":{"a":{"inputTokens":-1}}}"#,
-            br#"{"modelUsage":{"a":{"inputTokens":1.5}}}"#,
-            br#"{"modelUsage":{"a":{"inputTokens":"1"}}}"#,
+            br#"{"type":"result","modelUsage":{}}"#,
+            br#"{"type":"result","modelUsage":[]}"#,
+            br#"{"type":"result","modelUsage":{"a":3}}"#,
+            br#"{"type":"result","modelUsage":{"a":{"inputTokens":-1}}}"#,
+            br#"{"type":"result","modelUsage":{"a":{"inputTokens":1.5}}}"#,
+            br#"{"type":"result","modelUsage":{"a":{"inputTokens":"1"}}}"#,
+            // An object with no type is no result event.
+            br#"{"modelUsage":{"a":{"inputTokens":1}}}"#,
         ] {
             assert_eq!(result_tokens(bad), None, "{}", String::from_utf8_lossy(bad));
         }
-        assert!(result_models(br#"{"modelUsage":{"a b":{}}}"#).is_empty());
+        assert!(result_models(br#"{"type":"result","modelUsage":{"a b":{}}}"#).is_empty());
         // A name with brackets or a slash is kept; a path-like name is not.
         assert_eq!(
             result_models(
-                br#"{"modelUsage":{"claude-fable-5-2[1m]":{},"v/m:1":{},"a..b":{},"/etc/x":{}}}"#
+                br#"{"type":"result","modelUsage":{"claude-fable-5-2[1m]":{},"v/m:1":{},"a..b":{},"/etc/x":{}}}"#
             ),
             ["claude-fable-5-2[1m]", "v/m:1"]
         );

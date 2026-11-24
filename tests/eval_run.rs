@@ -22,7 +22,40 @@ if [ "$1" = "--version" ]; then echo "2.1.325 (Claude Code)"; exit 0; fi
 eval "$STUB_EDIT"
 find . \( -type f -o -type l \) -not -path './.git/*' | sort > "$STUB_FILES"
 if [ "$STUB_SHAPE" = array ]; then
-    printf '[{"type":"system","subtype":"init"},{"type":"result","subtype":"success","is_error":false,"total_cost_usd":%s,"result":"STUB-OUTPUT-TEXT"}]\n' "$STUB_COST"
+    printf '{"type":"system","subtype":"init"}\n'
+    printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":%s,"result":"STUB-OUTPUT-TEXT"}\n' "$STUB_COST"
+elif [ "$STUB_SHAPE" = stream ]; then
+    # D95: a system event, an assistant event, a tool result that holds the
+    # bytes of a result event, and 2 segments that end with a result event.
+    printf '{"type":"system","subtype":"init"}\n'
+    printf '{"type":"assistant","message":{"content":[{"type":"text","text":"start"}]}}\n'
+    printf '{"type":"user","message":{"content":[{"type":"tool_result","content":"{\\"type\\":\\"result\\",\\"num_turns\\":99,\\"total_cost_usd\\":9}"}]}}\n'
+    printf '{"type":"result","subtype":"error_max_turns","is_error":true,"total_cost_usd":0.1,"num_turns":5,"modelUsage":{"claude-first":{"inputTokens":1,"outputTokens":2}},"result":"STUB-OUTPUT-TEXT"}\n'
+    printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":%s,"num_turns":2,"modelUsage":{"claude-last":{"inputTokens":10,"outputTokens":20,"cacheReadInputTokens":30,"cacheCreationInputTokens":40}},"result":"STUB-OUTPUT-TEXT"}\n' "$STUB_COST"
+elif [ "$STUB_SHAPE" = limit ]; then
+    # The stub of a stop at the turn limit: it needs the stream form, and it
+    # reports the number of `--max-turns` as its turns.
+    prev=""; fmt=""; verbose=""; turns=""
+    for a in "$@"; do
+        [ "$prev" = "--output-format" ] && fmt="$a"
+        [ "$prev" = "--max-turns" ] && turns="$a"
+        [ "$a" = "--verbose" ] && verbose=yes
+        prev="$a"
+    done
+    if [ "$fmt" != "stream-json" ] || [ -z "$verbose" ]; then
+        echo "stub: this shape needs --output-format stream-json --verbose" >&2
+        exit 2
+    fi
+    printf '{"type":"system","subtype":"init"}\n'
+    printf '{"type":"result","subtype":"error_max_turns","is_error":true,"total_cost_usd":%s,"num_turns":%s}\n' "$STUB_COST" "$turns"
+elif [ "$STUB_SHAPE" = big ]; then
+    # More than 16 MiB of events, then the result event.
+    line="{\"type\":\"assistant\",\"message\":{\"content\":\"$(printf 'x%.0s' $(seq 1 1000))\"}}"
+    yes "$line" | head -n 17500
+    printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":%s,"num_turns":4}\n' "$STUB_COST"
+elif [ "$STUB_SHAPE" = spaced ]; then
+    # The stubs of `bench/` write a space after each colon.
+    printf '{"type": "result", "subtype": "success", "is_error": false, "total_cost_usd": %s, "num_turns": 4}\n' "$STUB_COST"
 elif [ "$STUB_SHAPE" = turns ]; then
     printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":%s,"num_turns":7,"modelUsage":{"claude-b":{"inputTokens":10,"outputTokens":20,"cacheReadInputTokens":30,"cacheCreationInputTokens":40},"claude-a":{"inputTokens":1,"outputTokens":2}},"result":"STUB-OUTPUT-TEXT"}\n' "$STUB_COST"
 elif [ "$STUB_SHAPE" = badturns ]; then
@@ -241,7 +274,8 @@ fn the_command_line_of_claude_has_the_exact_order_and_no_bare() {
         "--allowedTools",
         "Read,Edit",
         "--output-format",
-        "json",
+        "stream-json",
+        "--verbose",
         "--max-turns",
         "5",
         "--max-budget-usd",
@@ -262,6 +296,72 @@ fn the_command_line_of_claude_has_the_exact_order_and_no_bare() {
     for call in fx.calls() {
         assert!(!call.iter().any(|a| a.contains("bare")), "{call:?}");
     }
+}
+
+// D95: the runner reads the stream of events, and `turns` is the sum over the
+// result events (the segments).
+
+#[test]
+fn turns_is_the_sum_over_the_segments() {
+    let fx = Fx::with(&[ev("example")]);
+    let (code, out, err) = fx.run_env(
+        &["--json"],
+        &[("STUB_SHAPE", "stream"), ("STUB_COST", "0.3")],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    // The cost, the subtype, the models and the tokens are those of the last
+    // result event. The tool result that holds the bytes of a result event
+    // counts nothing.
+    assert!(out.contains("\"cost_usd\":0.3"), "{out}");
+    assert!(out.contains("\"subtype\":\"success\""), "{out}");
+    assert!(out.contains("\"models\":[\"claude-last\"]"), "{out}");
+    assert!(
+        out.contains("\"tokens\":{\"in\":10,\"out\":20,\"cache_read\":30,\"cache_write\":40}"),
+        "{out}"
+    );
+    fx.assert_clean();
+}
+
+#[test]
+fn a_run_that_stops_at_the_turn_limit() {
+    let mut e = ev("example");
+    e.turns = 3;
+    let fx = Fx::with(&[e]);
+    let (code, out, err) = fx.run_env(
+        &["--json"],
+        &[
+            ("STUB_SHAPE", "limit"),
+            ("STUB_EXIT", "1"),
+            ("STUB_COST", "0.4"),
+        ],
+    );
+    // A failed run, and no refusal: the cost is counted and the run is kept.
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(out.contains("\"claude_exit\":1"), "{out}");
+    assert!(out.contains("\"subtype\":\"error_max_turns\""), "{out}");
+    assert!(out.contains("\"cost_usd\":0.4"), "{out}");
+    assert_eq!(fx.runs().len(), 1, "a refusal would start a new attempt");
+}
+
+#[test]
+fn the_result_after_16_mib_of_events_is_read() {
+    let fx = Fx::with(&[ev("example")]);
+    let (code, out, err) = fx.run_env(&["--json"], &[("STUB_SHAPE", "big"), ("STUB_COST", "0.6")]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("\"cost_usd\":0.6"), "{out}");
+    assert!(out.contains("\"turns\":4,"), "{out}");
+    fx.assert_clean();
+}
+
+#[test]
+fn a_result_event_with_a_space_after_each_colon_is_read() {
+    // Guard: the stubs of `bench/` write their events like this.
+    let fx = Fx::with(&[ev("example")]);
+    let (code, out, err) = fx.run_env(&["--json"], &[("STUB_SHAPE", "spaced")]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("\"cost_usd\":0.1"), "{out}");
+    assert!(out.contains("\"subtype\":\"success\""), "{out}");
+    assert!(out.contains("\"turns\":4,"), "{out}");
 }
 
 #[test]
