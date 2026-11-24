@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 ---
 # The context meter reads the last executor iteration, and the briefs name sections: plan
 
