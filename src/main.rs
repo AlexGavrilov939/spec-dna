@@ -474,7 +474,7 @@ indicator. Exit codes: 2 usage, unknown group or no --sdlc, 3 configuration,
     ),
     (
         "eval",
-        "eval run [<id>...] [--runs <n>] [--min-pass-rate <r>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate] [--harness <arm>]\neval run --ab <skill|all|agents-line|accept> [--harness <arm>] [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate | --no-isolate] [--resume <result file>] [--json]\neval run --arms <arm>[,<arm>[,<arm>]] [<id>...] [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--resume <result file>] [--json]\neval pack\neval verdict [--release] [--json]\neval verdict --compare <treatment>,<control> <result file> [--json]\neval records <result file>",
+        "eval run [<id>...] [--runs <n>] [--min-pass-rate <r>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate] [--harness <arm>]\neval run --ab <skill|all|agents-line|accept> [--harness <arm>] [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate | --no-isolate] [--resume <result file>] [--json]\neval run --arms <arm>[,<arm>[,<arm>]] [<id>...] [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--resume <result file>] [--json]\neval pack\neval verdict [--release] [--json]\neval verdict --compare <treatment>,<control> <result file>... [--json]\neval records <result file>",
         "Runs the evals of [evals] dir (<id>.json) with headless Claude Code. For
 each run, it copies the fixture and the harness files into a temporary git
 repository, starts `claude -p` in it, and runs the checks of the eval. It
@@ -540,9 +540,12 @@ result file of --ab or --arms as JSON Lines (9 keys, and harness, turns and seco
 for a result of 0.8.0; no path, no text), and it computes each item again from
 them. A verdict needs 5 evals and 15 complete pairs: below that it is
 inconclusive, with below_floor true. `eval verdict --compare <treatment>,<control>
-<result file>` gives the verdict of 2 arms of a result of --arms, on the complete
-waves (exit code 2 for names that are not 2 arms of the file, 3 for another
-file). `eval verdict` prints one line for each of the 11 skills and for agents-line:
+<result file>...` gives the verdict of 2 arms of one or more results of --arms, on
+the complete waves. It joins the files by the eval and the number of the run, so
+files of one arm each give the verdict of one file of 2 arms. Exit code 2 for
+names that are not 2 arms of the files, 3 for another file or for a run of one
+eval in one arm that 2 files hold. Files of 2 versions of Claude Code give a
+note on the standard error. `eval verdict` prints one line for each of the 11 skills and for agents-line:
 the name, the verdict (on, off, inconclusive or unmeasured) and the source
 (project <file>, release or -). It reads the newest result file of --ab that
 holds the name, then the table of the release. It starts no agent.",
@@ -3880,14 +3883,15 @@ fn eval(cwd: &std::path::Path, a: &Args) -> Result<u8, Fatal> {
             }
         }
         if let Some(pair) = &a.compare {
-            // `eval verdict --compare <treatment>,<control> <result file>`
-            // reads one file, as `eval records` does, and needs no project.
-            if a.release || a.positional.len() != 2 {
+            // `eval verdict --compare <treatment>,<control> <result file>...`
+            // reads the files (D100), as `eval records` does, and needs no
+            // project.
+            if a.release || a.positional.len() < 2 {
                 return Err(Fatal::Usage(
-                    "`eval verdict --compare <treatment>,<control>` takes one result file of `eval run --arms` and no --release".into(),
+                    "`eval verdict --compare <treatment>,<control>` takes one or more result files of `eval run --arms` and no --release".into(),
                 ));
             }
-            return eval_compare_cmd(pair, &a.positional[1], a.json);
+            return eval_compare_cmd(pair, &a.positional[1..], a.json);
         }
         if a.positional.len() > 1 {
             return Err(Fatal::Usage(format!(
@@ -4096,12 +4100,14 @@ fn eval_release_cmd(json: bool) -> u8 {
     0
 }
 
-/// `eval verdict --compare <treatment>,<control> <result file>` (D59): the
-/// verdict of 2 arms of a result of `eval run --arms`. It reads one file and
-/// starts no agent. A name that is not 2 arms of the file is a usage error
-/// (exit code 2). A file that is no result of `--arms` is a configuration
-/// error (exit code 3).
-fn eval_compare_cmd(pair: &str, file: &str, json: bool) -> Result<u8, Fatal> {
+/// `eval verdict --compare <treatment>,<control> <result file>...` (D59,
+/// D100): the verdict of 2 arms of one or more results of `eval run --arms`.
+/// It reads the files, joins them by the eval and the number of the run, and
+/// starts no agent. A name that is not 2 arms of the files is a usage error
+/// (exit code 2). A file that is no result of `--arms`, and a run of one eval
+/// in one arm that 2 files hold, are configuration errors (exit code 3). Files
+/// of different versions of Claude Code give a note on the standard error.
+fn eval_compare_cmd(pair: &str, paths: &[String], json: bool) -> Result<u8, Fatal> {
     let (treatment, control) = match pair.split_once(',') {
         Some((t, c)) if !t.is_empty() && !c.is_empty() && !c.contains(',') => (t, c),
         _ => {
@@ -4116,14 +4122,23 @@ fn eval_compare_cmd(pair: &str, file: &str, json: bool) -> Result<u8, Fatal> {
             "--compare: `{treatment}` is named twice; give 2 different arms"
         )));
     }
-    let bytes = std::fs::read(file)
-        .map_err(|e| Fatal::Config(format!("eval verdict: cannot read `{file}` ({})", e.kind())))?;
-    let c = verdict::compare(&bytes, treatment, control).map_err(|e| match e {
+    let mut files = Vec::new();
+    for file in paths {
+        let bytes = std::fs::read(file).map_err(|e| {
+            Fatal::Config(format!("eval verdict: cannot read `{file}` ({})", e.kind()))
+        })?;
+        files.push((file.clone(), bytes));
+    }
+    let c = verdict::compare(&files, treatment, control).map_err(|e| match e {
         verdict::CompareError::Usage(m) => Fatal::Usage(m),
-        verdict::CompareError::NotArms => Fatal::Config(format!(
+        verdict::CompareError::NotArms(file) => Fatal::Config(format!(
             "eval verdict: `{file}` is no result of `eval run --arms`"
         )),
+        verdict::CompareError::Joined(m) => Fatal::Config(m),
     })?;
+    for note in &c.notes {
+        eprintln!("spec-dna: note: {note}");
+    }
     if json {
         println!("{}", verdict::comparison_json(&c));
     } else {

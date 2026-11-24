@@ -2555,6 +2555,195 @@ fn the_result_of_arms_has_one_side_for_each_arm_with_the_turns_and_the_seconds()
     assert_eq!(code, 0, "{out}");
 }
 
+/// The path of the result file that a command made: the one that is not in
+/// `before`.
+fn new_result(fx: &Fx, before: &[String]) -> String {
+    let new: Vec<String> = fx
+        .results()
+        .into_iter()
+        .filter(|n| !before.contains(n))
+        .collect();
+    assert_eq!(new.len(), 1, "{new:?}");
+    format!("evals/results/{}", new[0])
+}
+
+/// 3 result files of `--arms` on the same evals: both arms in one command, and
+/// each arm of them alone in a command. The paths are `both`, `none` and `lean`.
+fn three_files(fx: &Fx, none_cost: &str, lean_cost: &str) -> [String; 3] {
+    let args = ["--runs", "2", "--max-total-usd", "100", "--json"];
+    let before = fx.results();
+    let (code, out, err) = fx.arms("none,lean", &args, &[("STUB_COST", lean_cost)]);
+    assert_eq!(code, 0, "{out}{err}");
+    let both = new_result(fx, &before);
+    let before = fx.results();
+    let (code, out, err) = fx.arms("none", &args, &[("STUB_COST", none_cost)]);
+    assert_eq!(code, 0, "{out}{err}");
+    let none = new_result(fx, &before);
+    let before = fx.results();
+    let (code, out, err) = fx.arms("lean", &args, &[("STUB_COST", lean_cost)]);
+    assert_eq!(code, 0, "{out}{err}");
+    let lean = new_result(fx, &before);
+    [both, none, lean]
+}
+
+#[test]
+fn compare_joins_2_files_of_one_arm() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM);
+    // The same cost in each arm: the 2 files give the verdict of the file that
+    // has both arms, in each order of the files.
+    let [both, none, lean] = three_files(&fx, "0.1", "0.1");
+    let compare = |files: &[&str]| {
+        let mut args = vec!["eval", "verdict", "--compare", "lean,none"];
+        args.extend_from_slice(files);
+        args.push("--json");
+        fx.raw(&args, &[])
+    };
+    let (code, want, err) = compare(&[&both]);
+    assert_eq!(code, 0, "{want}{err}");
+    assert!(want.contains("\"waves\":2,\"planned_waves\":2"), "{want}");
+    assert!(want.contains("\"evals\":2,\"pairs\":4"), "{want}");
+    for files in [[&none, &lean], [&lean, &none]] {
+        let (code, out, err) = compare(&[files[0], files[1]]);
+        assert_eq!(code, 0, "{out}{err}");
+        assert_eq!(out, want);
+        assert!(err.is_empty(), "{err}");
+    }
+    // The costs of each file count: 4 runs of 0.2 USD against 4 runs of 0.1 USD.
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM);
+    let [_, none, lean] = three_files(&fx, "0.2", "0.1");
+    let (code, out, err) = fx.raw(
+        &[
+            "eval",
+            "verdict",
+            "--compare",
+            "lean,none",
+            &lean,
+            &none,
+            "--json",
+        ],
+        &[],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("\"with\":{\"runs\":4,\"passes\":4,\"pass_rate\":1,\"cost_usd\":0.4,"),
+        "{out}"
+    );
+    assert!(
+        out.contains("\"without\":{\"runs\":4,\"passes\":4,\"pass_rate\":1,\"cost_usd\":0.8,"),
+        "{out}"
+    );
+    // The text form reads the same files.
+    let (code, out, err) = fx.raw(
+        &["eval", "verdict", "--compare", "lean,none", &lean, &none],
+        &[],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.starts_with("lean against none: lean 4 of 4 runs passed, none 4 of 4"),
+        "{out}"
+    );
+    assert!(out.contains("waves: 2 complete of 2 planned"), "{out}");
+    // An arm that no file has is a usage error.
+    let (code, _, err) = fx.raw(
+        &["eval", "verdict", "--compare", "lean,full", &lean, &none],
+        &[],
+    );
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("no arm `full`"), "{err}");
+}
+
+#[test]
+fn a_run_in_2_files_is_exit_code_3() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM);
+    let [both, none, lean] = three_files(&fx, "0.1", "0.1");
+    // The file `none` twice: each run of each eval is in 2 files.
+    let (code, out, err) = fx.raw(
+        &[
+            "eval",
+            "verdict",
+            "--compare",
+            "lean,none",
+            &lean,
+            &none,
+            &none,
+        ],
+        &[],
+    );
+    assert_eq!(code, 3, "{out}{err}");
+    assert!(out.is_empty(), "{out}");
+    let want = format!(
+        "--compare: the run 1 of `team-01` in the arm `none` is in 2 files: {none}, {none}"
+    );
+    assert!(err.contains(&want), "{err}");
+    // A file with both arms and a file with one of them hold the same runs.
+    let (code, out, err) = fx.raw(
+        &["eval", "verdict", "--compare", "lean,none", &both, &lean],
+        &[],
+    );
+    assert_eq!(code, 3, "{out}{err}");
+    assert!(err.contains("in the arm `lean` is in 2 files"), "{err}");
+    assert!(err.contains(&format!("{both}, {lean}")), "{err}");
+    // A file that is no result of `--arms` is exit code 3 too.
+    fx.repo
+        .write("evals/results/other.json", "{\"skills\":[]}\n");
+    let (code, _, err) = fx.raw(
+        &[
+            "eval",
+            "verdict",
+            "--compare",
+            "lean,none",
+            &lean,
+            "evals/results/other.json",
+        ],
+        &[],
+    );
+    assert_eq!(code, 3, "{err}");
+    assert!(err.contains("is no result of `eval run --arms`"), "{err}");
+}
+
+#[test]
+fn files_of_2_versions_of_claude_code_give_a_note() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM);
+    let [_, none, lean] = three_files(&fx, "0.1", "0.1");
+    let (code, out, err) = fx.raw(
+        &["eval", "verdict", "--compare", "lean,none", &lean, &none],
+        &[],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!err.contains("note"), "the same version: {err}");
+    let path = fx.repo.dir.join(&lean);
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(text.contains("\"claude_code\": \"2.1.325\""), "{text}");
+    fs::write(
+        &path,
+        text.replace(
+            "\"claude_code\": \"2.1.325\"",
+            "\"claude_code\": \"2.1.400\"",
+        ),
+    )
+    .unwrap();
+    for json in [false, true] {
+        let mut args = vec!["eval", "verdict", "--compare", "lean,none", &lean, &none];
+        if json {
+            args.push("--json");
+        }
+        let (code, out, err) = fx.raw(&args, &[]);
+        assert_eq!(code, 0, "{out}{err}");
+        assert!(
+            err.contains(&format!(
+                "--compare: the files come from different versions of Claude Code: {lean} 2.1.400, {none} 2.1.325"
+            )),
+            "{err}"
+        );
+        // The note is on the standard error: the output has the verdict only.
+        assert!(!out.contains("2.1.400"), "{out}");
+    }
+}
+
 #[test]
 fn arms_runs_one_arm_alone() {
     let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
@@ -2884,10 +3073,10 @@ fn compare_gives_usage_errors_for_the_arms_and_exit_code_3_for_other_files() {
     );
     assert_eq!(code, 2, "{err}");
     assert!(err.contains("named twice"), "{err}");
-    // No file, 2 files, and `--release`.
+    // No file, and `--release`. The same file twice is a run in 2 files: exit
+    // code 3 (`a_run_in_2_files_is_exit_code_3`).
     for args in [
         vec!["eval", "verdict", "--compare", "lean,none"],
-        vec!["eval", "verdict", "--compare", "lean,none", &file, &file],
         vec![
             "eval",
             "verdict",
