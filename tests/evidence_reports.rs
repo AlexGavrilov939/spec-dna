@@ -422,6 +422,10 @@ fn a_tag_above_the_test_binds_to_its_case_in_the_report_of_each_runner() {
         let (code, out) = check(&r, &[]);
         assert!(!has(&out, "SD617"), "{}: {out}", run.name);
         assert_eq!(code, 0, "{}: {out}", run.name);
+        // Each shape names its test file, so no bind is by name only.
+        let (code, out) = check(&r, &["--all"]);
+        assert!(!has(&out, "SD621"), "{}: {out}", run.name);
+        assert_eq!(code, 0, "{}: {out}", run.name);
         // Skipped: the tag is bound, so the message names the skipped case.
         let r = runner_pr(&run, SKIPPED, None);
         let (code, out) = check(&r, &[]);
@@ -2432,4 +2436,94 @@ fn the_setup_of_the_hook_keeps_the_stamp_fresh() {
     }
     // The 2 runs wrote different bytes.
     assert_ne!(seen[0], seen[1]);
+}
+
+// A bind by name: SD621 (design 0.8.1, D82 items 6 and 9)
+
+/// The report of jest-junit with its defaults: the `classname` and the `name`
+/// are the same title, and the case has no `file`.
+const JEST_DEFAULTS: [(&str, &str, &str); 1] =
+    [("Valves closes on timeout", "Valves closes on timeout", "")];
+
+#[test]
+fn jest_junit_with_its_defaults_binds_by_name_and_gives_sd621() {
+    for (profile, severity, code) in [("standard", "warning", 0), ("strict", "error", 1)] {
+        let r = pr(profile, REPORTS, &[("tests/valves.test.js", JS_TEST)]);
+        r.write("reports/r.xml", &junit("jest", &JEST_DEFAULTS));
+        stamp(&r);
+        // The bind counts: the requirement is proven.
+        let (_, out) = check(&r, &[]);
+        assert!(!has(&out, "SD617"), "{profile}: {out}");
+        // SD621 is a state code, so `--all` shows it.
+        let (exit, out) = check(&r, &["--all"]);
+        let found = lines(&out, "SD621");
+        assert_eq!(found.len(), 1, "{profile}: {out}");
+        assert!(found[0].contains(&format!(": {severity} SD621 ")), "{out}");
+        assert!(
+            found[0].contains(
+                "the tag at tests/valves.test.js:2 binds the case `Valves closes on timeout`"
+            ),
+            "{out}"
+        );
+        assert!(found[0].contains("the test `closes on timeout`"), "{out}");
+        assert!(
+            found[0].contains("case:\"Valves closes on timeout\""),
+            "{out}"
+        );
+        assert!(found[0].contains("addFileAttribute: \"true\""), "{out}");
+        assert_eq!(exit, code, "{profile}: {out}");
+        assert!(!has(&out, "SD616") && !has(&out, "SD617"), "{out}");
+    }
+    // `lite` turns the report codes off.
+    let r = pr(
+        "lite",
+        "reports = [\"reports/*\"]\n",
+        &[("tests/valves.test.js", JS_TEST)],
+    );
+    r.write("reports/r.xml", &junit("jest", &JEST_DEFAULTS));
+    stamp(&r);
+    let (_, out) = check(&r, &["--all"]);
+    assert!(!has(&out, "SD621"), "{out}");
+}
+
+#[test]
+fn the_report_of_jest_junit_with_the_file_gives_no_sd621() {
+    let r = pr("strict", REPORTS, &[("tests/valves.test.js", JS_TEST)]);
+    r.write(
+        "reports/r.xml",
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><testsuites><testsuite name=\"Valves\" tests=\"1\"><testcase classname=\"Valves closes on timeout\" name=\"Valves closes on timeout\" file=\"tests/valves.test.js\"/></testsuite></testsuites>",
+    );
+    stamp(&r);
+    let (code, out) = check(&r, &["--all"]);
+    assert!(!has(&out, "SD621") && !has(&out, "SD617"), "{out}");
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn an_exact_case_name_that_one_case_has_gives_no_sd621() {
+    let test =
+        "// covers: requirements/valves#flush case:\"Valves closes on timeout\"\nVALUE = 1\n";
+    let r = pr("strict", REPORTS, &[("tests/valves.test.js", test)]);
+    r.write("reports/r.xml", &junit("jest", &JEST_DEFAULTS));
+    stamp(&r);
+    let (code, out) = check(&r, &["--all"]);
+    assert!(!has(&out, "SD621") && !has(&out, "SD617"), "{out}");
+    assert_eq!(code, 0, "{out}");
+    // The same name in 2 cases (2 files with the same titles): a bind by name,
+    // and a shared set.
+    let r = pr("strict", REPORTS, &[("tests/valves.test.js", test)]);
+    r.write(
+        "reports/r.xml",
+        &junit(
+            "jest",
+            &[
+                ("Valves closes on timeout", "Valves closes on timeout", ""),
+                ("Valves closes on timeout", "Valves closes on timeout", ""),
+            ],
+        ),
+    );
+    stamp(&r);
+    let (code, out) = check(&r, &["--all"]);
+    assert_eq!(lines(&out, "SD621").len(), 1, "{out}");
+    assert_eq!(code, 1, "{out}");
 }

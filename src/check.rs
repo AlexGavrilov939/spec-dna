@@ -707,6 +707,19 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc, facts: &Facts) -> Vec<Diag> {
                 format!("`{}#{}` is active, and {why}", d.id, r.key),
             ));
         }
+        // SD621: a tag binds a case by its name only. The bind counts, so this
+        // does not depend on the result. A state code.
+        if needs_evidence(d) {
+            for why in by_name_texts(ev, di, ri) {
+                out.push(diag(
+                    d,
+                    r.line,
+                    Code::CaseBoundByName,
+                    r.key.clone(),
+                    format!("`{}#{}` is active, and {why}", d.id, r.key),
+                ));
+            }
+        }
     }
     for t in &p.placeholders {
         out.push(diag(
@@ -2044,6 +2057,28 @@ pub fn skill_unproven(
                 s.key()
             ),
             severity: Code::SkillUnproven.severity(),
+        })
+        .collect()
+}
+
+/// The texts of SD621 for requirement `ri` of document `di`: one for each full
+/// tag whose bound cases fit by their name only (design 0.8.1, D82 item 9). The
+/// text names the tag, the test, the case and the fix. It is empty when the
+/// reports are not read.
+pub fn by_name_texts(ev: &Evidence, di: u32, ri: usize) -> Vec<String> {
+    let (Some(proofs), Some(binds)) = (ev.proofs.get(&(di, ri)), ev.binds.get(&(di, ri))) else {
+        return Vec::new();
+    };
+    proofs
+        .iter()
+        .zip(binds)
+        .filter(|(_, b)| b.by_name && b.cases > 0)
+        .map(|((at, _), b)| {
+            let case = b.case.as_deref().unwrap_or("");
+            let test = b.test.as_deref().unwrap_or(case);
+            format!(
+                "the tag at {at} binds the case `{case}` to the test `{test}` by its name only: the case has no `file`, and its `classname` names no test file; add `case:\"{case}\"` if the case is the test under the tag, or make the runner write the file (jest-junit: `addFileAttribute: \"true\"`)"
+            )
         })
         .collect()
 }
