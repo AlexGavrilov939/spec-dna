@@ -15,7 +15,7 @@ status: approved
 
 ## Order
 
-- [ ] t1: Add the fixture of D83 with a real layer graph, the guard of the output order at each budget, and one line of the sizes for each budget in the test log. Files: `tests/context_layers.rs`. Verify: `cargo test --test context_layers -- --nocapture`. Hours: 3.
+- [x] t1: Add the fixture of D83 with a real layer graph, the guard of the output order at each budget, and one line of the sizes for each budget in the test log. Files: `tests/context_layers.rs`. Verify: `cargo test --test context_layers -- --nocapture`. Hours: 3.
 - [ ] t2: Fill the tier in the new order: the title section of each document first, from the deepest summary up, then the other sections. The served sections are a prefix of the fill order. The test of the prefix of the output order becomes the test of the prefix of the fill order. Files: `src/context.rs`, `tests/context_layers.rs`. Verify: `cargo test --test context_layers`. Hours: 4.
 - [ ] t3: Give the tier at most a half of the budget, and update the 3 tests of the share and of the modes at 8,000. Files: `src/context.rs`, `tests/context_layers.rs`. Verify: `cargo test --test context_layers -- --nocapture`. Hours: 2.
 - [ ] t4: Write the fill order and the share in the section of context. Files: `docs/commands.md`. Verify: `pre-commit run --all-files`. Hours: 1.

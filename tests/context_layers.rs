@@ -1530,3 +1530,181 @@ fn an_on_request_layer_of_summaries_is_counted_and_not_served() {
         "{out}"
     );
 }
+
+/// The layers of the fixture of D83: no convention and no rule, so the output
+/// has the tier `summary` and the entry only.
+const D83_HEAD: &str = "[layers.foundation]\ntypes = [\"product\", \"system\", \"terms\"]\nfiles = [\"product.md\", \"system.md\", \"terms.md\"]\n\n[layers.rules]\ntypes = [\"rule\"]\n\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.summaries]\ntypes = [\"summary\"]\n\n";
+
+/// The fixture of D83 (design 0.8.1, part A): 6 areas, a real layer graph, and
+/// a `product` and a `system` document of about 4,100 bytes each. The summary
+/// of `valves` repeats one sentence `valves_repeat` times: 8 gives about 600
+/// bytes, and 56 gives about 3,000 bytes. `context src/motor.rs` reaches the
+/// chain `product`, `system`, `summaries/valves`, `summaries/valves/drives`.
+fn d83(valves_repeat: usize) -> Repo {
+    let r = Repo::with(D83_HEAD, ROLL_ROOTS);
+    r.write("src/valve.rs", "pub fn close_valve() {}\n");
+    r.write("src/motor.rs", "pub fn spin_up() {}\n");
+    r.write(
+        "docs/requirements/valves/drives/motor.md",
+        "---\nstatus: active\n---\n# Motor\n\n## Requirements\n\n- **spin-up**: The motor SHALL reach full speed in 2 seconds. See `src/motor.rs`.\n- **spin-down**: The motor SHALL stop in 1 second.\n",
+    );
+    r.write(
+        "docs/requirements/valves/closing.md",
+        "---\nstatus: active\n---\n# Closing\n\n## Requirements\n\n- **close-on-timeout**: The valve SHALL close after 30 seconds. See `src/valve.rs`.\n- **max-angle**: The valve SHALL open at most 80 degrees.\n",
+    );
+    for a in ["sensors", "pumps", "zones", "schedules"] {
+        r.write(
+            &format!("docs/requirements/{a}/main.md"),
+            &format!(
+                "---\nstatus: active\n---\n# {a}\n\n## Requirements\n\n- **first**: The {a} part SHALL start in 2 seconds.\n- **second**: The {a} part SHALL stop in 3 seconds.\n"
+            ),
+        );
+    }
+    for a in [
+        "valves/drives",
+        "valves",
+        "sensors",
+        "pumps",
+        "zones",
+        "schedules",
+    ] {
+        let body = if a == "valves" {
+            "A valve closes 30 seconds after its sensor stops. ".repeat(valves_repeat)
+        } else {
+            format!("The {a} part starts and stops on time. ").repeat(16)
+        };
+        summary(&r, a, &body);
+    }
+    for (path, id, title) in [
+        ("docs/system.md", "system", "Irrigation system"),
+        ("docs/product.md", "product", "Irrigation product"),
+    ] {
+        let mut body = format!("The {id} waters garden beds in zones. ").repeat(10);
+        for s in 1..=8 {
+            let text = format!("Part {s} of the {id} has its own text. ").repeat(11);
+            body.push_str(&format!("\n\n## Part {s}\n\n{text}"));
+        }
+        r.write(
+            path,
+            &format!("---\nrests-on: []\n---\n# {title}\n\n{body}\n"),
+        );
+    }
+    for id in ["system", "product"] {
+        let (code, out, err) = r.run(&["refresh", id, "--holds"]);
+        assert_eq!(code, 0, "{out}{err}");
+    }
+    let (code, out, err) = r.run(&["check", "--all"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(format!("{out}{err}").contains(" 0 errors"), "{out}{err}");
+    r
+}
+
+/// What `context` gives for one target at one budget: the bytes of the
+/// output, the characters and the tokens of its head, and the units of the
+/// tier `summary` with true for a section in full.
+struct Measured {
+    bytes: usize,
+    used: usize,
+    tokens: usize,
+    tier: Vec<(String, bool)>,
+}
+
+impl Measured {
+    /// One line for the test log, as a row of the table of the plan.
+    fn line(&self, valves_repeat: usize, budget: u32) -> String {
+        let tier: Vec<String> = self
+            .tier
+            .iter()
+            .map(|(id, full)| format!("{id}:{}", if *full { "full" } else { "stub" }))
+            .collect();
+        format!(
+            "d83 valves_repeat={valves_repeat} budget={budget} bytes={} used={} tokens={} tier: {}",
+            self.bytes,
+            self.used,
+            self.tokens,
+            tier.join(" ")
+        )
+    }
+
+    /// The documents of the tier, in the order of the output, each once.
+    fn docs(&self) -> Vec<String> {
+        let mut docs: Vec<String> = Vec::new();
+        for (id, _) in &self.tier {
+            let d = id.split('#').next().unwrap().to_string();
+            if docs.last() != Some(&d) {
+                docs.push(d);
+            }
+        }
+        docs
+    }
+}
+
+fn measure(r: &Repo, target: &str, budget: u32) -> Measured {
+    let b = budget.to_string();
+    let (code, out, err) = r.run(&["context", target, "--budget", &b]);
+    assert_eq!(code, 0, "{out}{err}");
+    let (code, json, err) = r.run(&["context", target, "--budget", &b, "--json"]);
+    assert_eq!(code, 0, "{json}{err}");
+    let head = out.lines().next().unwrap();
+    let tokens = head
+        .split("about ")
+        .nth(1)
+        .and_then(|p| p.split(' ').next())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or_else(|| panic!("no tokens in the head: {head}"));
+    Measured {
+        bytes: out.trim_end_matches('\n').len() + 1,
+        used: used_of(&out),
+        tokens,
+        tier: parse_units(&json)
+            .into_iter()
+            .filter(|(_, tier, _)| tier == "summary")
+            .map(|(id, _, full)| (id, full))
+            .collect(),
+    }
+}
+
+/// The output order of the 4 documents of the chain of `src/motor.rs`.
+const D83_ORDER: [&str; 4] = [
+    "product",
+    "system",
+    "summaries/valves",
+    "summaries/valves/drives",
+];
+
+#[test]
+fn the_fixture_of_d83_keeps_the_output_order_at_each_budget_and_prints_its_sizes() {
+    for valves_repeat in [8, 56] {
+        let r = d83(valves_repeat);
+        // At a large budget the tier has all 4 documents, so the guard below
+        // is not empty.
+        let all = measure(&r, "src/motor.rs", 100_000);
+        assert_eq!(
+            all.docs(),
+            D83_ORDER,
+            "{}",
+            all.line(valves_repeat, 100_000)
+        );
+        for budget in [4_000, 8_000, 12_000, 20_000] {
+            let m = measure(&r, "src/motor.rs", budget);
+            // `cargo test -- --nocapture` shows the line of each budget.
+            println!("{}", m.line(valves_repeat, budget));
+            // The documents that the tier serves keep the order from the top
+            // down. A document that the budget cuts leaves a gap, not a
+            // change of order.
+            let line = m.line(valves_repeat, budget);
+            let ranks: Vec<usize> = m
+                .docs()
+                .iter()
+                .map(|d| {
+                    D83_ORDER
+                        .iter()
+                        .position(|x| x == d)
+                        .unwrap_or_else(|| panic!("{d}: {line}"))
+                })
+                .collect();
+            assert!(ranks.windows(2).all(|w| w[0] < w[1]), "{line}");
+            assert!(m.used <= budget as usize, "{line}");
+        }
+    }
+}
