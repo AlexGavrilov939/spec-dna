@@ -64,7 +64,7 @@ status: approved
 - [x] t13: Make `next` note a test path of the section Proof that no pattern of the plan matches (D93 item 5). Files: `src/stage.rs`, `tests/branch_approval.rs`, `docs/commands.md`. Verify: `cargo test --test branch_approval`. Hours: 2.
 - [x] t14: Document SD915, SD401 and SD502, the 2 orders of the pull requests and the rework in the guide, and the sections of accept, next and stats. Files: `docs/diagnostics.md`, `docs/guides/change.md`, `docs/commands.md`. Verify: `pre-commit run --all-files` and `cargo run --quiet -- check --all` with no SD102 and no SD602. Hours: 2.
 - [x] t15: Add the second exception of the freeze of the acceptor file, and write the entry of the change. Files: `docs/evals.md`, `CHANGELOG.md`. Verify: `pre-commit run --all-files`. Hours: 1.
-- [ ] t16: Run the independent review and the acceptance pass, and finish the change. Files: none: finish deletes the folder of the change. Verify: `spec-dna finish lifecycle-fixes --dry-run`. Hours: 3.
+- [x] t16: Run the independent review and the acceptance pass, and finish the change. Files: none: finish deletes the folder of the change. Verify: `spec-dna finish lifecycle-fixes --dry-run`. Hours: 3.
 
 ## Risks
 
