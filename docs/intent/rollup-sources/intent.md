@@ -1,5 +1,5 @@
 ---
-status: draft
+status: accepted
 class: higher-risk
 ---
 # The roll-up reads interfaces, rules, decisions and research, and an old plan gets one note
