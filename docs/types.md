@@ -150,7 +150,7 @@ The frontier of a document is the set of items that it must pin:
 
 An active requirement is a requirement of a document with the status `active`, as SD608 reads it. A pin must name an item of the frontier. The frontier holds only items below the document. Thus a pin to a document of the same or a higher level gives SD643, and no cycle can pass `check`.
 
-`check` compares the pins with the frontier and the current hashes ([SD641 to SD645](diagnostics.md#roll-up-sd641-to-sd645)). `spec-dna refresh` writes the pins ([commands.md](commands.md#refresh)). The gate checks the pins, never the meaning: a summary with a wrong text and current pins passes. A `system` or `product` document starts with `rests-on: []` in its front matter, and `spec-dna refresh system` writes the pins. A document with no `rests-on` is not a roll-up document, and a 0.7.1 tree has none.
+`check` compares the pins with the frontier and the current hashes ([SD641 to SD647](diagnostics.md#roll-up-sd641-to-sd647)). `spec-dna refresh` writes the pins ([commands.md](commands.md#refresh)). The gate checks the pins, never the meaning: a summary with a wrong text and current pins passes. A `system` or `product` document starts with `rests-on: []` in its front matter, and `spec-dna refresh system` writes the pins. A document with no `rests-on` is not a roll-up document, and a 0.7.1 tree has none.
 
 ### The source layers
 

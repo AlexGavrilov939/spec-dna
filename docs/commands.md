@@ -260,7 +260,7 @@ When no deeper summary comes first and the entry is small, a summary of 3,000 ch
 
 A document of the tier is in no other tier. A target that names the document makes it an entry, and `[conventions]` can name a section of it. If the layer of the summaries has `context = "on-request"`, `context` counts the summaries and does not serve them.
 
-A document of the tier is stale when it has a finding of SD641 or SD642 ([diagnostics.md](diagnostics.md#roll-up-sd641-to-sd645)). The profile does not change this: a document is stale also where `check` turns those codes off. Its header has the word `stale` after the tier, for example `<!-- summaries/valves h:5d0e7c2a91b3f4e8 summary summary stale -->`. The header gives the type `summary`, then the tier `summary`. The stub line of a stale document ends with `[stale]`.
+A document of the tier is stale when it has a finding of SD641 or SD642 ([diagnostics.md](diagnostics.md#roll-up-sd641-to-sd647)). The profile does not change this: a document is stale also where `check` turns those codes off. Its header has the word `stale` after the tier, for example `<!-- summaries/valves h:5d0e7c2a91b3f4e8 summary summary stale -->`. The header gives the type `summary`, then the tier `summary`. The stub line of a stale document ends with `[stale]`.
 
 With `--json`, a stale unit has `"stale":true`, and the other units have no such field. The tier has the new value `summary` in the field `tier`. The word `stale` does not prove that a current summary is true. A tree with no roll-up document has no tier, and the output is the same as before.
 
