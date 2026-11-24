@@ -583,29 +583,33 @@ fn untracked_twins(evidence: &str, args: &[&str]) -> (i32, String) {
     (code, format!("{out}{err}"))
 }
 
-fn assert_skipped(code: i32, out: &str) {
+/// The tag is in a file that git does not track: SD617 gives the reason
+/// `outside-tree` (design 0.8.1, D85).
+fn assert_outside_tree(code: i32, out: &str) {
     let found = lines(out, "SD617");
     assert_eq!(found.len(), 1, "{out}");
-    assert!(found[0].contains("`test_init` was skipped"), "{out}");
+    assert!(
+        found[0].contains("tests/test_a.py:1 is in a file that is not in the code tree"),
+        "{out}"
+    );
     assert_eq!(code, 1, "{out}");
 }
 
 #[test]
-fn the_classname_binds_the_same_for_test_files_that_git_does_not_track() {
-    // Same case as above, but both test files are new and never added. The
-    // classname must still name its own file: the skipped case of `test_a.py`
-    // must not bind to the passed case of `test_b.py`.
+fn the_tag_of_a_test_file_that_git_does_not_track_proves_nothing() {
+    // Both test files are new and never added, so the tag of `test_a.py` is in
+    // no file of the code tree.
     let (code, out) = untracked_twins(REPORTS, &["--all"]);
-    assert_skipped(code, &out);
+    assert_outside_tree(code, &out);
 }
 
 #[test]
-fn an_unusable_test_glob_does_not_turn_the_untracked_twin_into_a_proof() {
+fn an_unusable_test_glob_does_not_turn_the_untracked_file_into_a_proof() {
     // A glob with `..` is no pathspec: the list of files is not limited, and
     // the filter keeps the test files.
     let evidence = format!("{REPORTS}tests = [\"tests/test_*.py\", \"../none/*.py\"]\n");
     let (code, out) = untracked_twins(&evidence, &["--all"]);
-    assert_skipped(code, &out);
+    assert_outside_tree(code, &out);
 }
 
 // The reports: SD613 to SD615
@@ -2253,4 +2257,179 @@ fn case_binds_a_name_with_a_slash_a_space_and_a_hash() {
     );
     assert!(!has(&out, "SD617") && !has(&out, "SD105"), "{out}");
     assert_eq!(code, 0, "{out}");
+}
+
+// A test file outside the code tree (design 0.8.1, D85)
+
+/// `check --reports` in the working tree, which reads the files that git does
+/// not track. A check with `--base` reads the tracked files only.
+fn check_tree(r: &Repo, extra: &[&str]) -> (i32, String) {
+    let mut args = vec!["check", "--reports"];
+    args.extend(extra);
+    let (code, out, err) = r.run(&args);
+    (code, format!("{out}{err}"))
+}
+
+/// A pull request with a new test file that git does not track, its passed
+/// case and a stamp.
+fn untracked_new_file() -> Repo {
+    let r = pr("strict", REPORTS, &[]);
+    r.write(
+        "tests/test_new.py",
+        "# covers: requirements/valves#flush\ndef test_new():\n    assert True\n",
+    );
+    r.write(
+        "reports/junit.xml",
+        &junit("pytest", &[("tests.test_new", "test_new", "")]),
+    );
+    stamp(&r);
+    r
+}
+
+#[test]
+fn a_tag_in_an_untracked_test_file_gives_sd617_with_the_reason_outside_tree() {
+    let r = untracked_new_file();
+    let (code, out) = check_tree(&r, &[]);
+    let found = lines(&out, "SD617");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0]
+            .contains("the tag at tests/test_new.py:1 is in a file that is not in the code tree"),
+        "{out}"
+    );
+    assert!(found[0].contains("`git add` the file"), "{out}");
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn an_edit_of_the_untracked_file_after_the_stamp_still_gives_sd617() {
+    // Issue 113: the edit left the report fresh, and the requirement stayed
+    // proven by a test that no longer had its form.
+    let r = untracked_new_file();
+    r.write(
+        "tests/test_new.py",
+        "# covers: requirements/valves#flush\ndef test_new():\n    assert False\n",
+    );
+    let (code, out) = check_tree(&r, &[]);
+    assert_eq!(lines(&out, "SD617").len(), 1, "{out}");
+    assert!(out.contains("not in the code tree"), "{out}");
+    assert!(!has(&out, "SD614"), "{out}");
+    assert_eq!(code, 1, "{out}");
+    // `--all` reports the state of the requirement.
+    let (_, out) = check_tree(&r, &["--all"]);
+    assert_eq!(lines(&out, "SD616").len(), 1, "{out}");
+}
+
+#[test]
+fn a_new_report_and_a_stamp_after_git_add_prove_the_requirement() {
+    // Guard: the file is in the index, so it is in the code tree.
+    let r = untracked_new_file();
+    r.git(&["add", "tests/test_new.py"]);
+    stamp(&r);
+    let (code, out) = check_tree(&r, &[]);
+    assert!(!has(&out, "SD617"), "{out}");
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn a_tracked_test_file_that_tree_exclude_matches_gives_sd617_outside_tree() {
+    let evidence = format!("{REPORTS}tree-exclude = [\"tests/test_valves.py\", \"**/*.md\"]\n");
+    let r = pr("strict", &evidence, &[("tests/test_valves.py", PY_TEST)]);
+    r.write(
+        "reports/junit.xml",
+        &junit(
+            "pytest",
+            &[("tests.test_valves", "test_closes_on_timeout", "")],
+        ),
+    );
+    stamp(&r);
+    let (code, out) = check(&r, &[]);
+    let found = lines(&out, "SD617");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(found[0].contains("not in the code tree"), "{out}");
+    assert!(found[0].contains("tree-exclude"), "{out}");
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn an_untracked_twin_keeps_its_own_file_and_does_not_prove_a_tracked_tag() {
+    // Guard: the tag is in the tracked `test_a.py` (skipped). The untracked
+    // `test_b.py` has the same test name, and its case passed. Its
+    // `classname` names its own file, so the case does not fit `test_a.py`.
+    let tag = "# covers: requirements/valves#flush\ndef test_init():\n    assert True\n";
+    let r = pr("strict", REPORTS, &[("tests/test_a.py", tag)]);
+    r.write("tests/test_b.py", "def test_init():\n    assert True\n");
+    r.write(
+        "reports/junit.xml",
+        &junit(
+            "pytest",
+            &[
+                ("tests.test_a", "test_init", SKIPPED),
+                ("tests.test_b", "test_init", ""),
+            ],
+        ),
+    );
+    stamp(&r);
+    let (code, out) = check_tree(&r, &[]);
+    let found = lines(&out, "SD617");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(found[0].contains("`test_init` was skipped"), "{out}");
+    assert_eq!(code, 1, "{out}");
+}
+
+// The hook that runs the tests (design 0.8.1, D89)
+
+#[test]
+fn a_report_written_again_after_the_stamp_gives_the_hook_text() {
+    let r = pytest_pr("strict", "");
+    let (code, out) = check(&r, &[]);
+    assert_eq!(code, 0, "{out}");
+    // A commit hook runs the tests again: new bytes, no stamp.
+    r.write(
+        "reports/junit.xml",
+        &junit(
+            "pytest",
+            &[("tests.test_valves", "test_closes_on_timeout", "")],
+        )
+        .replace("time=\"0.1\"", "time=\"0.2\""),
+    );
+    let (code, out) = check(&r, &[]);
+    let found = lines(&out, "SD614");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].contains("the bytes of the report `reports/junit.xml` changed after its stamp"),
+        "{out}"
+    );
+    assert!(
+        found[0].contains("a commit hook or a second test run"),
+        "{out}"
+    );
+    assert!(found[0].contains("one hook entry"), "{out}");
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn the_setup_of_the_hook_keeps_the_stamp_fresh() {
+    // The entry of the setup: the test command, then the stamp, in one
+    // `sh -c`. The stub test command writes new bytes at each run.
+    let r = pr("strict", REPORTS, &[("tests/test_valves.py", PY_TEST)]);
+    let entry = format!(
+        "mkdir -p reports && printf '<testsuites><testsuite name=\"s\" tests=\"1\" time=\"%s\"><testcase classname=\"tests.test_valves\" name=\"test_closes_on_timeout\" time=\"0.01\"/></testsuite></testsuites>' \"$$\" > reports/junit.xml && \"{BIN}\" evidence stamp"
+    );
+    let mut seen = Vec::new();
+    for _ in 0..2 {
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&entry)
+            .current_dir(&r.dir)
+            .output()
+            .unwrap();
+        assert!(status.status.success(), "{status:?}");
+        seen.push(r.read("reports/junit.xml"));
+        let (code, out) = check(&r, &[]);
+        assert!(!has(&out, "SD614"), "{out}");
+        assert_eq!(code, 0, "{out}");
+    }
+    // The 2 runs wrote different bytes.
+    assert_ne!(seen[0], seen[1]);
 }

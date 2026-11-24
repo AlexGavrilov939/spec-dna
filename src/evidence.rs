@@ -70,6 +70,8 @@ pub enum Reason {
     Template,
     /// No case of the fresh reports names the test, in the file of the tag.
     NoCase,
+    /// The test file of the tag is not in the code tree (design 0.8.1, D85).
+    OutsideTree,
     /// No report is fresh.
     NoReport,
 }
@@ -1447,6 +1449,20 @@ pub fn bind_covers(root: &std::path::Path, covers: &mut [Cover], reads: &Reads) 
     let binder = Binder::new(&reads.cases, &reads.test_files);
     let mut texts: HashMap<String, Option<String>> = HashMap::new();
     for cv in covers.iter_mut().filter(|c| !c.partial) {
+        // The stamp covers the code tree only (design 0.8.1, D85).
+        if !reads.in_tree.contains(&cv.path) {
+            cv.proof = Some(Proof::Unbound);
+            cv.bind = Some(Bind {
+                by: if cv.case.is_some() {
+                    By::Case
+                } else {
+                    By::Definition
+                },
+                test: cv.case.clone(),
+                ..Bind::default().unbound(Reason::OutsideTree)
+            });
+            continue;
+        }
         let text = texts.entry(cv.path.clone()).or_insert_with(|| {
             std::fs::read(root.join(&cv.path))
                 .ok()
@@ -1506,6 +1522,9 @@ fn unbound_text(at: &str, bind: &Bind) -> String {
         }
         Some(Reason::NoCase) => format!(
             "no case of a fresh report names the test `{name}` of the tag at {at} in that file; check the name, or add `case:\"<name>\"`"
+        ),
+        Some(Reason::OutsideTree) => format!(
+            "the tag at {at} is in a file that is not in the code tree (git does not track it, or `[evidence] tree-exclude` matches it), so the stamp does not cover it; `git add` the file, then run the tests and `spec-dna evidence stamp` again"
         ),
         _ => format!(
             "no case of a fresh report binds to the tag at {at}: a missing, stale or unreadable report has no case (SD613 to SD615), or the tag is not above its test; put the tag above the test, or add `case:<name>` to the tag"
@@ -2955,10 +2974,24 @@ mod tests {
         let reads = Reads {
             cases,
             fresh: 1,
+            in_tree: files.iter().cloned().collect(),
             test_files: files,
             ..Reads::default()
         };
         (dir, covers, reads)
+    }
+
+    #[test]
+    fn a_tag_in_a_file_outside_the_code_tree_binds_no_case() {
+        let (dir, mut covers, mut reads) = scale(2);
+        reads.in_tree.remove("tests/test_f1.py");
+        bind_covers(&dir, &mut covers, &reads);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(covers[0].proof, Some(Proof::Passed("test_a0".into(), 1)));
+        assert_eq!(covers[1].proof, Some(Proof::Unbound));
+        let bind = covers[1].bind.clone().unwrap();
+        assert_eq!(bind.reason, Some(Reason::OutsideTree));
+        assert_eq!(bind.cases, 0);
     }
 
     #[test]
