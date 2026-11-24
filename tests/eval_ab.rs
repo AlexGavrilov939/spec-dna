@@ -126,6 +126,21 @@ case "$mode" in
         printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.05,"num_turns":3,"result":"ok"}\n'
         printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.1,"num_turns":2,"result":"ok"}\n'
         exit 0 ;;
+    cut)
+        # A finished segment of 0.1 USD, and a last line that is cut.
+        echo 'status: done' > notes.txt
+        printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.1,"num_turns":40,"result":"ok"}\n{"type":"assist'
+        exit 0 ;;
+    refusedcut)
+        # A refusal that reports its cost, and an event after it.
+        printf '{"type":"result","subtype":"success","is_error":true,"api_error_status":503,"result":"x","total_cost_usd":0.5}\n'
+        printf '{"type":"system","subtype":"after"}\n'
+        exit 1 ;;
+    limitrefused)
+        # A segment that stops at the turn limit, and then a refusal of the API.
+        printf '{"type":"result","subtype":"error_max_turns","is_error":true,"total_cost_usd":0.1,"num_turns":5}\n'
+        printf '{"type":"result","subtype":"success","is_error":true,"api_error_status":503,"result":"x","total_cost_usd":0.2,"num_turns":1}\n'
+        exit 1 ;;
     nousage)
         echo 'status: done' > notes.txt
         printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.1,"permission_denials":[],"result":"ok"}\n'
@@ -735,6 +750,120 @@ fn a_wave_of_arms_has_the_turns_over_the_segments_of_each_arm() {
         out[at..].contains("\"turns\":5,\"segments\":2,\"seconds\":"),
         "{out}"
     );
+}
+
+#[test]
+fn a_cut_run_of_ab_and_arms_counts_its_budget() {
+    // The first call is cut after a segment of 0.1 USD. Its side has no cost
+    // and no turns, and the spend counts its budget of 1 USD. The other calls
+    // cost 0.1 USD each.
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.modes(&["cut"]);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(field(&out, "spend_usd"), "1.9", "{out}");
+    let pair = first_pair(&out);
+    let with = &pair[..pair.find("\"without\":").unwrap()];
+    assert!(with.contains("\"cost_usd\":null,"), "{with}");
+    assert!(with.contains("\"turns\":null,\"segments\":1,"), "{with}");
+    // The arm counts the budget too, as for a run with no cost.
+    assert!(
+        out.contains("\"with\":{\"runs\":5,\"passes\":5,\"pass_rate\":1,\"cost_usd\":1.4,"),
+        "{out}"
+    );
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM[..1]);
+    fx.modes(&["cut"]);
+    let (code, out, err) = fx.arms("none,lean", &["--max-total-usd", "100", "--json"], &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(field(&out, "spend_usd"), "1.1", "{out}");
+    assert!(out.contains("\"cost_usd\":null,"), "{out}");
+    assert!(out.contains("\"turns\":null,\"segments\":1,"), "{out}");
+}
+
+#[test]
+fn a_cut_run_that_a_signal_stops_in_its_check_pays_its_budget() {
+    // The agent ended with a cut stream, and SIGINT comes in the check. The
+    // side is not kept, and the spend has the budget of the run, 1 USD.
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM[..1]);
+    let path = fx.repo.dir.join(format!("evals/{}.json", TEAM[0]));
+    let eval = fs::read_to_string(&path).unwrap().replace(
+        "file_has notes.txt 'status: done'",
+        "kill -INT $PPID; sleep 30",
+    );
+    fs::write(&path, eval).unwrap();
+    fx.repo.commit("a check that interrupts");
+    fx.modes(&["cut"]);
+    let (code, out, err) = fx.arms("none", &["--max-total-usd", "100", "--json"], &[]);
+    assert_eq!(code, 130, "{out}{err}");
+    assert_eq!(field(&out, "spend_usd"), "1", "{out}");
+    assert!(out.contains("\"results\":[]}]}"), "{out}");
+}
+
+#[test]
+fn a_refused_attempt_with_a_cut_stream_counts_the_cost_that_it_reports() {
+    // Guard: a refused attempt counts the cost that `claude` reports, 0.5 USD,
+    // also when an event follows its result. 10 runs of 0.1 USD follow.
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.modes(&["refusedcut"]);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(field(&out, "spend_usd"), "1.5", "{out}");
+    assert!(
+        out.contains("\"excluded\":{\"with\":1,\"without\":0}"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_limit_in_an_earlier_segment_is_no_refusal_and_the_run_failed() {
+    // The agent ran out of turns: the run counts and fails, and no new attempt
+    // starts, also when a later segment is a refusal of the API.
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.modes(&["limitrefused"]);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(fx.calls().len(), 10, "no new attempt");
+    assert!(
+        out.contains("\"excluded\":{\"with\":0,\"without\":0}"),
+        "{out}"
+    );
+    let pair = first_pair(&out);
+    let with = &pair[..pair.find("\"without\":").unwrap()];
+    assert!(with.contains("\"subtype\":\"error_max_turns\""), "{with}");
+    assert!(with.contains("\"passed\":false"), "{with}");
+}
+
+#[test]
+fn the_resume_hint_quotes_a_path_with_a_space_or_a_quote() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM[..1]);
+    let args = ["--max-total-usd", "100", "--out", "evals/my results"];
+    let (code, out, err) = fx.arms("none", &args, &[("STUB_DF_LOW_AFTER", "0")]);
+    assert_eq!(code, 3, "{out}{err}");
+    let hint = "run the command again with `--resume 'evals/my results/arms-";
+    assert!(err.contains(hint), "{err}");
+    // The stop by a signal gives the whole command.
+    fx.modes(&["sigint"]);
+    let args = ["--max-total-usd", "100", "--out", "evals/it's here"];
+    let (code, out, err) = fx.arms("none", &args, &[]);
+    assert_eq!(code, 130, "{out}{err}");
+    let hint = "Go on with spec-dna eval run --arms none --resume 'evals/it'\\''s here/arms-";
+    assert!(err.contains(hint), "{err}");
+    // And so do the stops of `--ab`.
+    fs::remove_file(fx.path("n")).unwrap();
+    fx.modes(&["sigint"]);
+    let args = ["tdd", "--max-total-usd", "100", "--out", "evals/ab results"];
+    let (code, out, err) = fx.run(&args);
+    assert_eq!(code, 130, "{out}{err}");
+    let hint = "Go on with --resume 'evals/ab results/skills-";
+    assert!(err.contains(hint), "{err}");
+    let end = err[err.find(hint).unwrap() + hint.len()..]
+        .lines()
+        .next()
+        .unwrap();
+    assert!(end.ends_with(".json'"), "{end}");
 }
 
 #[test]

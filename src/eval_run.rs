@@ -139,9 +139,15 @@ pub(crate) struct Planned {
 pub(crate) struct RunResult {
     pub(crate) claude_exit: i32,
     pub(crate) subtype: Option<String>,
-    /// The `total_cost_usd` of `claude`, if it gave one.
+    /// The `total_cost_usd` of `claude`, if it gave one for the whole run. A
+    /// run that was killed, or whose stream is cut, has none.
     pub(crate) cost: Option<f64>,
-    /// The cost that the cap counts: the cost, or the budget of the run.
+    /// The last `total_cost_usd` of the stream, also of a run that is not
+    /// whole. A refused attempt counts it, or 0.
+    pub(crate) reported: Option<f64>,
+    /// The cost that the cap counts: the cost, or the budget of the run. For
+    /// an interrupted run, the cost that it has to pay: the budget if its
+    /// agent ended and the run is not whole.
     pub(crate) charged: f64,
     pub(crate) checks: Vec<(String, bool)>,
     pub(crate) passed: bool,
@@ -961,7 +967,7 @@ pub(crate) fn one_attempt(
         .map_err(|e| Fatal::Io(format!("cannot wait for `claude`: {e}")))?;
     // The wall time of the agent process, with 1 decimal.
     let seconds = (agent_start.elapsed().as_secs_f64() * 10.0).round() / 10.0;
-    let stdout = out_reader.and_then(|h| h.join().ok()).unwrap_or_default();
+    let Stream { out: stdout, cut } = out_reader.and_then(|h| h.join().ok()).unwrap_or_default();
     let stderr = err_reader.and_then(|h| h.join().ok()).unwrap_or_default();
     if ended == Ended::Interrupted {
         drop(temp);
@@ -969,6 +975,7 @@ pub(crate) fn one_attempt(
             claude_exit: -1,
             subtype: None,
             cost: None,
+            reported: None,
             charged: 0.0,
             checks: Vec::new(),
             passed: false,
@@ -987,7 +994,13 @@ pub(crate) fn one_attempt(
         Ended::Exited(code) => code,
         _ => -1,
     };
-    let (cost, mut subtype) = read_result(&stdout);
+    // The run is whole when `claude` ended by itself and no work followed its
+    // last result event. Else the last result does not give the cost or the
+    // turns of the run, and the run counts its budget (ADR 0033).
+    let whole = matches!(ended, Ended::Exited(code) if code >= 0) && !cut;
+    let (reported, mut subtype) = read_result(&stdout);
+    let cost = reported.filter(|_| whole);
+    let limited = first_limit(&stdout).is_some();
     let denials = result_denials(&stdout);
     let class = if timed_out {
         None
@@ -999,7 +1012,7 @@ pub(crate) fn one_attempt(
     }
     let models = result_models(&stdout);
     let tokens = result_tokens(&stdout);
-    let turns = result_turns(&stdout);
+    let turns = result_turns(&stdout).filter(|_| whole);
     let segments = Some(result_events(&stdout).len() as u32);
 
     let mut checks = Vec::new();
@@ -1028,11 +1041,18 @@ pub(crate) fn one_attempt(
             .map_err(|e| Fatal::Io(format!("cannot run `sh`: {e}")))?;
         if ended == Ended::Interrupted {
             drop(temp);
+            // The agent ran, so its cost is paid.
+            let paid = if whole {
+                reported.unwrap_or(0.0)
+            } else {
+                p.eval.max_budget_usd
+            };
             return Ok(RunResult {
                 claude_exit,
                 subtype,
                 cost,
-                charged: 0.0,
+                reported,
+                charged: paid,
                 checks,
                 passed: false,
                 class: None,
@@ -1051,11 +1071,12 @@ pub(crate) fn one_attempt(
         checks.push((c.name.clone(), ended == Ended::Exited(0)));
     }
     drop(temp);
-    let passed = claude_exit == 0 && checks.iter().all(|c| c.1);
+    let passed = claude_exit == 0 && !limited && checks.iter().all(|c| c.1);
     Ok(RunResult {
         claude_exit,
         subtype,
         cost,
+        reported,
         charged: cost.unwrap_or(p.eval.max_budget_usd),
         checks,
         passed,
@@ -1178,6 +1199,20 @@ fn free_mib(folder: &Path) -> Option<u64> {
     parse_df_available(&String::from_utf8_lossy(&out.stdout)).map(|kib| kib / 1024)
 }
 
+/// `path` as one word of a POSIX shell, for a command that a message prints: as
+/// it is when each character is safe, else in single quotes.
+pub(crate) fn shell_word(path: &str) -> String {
+    let safe = !path.is_empty()
+        && path
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "_-./,:+@%=".contains(c));
+    if safe {
+        path.to_string()
+    } else {
+        format!("'{}'", path.replace('\'', "'\\''"))
+    }
+}
+
 /// A folder that is below the floor of free space.
 pub(crate) struct Low {
     pub(crate) folder: String,
@@ -1191,7 +1226,7 @@ impl Low {
     /// again".
     pub(crate) fn message(&self, resume: Option<&str>) -> String {
         let again = match resume {
-            Some(file) => format!("run the command again with `--resume {file}`"),
+            Some(file) => format!("run the command again with `--resume {}`", shell_word(file)),
             None => "run the command again".to_string(),
         };
         format!(
@@ -1429,17 +1464,40 @@ fn read_line_capped(
     (total, over)
 }
 
-/// The `type` of an event of the stream: the line is a JSON object with a
-/// top-level `type` that is a string.
-fn event_type(line: &[u8]) -> Option<String> {
+/// What a line of the stream is.
+enum Line {
+    /// An event: a JSON object with a top-level `type` that is a string.
+    Event(String),
+    /// A JSON object that does not parse: its end is not there.
+    Torn,
+    /// Each other line: a plain text, or a JSON value that is no event.
+    Text,
+}
+
+fn line_kind(line: &[u8]) -> Line {
     if !line.trim_ascii_start().starts_with(b"{") {
-        return None;
+        return Line::Text;
     }
-    let value = json::parse(String::from_utf8_lossy(line).trim()).ok()?;
-    match value {
-        Value::Obj(_) => value.get("type").as_str().map(str::to_string),
-        _ => None,
+    match json::parse(String::from_utf8_lossy(line).trim()) {
+        Ok(value @ Value::Obj(_)) => match value.get("type").as_str() {
+            Some(kind) => Line::Event(kind.to_string()),
+            None => Line::Text,
+        },
+        Ok(_) => Line::Text,
+        Err(_) => Line::Torn,
     }
+}
+
+/// What the runner keeps of the stdout of `claude`.
+#[derive(Default)]
+struct Stream {
+    /// The `result` events, one on each line, and the text.
+    out: Vec<u8>,
+    /// True if work followed the last `result` event: another event (a segment
+    /// in flight), an object with no end (a cut line), or a line that the
+    /// reader discarded. The last result then does not give the cost of the
+    /// run.
+    cut: bool,
 }
 
 /// Reads the stdout of `claude` line by line (`--output-format stream-json`,
@@ -1448,13 +1506,15 @@ fn event_type(line: &[u8]) -> Option<String> {
 /// count. Another event is no text of the output: a run that ends with no
 /// result event then has the class of a refusal of an empty output, from its
 /// stderr. It also keeps the first `MAX_TEXT` bytes of the lines that are no
-/// event, for the text of a refusal. So the memory does not grow with the
-/// stream. It reads to the end, so the process never waits on a full pipe. A
-/// line of more than `MAX_STDOUT` bytes is discarded, and so is each result
-/// event after the first `MAX_STDOUT` bytes of them.
-fn read_events(r: impl Read) -> Vec<u8> {
+/// event, for the text of a refusal. It keeps their bytes as they are, with
+/// their ends of line, because the limit of a refusal text counts them. So the
+/// memory does not grow with the stream. It reads to the end, so the process
+/// never waits on a full pipe. A line of more than `MAX_STDOUT` bytes is
+/// discarded, and so is each result event after the first `MAX_STDOUT` bytes
+/// of them.
+fn read_events(r: impl Read) -> Stream {
     let mut r = std::io::BufReader::new(r);
-    let (mut kept, mut line) = (Vec::new(), Vec::new());
+    let (mut stream, mut line) = (Stream::default(), Vec::new());
     let (mut events, mut text) = (0usize, 0usize);
     loop {
         line.clear();
@@ -1463,28 +1523,45 @@ fn read_events(r: impl Read) -> Vec<u8> {
             break;
         }
         if over {
+            stream.cut = true;
             continue;
         }
-        while line.last().is_some_and(|b| matches!(b, b'\n' | b'\r')) {
-            line.pop();
-        }
-        if let Some(kind) = event_type(&line) {
-            if kind == "result" && events + line.len() < MAX_STDOUT as usize {
-                events += line.len() + 1;
-                kept.extend_from_slice(&line);
-                kept.push(b'\n');
+        match line_kind(&line) {
+            Line::Event(kind) => {
+                let keep = kind == "result" && events + line.len() < MAX_STDOUT as usize;
+                stream.cut = !keep;
+                if keep {
+                    events += line.len() + 1;
+                    // A text that the limit cut has no end of line.
+                    if stream.out.last().is_some_and(|b| *b != b'\n') {
+                        stream.out.push(b'\n');
+                    }
+                    stream.out.extend_from_slice(line.trim_ascii_end());
+                    stream.out.push(b'\n');
+                }
+                continue;
             }
-            continue;
+            Line::Torn => stream.cut = true,
+            Line::Text => {}
         }
-        let room = MAX_TEXT.saturating_sub(text);
-        if room > 0 {
-            let part = &line[..line.len().min(room - 1)];
-            text += part.len() + 1;
-            kept.extend_from_slice(part);
-            kept.push(b'\n');
-        }
+        let part = &line[..line.len().min(MAX_TEXT.saturating_sub(text))];
+        text += part.len();
+        stream.out.extend_from_slice(part);
     }
-    kept
+    stream
+}
+
+/// The first limit that a segment of the run stopped at: `error_max_turns` or
+/// `error_max_budget_usd`. A later segment can succeed, and the run stopped at
+/// the limit all the same (ADR 0033: a limit scores 0).
+fn first_limit(stdout: &[u8]) -> Option<String> {
+    result_events(stdout).iter().find_map(|event| {
+        event
+            .get("subtype")
+            .as_str()
+            .filter(|s| matches!(*s, "error_max_turns" | "error_max_budget_usd"))
+            .map(str::to_string)
+    })
 }
 
 /// The `result` events of the output of `claude`, in order: the lines that hold
@@ -1504,8 +1581,9 @@ fn result_object(stdout: &[u8]) -> Option<Value> {
     result_events(stdout).pop()
 }
 
-/// Reads `total_cost_usd` and `subtype` of the last result event of `claude`.
-/// Nothing else is read.
+/// Reads `total_cost_usd` of the last result event of `claude`, and the
+/// subtype of the run: the first limit of a segment, else the subtype of the
+/// last event. Nothing else is read.
 fn read_result(stdout: &[u8]) -> (Option<f64>, Option<String>) {
     let Some(obj) = result_object(stdout) else {
         return (None, None);
@@ -1521,7 +1599,7 @@ fn read_result(stdout: &[u8]) -> (Option<f64>, Option<String>) {
             (1..=40).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
         })
         .map(str::to_string);
-    (cost, subtype)
+    (cost, first_limit(stdout).or(subtype))
 }
 
 /// The sorted names of the models of `modelUsage` in the result of `claude`.
@@ -1666,8 +1744,9 @@ fn is_refusal_status(status: u32) -> bool {
 /// It is no run, and no result counts it.
 ///
 /// A result of `claude` with a `subtype` that starts with `error_max_` (the
-/// agent ran out of turns or budget) is never a refusal. Nor is a run that
-/// exits with 0 and has no error flag. Else:
+/// agent ran out of turns or budget) is never a refusal, and nor is a run with
+/// such a limit in any segment (`first_limit`). Nor is a run that exits with 0
+/// and has no error flag. Else, by the last result event:
 ///
 /// 1. A result object with `is_error` and an `api_error_status` of 401, 403,
 ///    429 or 500 to 599 is a refusal, whatever its text is.
@@ -1692,7 +1771,8 @@ fn is_refusal_status(status: u32) -> bool {
 pub(crate) fn refusal(claude_exit: i32, stdout: &[u8], stderr: &[u8]) -> Option<Refusal> {
     let obj = result_object(stdout);
     let is_error = obj.as_ref().is_some_and(|o| o.get("is_error").is_true());
-    if claude_exit == 0 && !is_error {
+    // An agent that stopped at a limit in one segment did run.
+    if (claude_exit == 0 && !is_error) || first_limit(stdout).is_some() {
         return None;
     }
     let short = |t: &str| {
@@ -2130,10 +2210,17 @@ mod tests {
 {"type":"result","subtype":"error_max_turns","total_cost_usd":0.2}
 {"type": "result", "subtype": "error_max_budget_usd", "total_cost_usd": 0.5}
 "#;
+        // The cost is that of the last event, and the subtype is the first
+        // limit of a segment.
         assert_eq!(
             read_result(text),
-            (Some(0.5), Some("error_max_budget_usd".to_string()))
+            (Some(0.5), Some("error_max_turns".to_string()))
         );
+        // With no limit, the subtype is that of the last event.
+        let text = br#"{"type":"result","subtype":"error_during_execution","total_cost_usd":0.2}
+{"type":"result","subtype":"success","total_cost_usd":0.3}
+"#;
+        assert_eq!(read_result(text), (Some(0.3), Some("success".to_string())));
         // No event `result`: nothing is read. An object with no `type`, and an
         // event of another type that holds the bytes, are no result.
         assert_eq!(read_result(br#"{"type":"system"}"#), (None, None));
@@ -2163,25 +2250,52 @@ mod tests {
         }
         input.extend_from_slice(b"{\"type\":\"result\",\"total_cost_usd\":0.5}\n");
         input.extend_from_slice(b"{\"type\":\"result\",\"total_cost_usd\":0.7}");
-        let kept = read_events(&input[..]);
+        let kept = read_events(&input[..]).out;
         // 64 KiB of the plain lines and the 2 result events (the last has no
-        // end of line). No other event is kept.
+        // end of line, and the text before them is cut at the limit). No other
+        // event is kept.
         assert!(kept.len() < MAX_TEXT + 200, "{}", kept.len());
         assert!(!String::from_utf8_lossy(&kept).contains("assistant"));
         assert_eq!(result_events(&kept).len(), 2);
         assert_eq!(read_result(&kept).0, Some(0.7));
-        // A line with no end of line, and a plain text, are kept as text.
-        assert_eq!(
-            read_events(&b"API Error: 502 Bad Gateway"[..]),
-            b"API Error: 502 Bad Gateway\n"
-        );
-        assert!(read_events(&b""[..]).is_empty());
+        // A text keeps its bytes, with and with no end of line.
+        for text in ["API Error: 502 Bad Gateway", "a\r\n\nb\n"] {
+            assert_eq!(read_events(text.as_bytes()).out, text.as_bytes());
+        }
+        assert!(read_events(&b""[..]).out.is_empty());
+    }
+
+    #[test]
+    fn a_stream_is_cut_when_work_follows_the_last_result() {
+        const RESULT: &str = "{\"type\":\"result\",\"total_cost_usd\":0.2}";
+        let cut = |text: String| read_events(text.as_bytes()).cut;
+        for whole in [
+            format!("{RESULT}\n"),
+            RESULT.to_string(),
+            format!("{RESULT}\n\na plain line\n[1]\n{{\"no\":\"type\"}}\n"),
+            // A later result closes the segment that was in flight.
+            format!("{RESULT}\n{{\"type\":\"assistant\"}}\n{RESULT}\n"),
+            format!("{{\"type\":\"assist\n{RESULT}\n"),
+            String::new(),
+        ] {
+            assert!(!cut(whole.clone()), "{whole}");
+        }
+        for broken in [
+            format!("{RESULT}\n{{\"type\":\"system\",\"subtype\":\"init\"}}\n"),
+            format!("{RESULT}\n{{\"type\":\"result\",\"total_cos"),
+            format!("{RESULT}\n{{\"type\":\"assist\n"),
+            format!("{RESULT}\n{{\"type\":\"assist\na plain line\n"),
+            "{\"type\":\"assistant\"}\n".to_string(),
+            "{\"type\":\"res".to_string(),
+        ] {
+            assert!(cut(broken.clone()), "{broken}");
+        }
     }
 
     /// The class of an attempt that failed, as the runner reads it: the stream
     /// through the reader, and then `refusal`.
     fn class_of_stream(stdout: &[u8], stderr: &[u8]) -> Option<Refusal> {
-        refusal(1, &read_events(stdout), stderr)
+        refusal(1, &read_events(stdout).out, stderr)
     }
 
     const INIT: &[u8] = b"{\"type\":\"system\",\"subtype\":\"init\"}\n";
@@ -2233,6 +2347,36 @@ mod tests {
             class_of_stream(b"{\"type\":\"assistant\",\"text\":\"ov", b""),
             Some(Refusal::Silent)
         );
+    }
+
+    #[test]
+    fn a_text_of_a_refusal_keeps_the_length_of_the_output() {
+        // 0.8.0 counted the bytes of stdout. A text of 599 bytes is short, and
+        // a text of 600 bytes is not, with or with no end of line. An event
+        // before the text is no part of it.
+        let text = |len: usize| format!("API Error: 429 {}", "x".repeat(len - 15));
+        for (len, end, class) in [
+            (599, "", Refusal::Other),
+            (598, "\n", Refusal::Other),
+            (597, "\r\n", Refusal::Other),
+            (600, "", Refusal::Silent),
+            (599, "\n", Refusal::Silent),
+        ] {
+            let out = format!("{}{end}", text(len));
+            assert_eq!(out.len(), len + end.len());
+            let mut stream = INIT.to_vec();
+            stream.extend_from_slice(out.as_bytes());
+            assert_eq!(
+                class_of_stream(out.as_bytes(), b""),
+                Some(class),
+                "{len} {end:?}"
+            );
+            assert_eq!(
+                class_of_stream(&stream, b""),
+                Some(class),
+                "after an event: {len} {end:?}"
+            );
+        }
     }
 
     #[test]
@@ -2320,9 +2464,17 @@ mod tests {
         input.extend_from_slice(b"{\"type\":\"assistant\",\"pad\":\"");
         input.resize(MAX_STDOUT as usize + 100, b'x');
         input.extend_from_slice(b"\"}\n{\"type\":\"result\",\"total_cost_usd\":0.4}\n");
-        let kept = read_events(&input[..]);
-        assert_eq!(read_result(&kept).0, Some(0.4));
-        assert!(kept.len() < 100, "{}", kept.len());
+        let stream = read_events(&input[..]);
+        assert_eq!(read_result(&stream.out).0, Some(0.4));
+        assert!(stream.out.len() < 100, "{}", stream.out.len());
+        assert!(!stream.cut);
+        // A line that the reader discards after the last result cuts the run:
+        // it can be the result of a later segment.
+        let at = input.len();
+        input.resize(at + MAX_STDOUT as usize + 100, b'x');
+        let stream = read_events(&input[..]);
+        assert_eq!(read_result(&stream.out).0, Some(0.4));
+        assert!(stream.cut);
     }
 
     #[test]
@@ -2383,6 +2535,7 @@ mod tests {
                     claude_exit: 0,
                     subtype: None,
                     cost: Some(0.5),
+                    reported: Some(0.5),
                     charged: 0.5,
                     checks: Vec::new(),
                     passed: *p,

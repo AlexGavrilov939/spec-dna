@@ -30,7 +30,7 @@ elif [ "$STUB_SHAPE" = stream ]; then
     printf '{"type":"system","subtype":"init"}\n'
     printf '{"type":"assistant","message":{"content":[{"type":"text","text":"start"}]}}\n'
     printf '{"type":"user","message":{"content":[{"type":"tool_result","content":"{\\"type\\":\\"result\\",\\"num_turns\\":99,\\"total_cost_usd\\":9}"}]}}\n'
-    printf '{"type":"result","subtype":"error_max_turns","is_error":true,"total_cost_usd":0.1,"num_turns":5,"modelUsage":{"claude-first":{"inputTokens":1,"outputTokens":2}},"result":"STUB-OUTPUT-TEXT"}\n'
+    printf '{"type":"result","subtype":"error_during_execution","is_error":true,"total_cost_usd":0.1,"num_turns":5,"modelUsage":{"claude-first":{"inputTokens":1,"outputTokens":2}},"result":"STUB-OUTPUT-TEXT"}\n'
     printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":%s,"num_turns":2,"modelUsage":{"claude-last":{"inputTokens":10,"outputTokens":20,"cacheReadInputTokens":30,"cacheCreationInputTokens":40}},"result":"STUB-OUTPUT-TEXT"}\n' "$STUB_COST"
 elif [ "$STUB_SHAPE" = limit ]; then
     # The stub of a stop at the turn limit: it needs the stream form, and it
@@ -53,6 +53,22 @@ elif [ "$STUB_SHAPE" = big ]; then
     line="{\"type\":\"assistant\",\"message\":{\"content\":\"$(printf 'x%.0s' $(seq 1 1000))\"}}"
     yes "$line" | head -n 17500
     printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":%s,"num_turns":4}\n' "$STUB_COST"
+elif [ "$STUB_SHAPE" = hung ] || [ "$STUB_SHAPE" = signal ] || [ "$STUB_SHAPE" = cut ] || [ "$STUB_SHAPE" = cutline ] || [ "$STUB_SHAPE" = inflight ] || [ "$STUB_SHAPE" = noise ]; then
+    # One finished segment, and then the end that the shape names.
+    printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":%s,"num_turns":40}\n' "$STUB_COST"
+    case "$STUB_SHAPE" in
+        hung) sleep 30 ;;
+        signal) kill -KILL $$ ;;
+        cut) printf '{"type":"result","subtype":"succ' ;;
+        cutline) printf '{"type":"assistant","message":{"conte\n' ;;
+        inflight) printf '{"type":"assistant","message":{}}\n' ;;
+        noise) printf 'a plain line of a hook\n\n' ;;
+    esac
+elif [ "$STUB_SHAPE" = limitfirst ]; then
+    # A segment that stops at a limit, and a later segment that succeeds.
+    printf '{"type":"result","subtype":"%s","is_error":true,"total_cost_usd":0.1,"num_turns":5}\n' "${STUB_LIMIT:-error_max_turns}"
+    printf '{"type":"result","subtype":"error_max_budget_usd","is_error":true,"total_cost_usd":0.15,"num_turns":1}\n'
+    printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":%s,"num_turns":2}\n' "$STUB_COST"
 elif [ "$STUB_SHAPE" = spaced ]; then
     # The stubs of `bench/` write a space after each colon.
     printf '{"type": "result", "subtype": "success", "is_error": false, "total_cost_usd": %s, "num_turns": 4}\n' "$STUB_COST"
@@ -423,6 +439,112 @@ fn a_compact_result_object_on_one_line_is_one_segment() {
         out.contains("\"turns\":7,\"segments\":1,\"seconds\":"),
         "{out}"
     );
+}
+
+// A run that was killed, or whose stream is cut, has no cost: it counts its
+// budget (ADR 0033). The cost of a finished segment is not the cost of the run.
+
+/// Asserts a run of 1 eval with a budget of 1 USD that has no cost of its own.
+fn assert_counts_its_budget(out: &str, shape: &str) {
+    for part in [
+        "\"cost_usd\":null",
+        "\"turns\":null,\"segments\":1,",
+        // The eval and the command.
+        "\"spend_usd\":1,\"results\"",
+        "\"spend_usd\":1,\"stopped\"",
+    ] {
+        assert!(out.contains(part), "{shape}: `{part}` not in {out}");
+    }
+}
+
+#[test]
+fn a_run_killed_at_the_time_limit_counts_its_budget_after_a_finished_segment() {
+    let fx = Fx::with(&[ev("example")]);
+    let (code, out, err) = fx.run_env(
+        &["--json"],
+        &[
+            ("STUB_SHAPE", "hung"),
+            ("STUB_COST", "0.2"),
+            ("SPEC_DNA_EVAL_TIMEOUT", "2"),
+        ],
+    );
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(out.contains("\"subtype\":\"timeout\""), "{out}");
+    assert_counts_its_budget(&out, "hung");
+    fx.assert_clean();
+}
+
+#[test]
+fn a_cut_stream_counts_the_budget_of_the_run() {
+    // A last line that is cut (with and with no end of line), and a segment in
+    // flight: an event after the last result event. `claude` exits with 0.
+    for shape in ["cut", "cutline", "inflight"] {
+        let fx = Fx::with(&[ev("example")]);
+        let (code, out, err) =
+            fx.run_env(&["--json"], &[("STUB_SHAPE", shape), ("STUB_COST", "0.2")]);
+        assert_eq!(code, 0, "{shape}: {out}{err}");
+        assert_counts_its_budget(&out, shape);
+    }
+}
+
+#[test]
+fn a_run_that_a_signal_ends_counts_its_budget() {
+    let fx = Fx::with(&[ev("example")]);
+    let (code, out, err) = fx.run_env(
+        &["--json"],
+        &[("STUB_SHAPE", "signal"), ("STUB_COST", "0.2")],
+    );
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(out.contains("\"claude_exit\":-1"), "{out}");
+    assert_counts_its_budget(&out, "signal");
+}
+
+#[test]
+fn a_plain_line_after_the_last_result_keeps_the_cost() {
+    // Guard: a line that is no event and no cut object cuts nothing.
+    let fx = Fx::with(&[ev("example")]);
+    let (code, out, err) = fx.run_env(
+        &["--json"],
+        &[("STUB_SHAPE", "noise"), ("STUB_COST", "0.2")],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("\"cost_usd\":0.2"), "{out}");
+    assert!(out.contains("\"turns\":40,\"segments\":1,"), "{out}");
+}
+
+// A limit of any segment is the limit of the run (ADR 0033: a limit scores 0).
+
+#[test]
+fn a_limit_of_any_segment_is_the_subtype_and_fails_the_run() {
+    for limit in ["error_max_turns", "error_max_budget_usd"] {
+        let fx = Fx::with(&[ev("example")]);
+        let (code, out, err) = fx.run_env(
+            &["--json"],
+            &[
+                ("STUB_SHAPE", "limitfirst"),
+                ("STUB_LIMIT", limit),
+                ("STUB_COST", "0.3"),
+            ],
+        );
+        // `claude` exits with 0 and the check passes, but the run failed. The
+        // first limit is the subtype.
+        assert_eq!(code, 1, "{limit}: {out}{err}");
+        assert!(
+            out.contains(&format!("\"claude_exit\":0,\"subtype\":\"{limit}\"")),
+            "{limit}: {out}"
+        );
+        assert!(out.contains("\"passed_runs\":0"), "{limit}: {out}");
+        assert!(
+            out.contains("\"name\":\"notes-done\",\"passed\":true"),
+            "{limit}: {out}"
+        );
+        // The stream is whole, so the cost and the turns stand.
+        assert!(out.contains("\"cost_usd\":0.3"), "{limit}: {out}");
+        assert!(
+            out.contains("\"turns\":8,\"segments\":3,"),
+            "{limit}: {out}"
+        );
+    }
 }
 
 // D100: a floor of free space before each run.

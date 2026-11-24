@@ -26,7 +26,7 @@ use crate::eval_run::{
     Ctx, EPS, Floor, HarnessArm, Limits, Low, Planned, Refusal, RunResult, Tokens,
     catch_interrupts, claude_version, first_wait, harness_list, interrupt_signal, load_evals,
     load_evals_in, make_out_dir, normalize_out, now_secs, one_attempt, plan_eval, r6,
-    replace_result, retry_waits, select as select_ids, tokens_json, utc_time,
+    replace_result, retry_waits, select as select_ids, shell_word, tokens_json, utc_time,
 };
 use crate::evals::{self, Eval};
 use crate::harness::{self, Level, Skill};
@@ -573,6 +573,8 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
     }
     let path = path?;
     eprintln!("eval run: the result is in {path}");
+    // The path in a command that a message prints is one word of a shell.
+    let hint = shell_word(&path);
     match stopped {
         None => Ok(0),
         Some(Stop::MaxTotal) => {
@@ -591,14 +593,14 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
         }
         Some(Stop::ApiError) => {
             eprintln!(
-                "eval run: stopped (api-error): the API refused the attempts and the waits are over, or 5 attempts in a row failed with an error and no cost; the partial result is written. Run the target again later with --resume {path}"
+                "eval run: stopped (api-error): the API refused the attempts and the waits are over, or 5 attempts in a row failed with an error and no cost; the partial result is written. Run the target again later with --resume {hint}"
             );
             Ok(3)
         }
         Some(Stop::Interrupted) => {
             let sig = interrupt_signal().unwrap_or(2);
             eprintln!(
-                "eval run: interrupted; the partial result is written. Go on with --resume {path}"
+                "eval run: interrupted; the partial result is written. Go on with --resume {hint}"
             );
             Ok((128 + sig) as u8)
         }
@@ -844,7 +846,7 @@ fn run_side(ctx: &mut Ctx, state: &mut State, job: &Job) -> Result<Done, Fatal> 
         let r: RunResult = one_attempt(ctx, p, job.edit, job.deny)?;
         if r.interrupted {
             // An agent run that ended before a check was interrupted is paid.
-            state.spend += r.cost.unwrap_or(0.0);
+            state.spend += r.charged;
             return Ok(Done::Stop(Stop::Interrupted));
         }
         state.models.extend(r.models.iter().cloned());
@@ -866,7 +868,8 @@ fn run_side(ctx: &mut Ctx, state: &mut State, job: &Job) -> Result<Done, Fatal> 
                 seconds: Some(r.seconds),
             }));
         };
-        state.spend += r.cost.unwrap_or(0.0);
+        // A refused attempt counts the cost that `claude` reports, or 0.
+        state.spend += r.reported.unwrap_or(0.0);
         state.excluded[job.arm_index] += 1;
         excluded += 1;
         account |= class == Refusal::Account;
@@ -2335,6 +2338,8 @@ pub fn run_arms(repo: &Repo, cfg: &Config, o: &ArmsOpts) -> Result<u8, Fatal> {
     }
     let path = path?;
     eprintln!("eval run: the result is in {path}");
+    // The path in a command that a message prints is one word of a shell.
+    let hint = shell_word(&path);
     match stopped {
         None => Ok(0),
         Some(Stop::MaxTotal) => {
@@ -2353,7 +2358,7 @@ pub fn run_arms(repo: &Repo, cfg: &Config, o: &ArmsOpts) -> Result<u8, Fatal> {
         }
         Some(Stop::ApiError) => {
             eprintln!(
-                "eval run: stopped (api-error): the API refused the attempts and the waits are over, or 5 attempts in a row failed with an error and no cost; the partial result is written. Run the arms again later with spec-dna eval run --arms {} --resume {path}",
+                "eval run: stopped (api-error): the API refused the attempts and the waits are over, or 5 attempts in a row failed with an error and no cost; the partial result is written. Run the arms again later with spec-dna eval run --arms {} --resume {hint}",
                 names.join(",")
             );
             Ok(3)
@@ -2361,7 +2366,7 @@ pub fn run_arms(repo: &Repo, cfg: &Config, o: &ArmsOpts) -> Result<u8, Fatal> {
         Some(Stop::Interrupted) => {
             let sig = interrupt_signal().unwrap_or(2);
             eprintln!(
-                "eval run: interrupted; the partial result is written. Go on with spec-dna eval run --arms {} --resume {path}",
+                "eval run: interrupted; the partial result is written. Go on with spec-dna eval run --arms {} --resume {hint}",
                 names.join(",")
             );
             Ok((128 + sig) as u8)
