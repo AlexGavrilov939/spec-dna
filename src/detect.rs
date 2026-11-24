@@ -1595,7 +1595,7 @@ pub fn typos_unguarded(read: &dyn Fn(&str) -> Option<String>) -> bool {
 /// in a row. A word is a run of letters and digits, in lower case. The id of a
 /// hook is no command: the hook `name-tests-test` of pre-commit-hooks checks
 /// file names and runs no test.
-const TEST_COMMANDS: [&[&str]; 16] = [
+const TEST_COMMANDS: [&[&str]; 19] = [
     &["pytest"],
     &["unittest"],
     &["nextest"],
@@ -1612,6 +1612,25 @@ const TEST_COMMANDS: [&[&str]; 16] = [
     &["go", "test"],
     &["dotnet", "test"],
     &["make", "test"],
+    &["bun", "test"],
+    &["tox"],
+    &["nox"],
+];
+
+/// The commands that never run the tests, with the name of a test tool in an
+/// argument (`eslint --plugin jest`).
+const NO_TEST_TOOLS: [&str; 5] = ["eslint", "prettier", "stylelint", "tsc", "codespell"];
+
+/// The flags that stop a command from running the tests, in lower case.
+const SKIP_FLAGS: [&str; 8] = [
+    "-dskiptests",
+    "-dskipits",
+    "-dmaven.test.skip",
+    "-x test",
+    "--exclude-task test",
+    "--collect-only",
+    "--help",
+    "--version",
 ];
 
 /// A build tool and the goals that run the tests, as words. The tool runs the
@@ -1643,23 +1662,47 @@ const BUILD_TOOLS: [(&[&str], &[&str]); 2] = [
     ),
 ];
 
-/// True if the entry of a hook runs the tests.
-fn runs_tests(entry: &str) -> bool {
-    let words: Vec<String> = entry
+/// True if one command runs the tests.
+fn command_runs_tests(command: &str) -> bool {
+    let lower = command.to_ascii_lowercase();
+    let words: Vec<&str> = lower
         .split(|c: char| !c.is_ascii_alphanumeric())
         .filter(|w| !w.is_empty())
-        .map(str::to_ascii_lowercase)
         .collect();
+    // A lint tool runs no test, also with the name of a test tool in an argument.
+    if words.iter().any(|w| NO_TEST_TOOLS.contains(w)) {
+        return false;
+    }
+    // The flags are read from the text: the split loses `-D` and `-x`.
+    let flagged = |flag: &str| {
+        lower.match_indices(flag).any(|(i, _)| {
+            // `-x test` is no flag in `pytest -x test_valves.py`.
+            let next = lower[i + flag.len()..].chars().next();
+            !next.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+        })
+    };
+    if SKIP_FLAGS.iter().any(|f| flagged(f)) {
+        return false;
+    }
     let command = TEST_COMMANDS
         .iter()
         .any(|cmd| words.windows(cmd.len()).any(|w| w == *cmd));
     let build = BUILD_TOOLS.iter().any(|(tools, goals)| {
         words
             .iter()
-            .position(|w| tools.contains(&w.as_str()))
-            .is_some_and(|at| words[at + 1..].iter().any(|w| goals.contains(&w.as_str())))
+            .position(|w| tools.contains(w))
+            .is_some_and(|at| words[at + 1..].iter().any(|w| goals.contains(w)))
     });
     command || build
+}
+
+/// True if the entry of a hook runs the tests: one of its shell commands does.
+/// The commands end at `&&`, `||`, `;`, `|` and a new line.
+fn runs_tests(entry: &str) -> bool {
+    entry
+        .split(['\n', ';', '|'])
+        .flat_map(|part| part.split("&&"))
+        .any(command_runs_tests)
 }
 
 /// The text of a line of YAML without its comment: a `#` at the start, or after
@@ -2424,5 +2467,43 @@ mod test_hook_tests {
         assert_eq!(test_hooks_without_stamp(yaml), ["x"]);
         let yaml = "      - id: x\n        entry: rustfmt  # pytest later\n";
         assert!(test_hooks_without_stamp(yaml).is_empty());
+    }
+
+    #[test]
+    fn a_skip_flag_cancels_the_note_and_more_runners_count() {
+        let hook = |entry: &str| format!("      - id: x\n        entry: {entry}\n");
+        for no in [
+            "mvn -DskipTests package",
+            "mvn -DskipITs verify",
+            "./gradlew build -x test",
+            "pytest --collect-only",
+            "npx eslint --plugin jest src",
+            "npx prettier --check .",
+            "eslint --plugin jest .",
+        ] {
+            assert!(test_hooks_without_stamp(&hook(no)).is_empty(), "{no}");
+        }
+        for yes in [
+            "bun test",
+            "tox",
+            "nox -s tests",
+            "make test",
+            "mvn test -q",
+            "pytest -x test_valves.py",
+        ] {
+            assert_eq!(test_hooks_without_stamp(&hook(yes)), ["x"], "{yes}");
+        }
+        // The check is by command: a lint command and a test command in one
+        // entry still give the note for the test command.
+        assert_eq!(
+            test_hooks_without_stamp(&hook("sh -c 'eslint . && pytest -q'")),
+            ["x"]
+        );
+        assert!(
+            test_hooks_without_stamp(&hook(
+                "sh -c 'pytest --collect-only && eslint --plugin jest .'"
+            ))
+            .is_empty()
+        );
     }
 }
