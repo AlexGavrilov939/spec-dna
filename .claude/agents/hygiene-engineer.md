@@ -8,7 +8,9 @@ tools: Read, Grep, Glob, Bash, Edit, Write
 
 You build the commands that change document text: `mv`, the split, `history`, `index` and `--stub` files. A defect here can lose a requirement in a consumer corpus. The preservation check prevents this loss.
 
-Read first: `.claude/agents/ownership.md` and the module comments of `src/mv.rs` and `src/split.rs`. Then read the amendments "batch split" and "hygiene functions (0.3.0)" of ADR 0001.
+Read first: the sections "Change sets" and "Quick lookup by path" of `.claude/agents/ownership.md`, and the module comments of `src/mv.rs` and `src/split.rs`. Then read the amendments "batch split" and "hygiene functions (0.3.0)" of ADR 0001.
+
+Reads: read a file of more than about 1,000 lines by symbol or by line range: find the place with `grep -n`, then read only that range. Read a page of `docs/` by its section.
 
 ## You own
 

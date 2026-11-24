@@ -160,6 +160,100 @@ fn meter_reads_a_long_last_line() {
     assert!(out.contains("about 320K tokens"), "{out}");
 }
 
+/// An assistant line with a top-level usage that holds `top` tokens and one
+/// iteration for each `(type, tokens)` pair.
+fn assistant_iterations(top: u64, iterations: &[(&str, u64)]) -> String {
+    let its: Vec<String> = iterations
+        .iter()
+        .map(|(kind, n)| {
+            format!(
+                r#"{{"input_tokens":1,"output_tokens":5,"cache_read_input_tokens":{n},"cache_creation_input_tokens":0,"type":"{kind}"}}"#
+            )
+        })
+        .collect();
+    format!(
+        r#"{{"type":"assistant","message":{{"role":"assistant","content":[{{"type":"text","text":"t"}}],"usage":{{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":{top},"output_tokens":5,"iterations":[{}]}}}}}}"#,
+        its.join(",")
+    )
+}
+
+#[test]
+fn meter_is_not_cumulative() {
+    // The meter reads the last request, not the sum of the requests.
+    let dir = Dir::new();
+    let t = dir.0.join("s1.jsonl");
+    write_transcript(&t, &[assistant(100_000, 5), assistant(120_000, 5)]);
+    let (_, out, _) = hook(
+        &dir,
+        &["context-meter", "--levels", "110000"],
+        &event(&t, "s1", None),
+        &[],
+    );
+    assert!(out.contains("about 120K tokens"), "{out}");
+}
+
+#[test]
+fn meter_counts_the_last_executor_iteration() {
+    // The top-level usage is the sum of 2 iterations of 130K: the context is 130K.
+    let dir = Dir::new();
+    let t = dir.0.join("s1.jsonl");
+    let line = assistant_iterations(260_000, &[("message", 130_000), ("message", 130_000)]);
+    write_transcript(&t, &[line]);
+    let (code, out, _) = hook(
+        &dir,
+        &["context-meter", "--levels", "250000"],
+        &event(&t, "s1", None),
+        &[],
+    );
+    assert_eq!((code, out.as_str()), (0, ""));
+    assert_eq!(dir.state_files(), 0);
+}
+
+#[test]
+fn meter_skips_a_synthetic_line() {
+    let dir = Dir::new();
+    let t = dir.0.join("s1.jsonl");
+    let ev = event(&t, "s1", None);
+    let args = ["context-meter", "--levels", "250000"];
+    write_transcript(&t, &[assistant(260_000, 5)]);
+    let (_, out, _) = hook(&dir, &args, &ev, &[]);
+    assert!(out.contains("about 260K tokens"), "{out}");
+    // A synthetic line with a usage of 0 must not reset the state.
+    let synthetic = r#"{"type":"assistant","message":{"role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"x"}],"usage":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0}}}"#;
+    write_transcript(&t, &[assistant(260_000, 5), synthetic.to_string()]);
+    let (_, out, _) = hook(&dir, &args, &ev, &[]);
+    assert_eq!(out, "");
+    assert_eq!(dir.state_files(), 1);
+    // The next real line of the same size is the same crossing: no new notice.
+    write_transcript(
+        &t,
+        &[
+            assistant(260_000, 5),
+            synthetic.to_string(),
+            assistant(262_000, 5),
+        ],
+    );
+    let (_, out, _) = hook(&dir, &args, &ev, &[]);
+    assert_eq!(out, "");
+}
+
+#[test]
+fn meter_ignores_an_iteration_with_no_token_fields() {
+    // A new shape of an iteration must not reset the meter: the top-level usage counts.
+    let dir = Dir::new();
+    let t = dir.0.join("s1.jsonl");
+    let ev = event(&t, "s1", None);
+    let args = ["context-meter", "--levels", "250000"];
+    write_transcript(&t, &[assistant(260_000, 5)]);
+    let (_, out, _) = hook(&dir, &args, &ev, &[]);
+    assert!(out.contains("about 260K tokens"), "{out}");
+    let odd = r#"{"type":"assistant","message":{"role":"assistant","usage":{"cache_read_input_tokens":260000,"iterations":[{"type":"message"}]}}}"#;
+    write_transcript(&t, &[assistant(260_000, 5), odd.to_string()]);
+    let (_, out, _) = hook(&dir, &args, &ev, &[]);
+    assert_eq!(out, "");
+    assert_eq!(dir.state_files(), 1);
+}
+
 #[test]
 fn meter_is_silent_on_bad_input() {
     let dir = Dir::new();

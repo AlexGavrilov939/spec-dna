@@ -8,7 +8,9 @@ tools: Read, Grep, Glob, Bash, Edit, Write
 
 You build the core of spec-dna: the shared modules that every command uses. `architect` decides the contracts. You implement them.
 
-Read first: `.claude/agents/ownership.md`, `docs/adr/0001-information-model.md` and `docs/config.md`.
+Read first: the sections "Change sets" and "Quick lookup by path" of `.claude/agents/ownership.md`, and the section of `docs/config.md` of each key that your task changes. Read `docs/adr/0001-information-model.md` only for a change of the model, an id or a hash.
+
+Reads: read a file of more than about 1,000 lines by symbol or by line range: find the place with `grep -n`, then read only that range. Read a page of `docs/` by its section.
 
 ## You own
 

@@ -8,7 +8,9 @@ tools: Read, Grep, Glob, Bash, Edit, Write
 
 You build `spec-dna transcript`. It measures what an agent read and what it cost. A transcript can contain secrets, so the privacy rule comes before each feature.
 
-Read first: `.claude/agents/ownership.md`, `docs/transcript.md`, and the module comment of `src/transcript.rs`.
+Read first: the sections "Change sets" and "Quick lookup by path" of `.claude/agents/ownership.md`, `docs/transcript.md`, and the module comment of `src/transcript.rs`.
+
+Reads: read a file of more than about 1,000 lines by symbol or by line range: find the place with `grep -n`, then read only that range. Read a page of `docs/` by its section.
 
 ## You own
 

@@ -255,7 +255,7 @@ Each teammate needs spec-dna 0.5.0 or later on `PATH` for the hooks. The hook `p
 
 ### `spec-dna hook context-meter`
 
-An agent cannot see the size of its context, and each request sends the whole context again. After each tool call, the hook reads the last token count of the transcript. When the context reaches a level for the first time, the hook adds a message to the context of the agent:
+An agent cannot see the size of its context, and each request sends the whole context again. After each tool call, the hook reads the last token count of the transcript. The count of a line is the sum of the 3 input token fields of the last iteration of type `message` in `usage.iterations` that has one of them. If the line has no such iteration, the count is the sum of the same fields of `usage`. The hook does not count a line of the model `<synthetic>`: it reads the line before it. When the context reaches a level for the first time, the hook adds a message to the context of the agent:
 
 - The first level: delegate long searches and long reads to a subagent.
 - A higher level: save the state of the task in a file, and tell the user that a new session can continue from it.

@@ -294,7 +294,9 @@ fn contains(hay: &[u8], needle: &[u8]) -> bool {
 }
 
 /// Returns the context size of a transcript line, or `None` if the line is not
-/// an assistant message with a usage object.
+/// an assistant message with a usage object. The size is the sum of the 3 input
+/// token fields of the last iteration of type `message` that has them, else of
+/// `usage`. A line of the model `<synthetic>` has no size.
 fn line_context(line: &[u8]) -> Option<u64> {
     if !contains(line, br#""type":"assistant""#) {
         return None;
@@ -303,17 +305,43 @@ fn line_context(line: &[u8]) -> Option<u64> {
     if v.get("type").as_str() != Some("assistant") {
         return None;
     }
+    // A synthetic line has no request: its usage is 0.
+    if v.get("message").get("model").as_str() == Some("<synthetic>") {
+        return None;
+    }
     let usage = v.get("message").get("usage");
     if !matches!(usage, Value::Obj(_)) {
         return None;
     }
-    Some(
-        usage
-            .get("input_tokens")
-            .as_u64()
-            .saturating_add(usage.get("cache_creation_input_tokens").as_u64())
-            .saturating_add(usage.get("cache_read_input_tokens").as_u64()),
-    )
+    // The top-level usage can be the sum of several iterations of one request.
+    // The context is the one of the last iteration of the executor.
+    let last = usage
+        .get("iterations")
+        .as_arr()
+        .iter()
+        .rev()
+        .find(|i| i.get("type").as_str() == Some("message") && has_tokens(i));
+    Some(token_sum(last.unwrap_or(usage)))
+}
+
+/// Returns true if a usage object has at least 1 of the 3 input token fields.
+fn has_tokens(usage: &Value) -> bool {
+    [
+        "input_tokens",
+        "cache_creation_input_tokens",
+        "cache_read_input_tokens",
+    ]
+    .iter()
+    .any(|k| !matches!(usage.get(k), Value::Null))
+}
+
+/// Returns the sum of the 3 input token fields of a usage object.
+fn token_sum(usage: &Value) -> u64 {
+    usage
+        .get("input_tokens")
+        .as_u64()
+        .saturating_add(usage.get("cache_creation_input_tokens").as_u64())
+        .saturating_add(usage.get("cache_read_input_tokens").as_u64())
 }
 
 // ---------------------------------------------------------------------------
@@ -2899,6 +2927,72 @@ mod tests {
         assert_eq!(meter(&ev, &o, &tmp.state()), None);
         write_lines(&t, &[assistant(0, 0, 310_000)]);
         assert_eq!(meter(&ev, &o, &tmp.state()), None);
+    }
+
+    fn iterated(top: u64, iterations: &[(&str, u64)]) -> String {
+        let its: Vec<String> = iterations
+            .iter()
+            .map(|(kind, n)| {
+                format!(
+                    r#"{{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":{n},"output_tokens":5,"type":"{kind}"}}"#
+                )
+            })
+            .collect();
+        format!(
+            r#"{{"type":"assistant","message":{{"role":"assistant","usage":{{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":{top},"output_tokens":5,"iterations":[{}]}}}}}}"#,
+            its.join(",")
+        )
+    }
+
+    #[test]
+    fn line_context_reads_the_last_iteration_of_type_message() {
+        // The advisor iteration at the end does not count.
+        let line = iterated(
+            300_000,
+            &[
+                ("message", 100_000),
+                ("message", 120_000),
+                ("advisor_message", 80_000),
+            ],
+        );
+        assert_eq!(line_context(line.as_bytes()), Some(120_001));
+        // The last iteration of type message is the first of 2.
+        let line = iterated(200_000, &[("message", 90_000), ("advisor_message", 9_000)]);
+        assert_eq!(line_context(line.as_bytes()), Some(90_001));
+        // No iteration of type message: the top-level usage counts.
+        let line = iterated(70_000, &[("advisor_message", 9_000)]);
+        assert_eq!(line_context(line.as_bytes()), Some(70_001));
+        // No iterations, an empty list, or a value that is not a list (guard).
+        assert_eq!(line_context(assistant(1, 2, 3).as_bytes()), Some(6));
+        // An iteration of type message with no token field is skipped.
+        let line = assistant(1, 2, 3).replace(
+            r#""output_tokens":5"#,
+            r#""output_tokens":5,"iterations":[{"type":"message","input_tokens":40},{"type":"message"}]"#,
+        );
+        assert_eq!(line_context(line.as_bytes()), Some(40));
+        let line = assistant(1, 2, 3).replace(
+            r#""output_tokens":5"#,
+            r#""output_tokens":5,"iterations":[{"type":"message"}]"#,
+        );
+        assert_eq!(line_context(line.as_bytes()), Some(6));
+        let line = iterated(5_000, &[]);
+        assert_eq!(line_context(line.as_bytes()), Some(5_001));
+        let line = assistant(1, 2, 3).replace(
+            r#""output_tokens":5"#,
+            r#""output_tokens":5,"iterations":7"#,
+        );
+        assert_eq!(line_context(line.as_bytes()), Some(6));
+    }
+
+    #[test]
+    fn line_context_skips_a_synthetic_line() {
+        let line = assistant(0, 0, 9).replace(
+            r#""role":"assistant""#,
+            r#""role":"assistant","model":"<synthetic>""#,
+        );
+        assert_eq!(line_context(line.as_bytes()), None);
+        let real = line.replace("<synthetic>", "some-model");
+        assert_eq!(line_context(real.as_bytes()), Some(9));
     }
 
     #[test]
