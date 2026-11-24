@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 ---
 # A new project has no advisor, and the advisor is consulted only in a higher-risk change: spec
 
@@ -27,4 +27,4 @@ None. This change adds, changes or removes no requirement, because this reposito
 
 ## Open questions
 
-- [ ] With the advisor off, may the settings of the project also turn off an advisor of the user settings with `env.CLAUDE_CODE_DISABLE_ADVISOR_TOOL = "1"` (Q3 of the design)? The design recommends (a): no, the project writes no `advisorModel`, and the person keeps control of the own settings. The plan follows (a). Option (b) adds a key of the environment to the settings and one task. The owner answers before the approval of the spec.
+- [x] With the advisor off, may the settings of the project also turn off an advisor of the user settings with `env.CLAUDE_CODE_DISABLE_ADVISOR_TOOL = "1"` (Q3 of the design)? The design recommends (a): no, the project writes no `advisorModel`, and the person keeps control of the own settings. The plan follows (a). Option (b) adds a key of the environment to the settings and one task. The owner answers before the approval of the spec. Answer of the owner (word of 2026-11-24, the recommendation of the design): (a), no.
