@@ -235,12 +235,7 @@ mod tests {
     use crate::harness::Skill;
 
     fn table() -> Evals {
-        Evals {
-            dir: "evals".into(),
-            min_pass_rate: 0.8,
-            runs: 3,
-            max_total_usd: 20.0,
-        }
+        Evals::defaults("evals")
     }
 
     /// The skill of a group: the group `accept` measures the skill `review`.

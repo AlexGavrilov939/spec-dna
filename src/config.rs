@@ -177,6 +177,9 @@ pub const DEFAULT_EVALS_DIR: &str = "evals";
 pub const DEFAULT_EVALS_MIN_PASS_RATE: f64 = 0.8;
 pub const DEFAULT_EVALS_RUNS: u32 = 3;
 pub const DEFAULT_EVALS_MAX_TOTAL_USD: f64 = 20.0;
+/// The free space, in MiB, that `eval run` needs before each run (D100). A
+/// chosen floor, not a measurement.
+pub const DEFAULT_EVALS_MIN_FREE_MIB: u64 = 2048;
 
 /// The table `[evals]` (ADR 0008).
 #[derive(Clone, Debug, PartialEq)]
@@ -191,6 +194,9 @@ pub struct Evals {
     pub runs: u32,
     /// The most that `eval run` can spend, in USD. Above 0.
     pub max_total_usd: f64,
+    /// The free space in MiB that the temporary folder and the folder of the
+    /// result need before each run. 0 turns the check off.
+    pub min_free_mib: u64,
 }
 
 impl Evals {
@@ -203,6 +209,7 @@ impl Evals {
             min_pass_rate: DEFAULT_EVALS_MIN_PASS_RATE,
             runs: DEFAULT_EVALS_RUNS,
             max_total_usd: DEFAULT_EVALS_MAX_TOTAL_USD,
+            min_free_mib: DEFAULT_EVALS_MIN_FREE_MIB,
         }
     }
 
@@ -238,12 +245,18 @@ impl Evals {
                 .filter(|n| n.is_finite() && *n > 0.0)
                 .ok_or("`evals.max-total-usd` must be a number above 0")?,
         };
+        let min_free_mib = match f.take("min-free-mib") {
+            None => DEFAULT_EVALS_MIN_FREE_MIB,
+            Some(Value::Integer(n)) if *n >= 0 => *n as u64,
+            Some(_) => return Err("`evals.min-free-mib` must be an integer of 0 or more".into()),
+        };
         f.done()?;
         Ok(Evals {
             dir,
             min_pass_rate,
             runs,
             max_total_usd,
+            min_free_mib,
         })
     }
 }
@@ -3651,18 +3664,20 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
                 dir: "evals".into(),
                 min_pass_rate: 0.8,
                 runs: 3,
-                max_total_usd: 20.0
+                max_total_usd: 20.0,
+                min_free_mib: 2048
             }
         );
         let e = with(
             "",
-            "[evals]\ndir = \"./q/e/\"\nmin-pass-rate = 1\nruns = 100\nmax-total-usd = 0.25\n",
+            "[evals]\ndir = \"./q/e/\"\nmin-pass-rate = 1\nruns = 100\nmax-total-usd = 0.25\nmin-free-mib = 512\n",
         )
         .unwrap()
         .evals
         .unwrap();
         assert_eq!(e.dir, "q/e");
         assert_eq!((e.min_pass_rate, e.runs, e.max_total_usd), (1.0, 100, 0.25));
+        assert_eq!(e.min_free_mib, 512);
         assert_eq!(
             with("", "[evals]\nmin-pass-rate = 0\n")
                 .unwrap()
@@ -3683,6 +3698,36 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
         }
         let e = with("", "[evals]\ndir = \"..\"\n").unwrap_err();
         assert!(e.contains("`evals.dir`") && e.contains("`evals`"), "{e}");
+    }
+
+    #[test]
+    fn min_free_mib_is_an_integer_of_0_or_more_with_the_default_2048() {
+        let mib = |text: &str| -> Result<u64, String> {
+            with("", &format!("[evals]\n{text}")).map(|c| c.evals.unwrap().min_free_mib)
+        };
+        assert_eq!(mib("").unwrap(), 2048);
+        assert_eq!(DEFAULT_EVALS_MIN_FREE_MIB, 2048);
+        assert_eq!(Evals::defaults("evals").min_free_mib, 2048);
+        // 0 turns the check off.
+        assert_eq!(mib("min-free-mib = 0\n").unwrap(), 0);
+        assert_eq!(mib("min-free-mib = 1\n").unwrap(), 1);
+        assert_eq!(mib("min-free-mib = 1048576\n").unwrap(), 1_048_576);
+        // A value that is no integer of 0 or more is a configuration error.
+        for bad in [
+            "min-free-mib = -1",
+            "min-free-mib = 1.5",
+            "min-free-mib = 2048.0",
+            "min-free-mib = \"2048\"",
+            "min-free-mib = true",
+            "min-free-mib = [1]",
+            "min-free-mib = inf",
+        ] {
+            let e = mib(&format!("{bad}\n")).unwrap_err();
+            assert!(
+                e.contains("`evals.min-free-mib`") && e.contains("integer of 0 or more"),
+                "{bad}: {e}"
+            );
+        }
     }
 
     #[test]
@@ -4848,11 +4893,20 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
             !is_unknown(&e),
             "the parser does not know `lint.history-terms`: {e}"
         );
-        // The keys of `[evals]`: exactly the 4 keys of step 4.
+        // The keys of `[evals]`: the 4 keys of step 4, and `min-free-mib`.
         let evals = schema.get("properties").get("evals");
         let mut ekeys = keys(evals);
         ekeys.sort();
-        assert_eq!(ekeys, ["dir", "max-total-usd", "min-pass-rate", "runs"]);
+        assert_eq!(
+            ekeys,
+            [
+                "dir",
+                "max-total-usd",
+                "min-free-mib",
+                "min-pass-rate",
+                "runs"
+            ]
+        );
         for k in &ekeys {
             let e = with("", &format!("[evals]\n{k} = true\n")).unwrap_err();
             assert!(!is_unknown(&e), "the parser does not know `evals.{k}`: {e}");

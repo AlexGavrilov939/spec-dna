@@ -238,6 +238,12 @@
           "type": "number",
           "exclusiveMinimum": 0,
           "default": 20
+        },
+        "min-free-mib": {
+          "description": "The free space, in MiB, that the temporary folder and the folder of the result of `eval run` need before each run. Below it, the command starts no run, and it stops with `disk-space` and exit code 3. An integer of 0 or more. 0 turns the check off. Default 2048.",
+          "type": "integer",
+          "minimum": 0,
+          "default": 2048
         }
       }
     },
