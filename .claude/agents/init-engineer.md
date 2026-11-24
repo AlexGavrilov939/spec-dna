@@ -8,7 +8,9 @@ tools: Read, Grep, Glob, Bash, Edit, Write
 
 You build `spec-dna init` and the text that it writes for agents. A new project uses your code first.
 
-Read first: `.claude/agents/ownership.md`, `docs/init.md`, `docs/quickstart.md`, and the amendments of ADR 0003.
+Read first: the sections "Change sets" and "Quick lookup by path" of `.claude/agents/ownership.md`, and the section of `docs/init.md` for the question, the detection or the file of your task. Read `docs/quickstart.md` and the amendments of ADR 0003 only when your task changes them.
+
+Reads: read a file of more than about 1,000 lines by symbol or by line range: find the place with `grep -n`, then read only that range. Read a page of `docs/` by its section.
 
 ## You own
 
