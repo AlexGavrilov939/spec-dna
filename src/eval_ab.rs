@@ -136,6 +136,9 @@ struct Side {
     checks: Vec<(String, bool)>,
     /// The `num_turns` of the run, if `claude` gave it (D58).
     turns: Option<u32>,
+    /// The number of result events of the run, its segments (D95). A side of
+    /// a result of 0.8.0 has none.
+    segments: Option<u32>,
     /// The wall time of the agent process. A side of a result of 0.7.1 has
     /// none.
     seconds: Option<f64>,
@@ -825,6 +828,7 @@ fn run_side(ctx: &mut Ctx, state: &mut State, job: &Job) -> Result<Done, Fatal> 
                 models: r.models,
                 checks: r.checks,
                 turns: r.turns,
+                segments: r.segments,
                 seconds: Some(r.seconds),
             }));
         };
@@ -957,6 +961,7 @@ fn read_side(v: &json::Value) -> Option<Side> {
             })
             .collect(),
         turns: num(v.get("turns")).map(|n| n as u32),
+        segments: num(v.get("segments")).map(|n| n as u32),
         seconds: num(v.get("seconds")),
     })
 }
@@ -1532,6 +1537,10 @@ fn side_json(s: &Option<Side>) -> String {
     let obj = match s.turns {
         Some(n) => obj.num("turns", n),
         None => obj.raw("turns", "null"),
+    };
+    let obj = match s.segments {
+        Some(n) => obj.num("segments", n),
+        None => obj.raw("segments", "null"),
     };
     match s.seconds {
         Some(x) => obj.num("seconds", x),

@@ -120,6 +120,12 @@ case "$mode" in
         echo 'status: done' > notes.txt
         printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.1,"modelUsage":{"claude-b":{"inputTokens":10,"outputTokens":20,"cacheReadInputTokens":30,"cacheCreationInputTokens":40,"thinkingTokens":99},"claude-a":{"inputTokens":1,"outputTokens":2,"cacheReadInputTokens":3}},"permission_denials":[],"result":"ok"}\n'
         exit 0 ;;
+    segments)
+        echo 'status: done' > notes.txt
+        printf '{"type":"system","subtype":"init"}\n'
+        printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.05,"num_turns":3,"result":"ok"}\n'
+        printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.1,"num_turns":2,"result":"ok"}\n'
+        exit 0 ;;
     nousage)
         echo 'status: done' > notes.txt
         printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.1,"permission_denials":[],"result":"ok"}\n'
@@ -665,6 +671,93 @@ fn a_resume_reads_back_the_tokens_the_models_and_the_checks() {
 }
 
 #[test]
+fn a_pair_has_the_turns_over_the_segments_of_each_side() {
+    // D95: the first call is the arm `with` of `tdd-1`, and it ends with 2
+    // result events of 3 and 2 turns. The other calls end with one event.
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.modes(&["segments"]);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--runs", "1", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let pair = first_pair(&out);
+    let at = pair.find("\"without\":").unwrap();
+    assert!(
+        pair[..at].contains("\"turns\":5,\"segments\":2,\"seconds\":"),
+        "{pair}"
+    );
+    assert!(
+        pair[at..].contains("\"turns\":4,\"segments\":1,\"seconds\":"),
+        "{pair}"
+    );
+    // The cost is the cost of the last event.
+    assert!(pair[..at].contains("\"cost_usd\":0.1,"), "{pair}");
+}
+
+#[test]
+fn a_wave_of_arms_has_the_turns_over_the_segments_of_each_arm() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM[..1]);
+    fx.modes(&["segments"]);
+    let (code, out, err) = fx.arms("none,lean", &["--max-total-usd", "100", "--json"], &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    // Wave 1 runs `lean` first for the first eval (the arms rotate), so the
+    // first call, with 2 result events, is the side of `lean`.
+    let at = out.find("\"lean\":{\"claude_exit\"").unwrap();
+    assert!(
+        out[..at].contains("\"turns\":4,\"segments\":1,\"seconds\":"),
+        "{out}"
+    );
+    assert!(
+        out[at..].contains("\"turns\":5,\"segments\":2,\"seconds\":"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_resume_of_a_result_of_0_8_0_writes_segments_as_null() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--runs", "1", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let file = format!("evals/results/{}", fx.results()[0]);
+    // A result of 0.8.0 has no key `segments`.
+    let path = fx.repo.dir.join(&file);
+    let old: String = fs::read_to_string(&path)
+        .unwrap()
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("\"segments\":"))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    assert!(!old.contains("segments"));
+    fs::write(&path, &old).unwrap();
+    let (code, out, err) = fx.run(&[
+        "tdd",
+        "--resume",
+        &file,
+        "--runs",
+        "2",
+        "--max-total-usd",
+        "100",
+        "--json",
+    ]);
+    assert_eq!(code, 0, "{out}{err}");
+    // The sides of run 1 are the old ones, and the sides of run 2 are new.
+    let first = first_pair(&out);
+    assert!(
+        first.contains("\"turns\":4,\"segments\":null,\"seconds\":"),
+        "{first}"
+    );
+    assert!(
+        !first.contains("\"segments\":1"),
+        "run 1 is not run again: {first}"
+    );
+    let at = out.find("\"eval\":\"tdd-1\",\"run\":2").unwrap();
+    let second = &out[at..at + 1500.min(out.len() - at)];
+    assert!(
+        second.contains("\"turns\":4,\"segments\":1,\"seconds\":"),
+        "{second}"
+    );
+}
+
+#[test]
 fn resume_with_more_runs_extends_each_eval() {
     let fx = Fx::new(&["brainstorm"], &["tdd"], 4);
     // The smoke: 1 run of each of the 5 evals.
@@ -990,7 +1083,7 @@ fn the_result_has_the_arms_the_pairs_the_interval_and_the_verdict() {
         "\"verdict\":\"on\"",
         "\"rule\":1",
         "\"cost_ratio\":null",
-        "\"pairs\":[{\"eval\":\"tdd-1\",\"run\":1,\"with\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":0,\"permission_denials\":0,\"passed\":true,\"tokens\":{\"in\":0,\"out\":0,\"cache_read\":0,\"cache_write\":0},\"models\":[\"claude-test-1\"],\"checks\":[{\"name\":\"notes-done\",\"passed\":true}],\"turns\":4,\"seconds\":",
+        "\"pairs\":[{\"eval\":\"tdd-1\",\"run\":1,\"with\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":0,\"permission_denials\":0,\"passed\":true,\"tokens\":{\"in\":0,\"out\":0,\"cache_read\":0,\"cache_write\":0},\"models\":[\"claude-test-1\"],\"checks\":[{\"name\":\"notes-done\",\"passed\":true}],\"turns\":4,\"segments\":1,\"seconds\":",
     ] {
         assert!(out.contains(part), "`{part}` not in {out}");
     }
@@ -2447,7 +2540,7 @@ fn the_result_of_arms_has_one_side_for_each_arm_with_the_turns_and_the_seconds()
         "\"excluded\":{\"none\":0,\"lean\":0}",
         "\"waves\":1",
         "\"evals\":[{\"id\":\"team-01\",\"runs\":1,\"max_budget_usd\":1,\"results\":[{\"run\":1,\"arms\":{\"none\":{\"claude_exit\":0,",
-        "\"turns\":4,\"seconds\":",
+        "\"turns\":4,\"segments\":1,\"seconds\":",
     ] {
         assert!(out.contains(part), "`{part}` not in {out}");
     }
@@ -2917,7 +3010,10 @@ fn a_result_of_ab_has_the_harness_the_turns_the_seconds_and_the_floor() {
         out.contains("\"verdict\":\"inconclusive\",\"rule\":null,\"below_floor\":true,\"pairs\":["),
         "{out}"
     );
-    assert!(out.contains("\"turns\":4,\"seconds\":"), "{out}");
+    assert!(
+        out.contains("\"turns\":4,\"segments\":1,\"seconds\":"),
+        "{out}"
+    );
     let (code, out, _) = fx.run_env(
         &["tdd", "--max-total-usd", "100"],
         &[("STUB_PASS", "skill"), ("STUB_SKILL", "tdd")],
@@ -3198,8 +3294,11 @@ fn the_result_of_the_target_accept_is_a_result_of_the_skill_review_that_eval_rec
     assert!(out.contains("\"target\":\"accept\""), "{out}");
     assert!(out.contains("\"name\":\"review\""), "{out}");
     assert!(out.contains("\"harness\":\"lean\""), "{out}");
-    // Each side has the cost, the turns and the seconds (D58).
-    assert!(out.contains("\"turns\":4,\"seconds\":"), "{out}");
+    // Each side has the cost, the turns, the segments and the seconds (D58).
+    assert!(
+        out.contains("\"turns\":4,\"segments\":1,\"seconds\":"),
+        "{out}"
+    );
     assert!(out.contains("\"cost_usd\":"), "{out}");
     let files = fx.results();
     assert_eq!(files.len(), 1, "{files:?}");
