@@ -1,0 +1,94 @@
+format = 2
+change = "rollup-sources"
+scope = ["CHANGELOG.md", "docs/adr/0028-roll-up-and-summaries.md", "docs/commands.md", "docs/config.md", "docs/design/0.8.1-a-evidence-and-context.md", "docs/diagnostics.md", "docs/profiles.md", "docs/types.md", "schema/spec-dna.schema.json", "src/acceptance.rs", "src/check.rs", "src/config.rs", "src/context.rs", "src/diag.rs", "src/finish.rs", "src/layer.rs", "src/main.rs", "src/model.rs", "src/mv.rs", "src/rollup.rs", "src/split.rs", "src/stage.rs", "tests/accept_next.rs", "tests/acceptance_checks.rs", "tests/acceptance_need.rs", "tests/config_layers.rs", "tests/context_layers.rs", "tests/finish_sd913.rs", "tests/rollup_checks.rs", "tests/rollup_refresh.rs"]
+paths = ["src/acceptance.rs", "src/check.rs", "src/config.rs", "src/context.rs", "src/diag.rs", "src/layer.rs", "src/main.rs", "src/model.rs", "src/rollup.rs", "src/stage.rs", "tests/accept_next.rs", "tests/acceptance_checks.rs", "tests/acceptance_need.rs", "tests/config_layers.rs", "tests/context_layers.rs", "tests/finish_sd913.rs", "tests/rollup_checks.rs", "tests/rollup_refresh.rs"]
+tree = "9d5c0f1e8fbe89f1"
+result = "rejected"
+acknowledged-by = []
+
+[[acceptor]]
+roles = ["acceptor"]
+brief = "07ad037290cd9bf5"
+session = "c51acbf1-5aed-497f-8ed7-0e87fb4f43ac"
+agent = "acceptor"
+result = "rejected"
+model = "claude-opus-5-5"
+
+[[attempt]]
+acceptor = 1
+text = "Proof: cargo test --test rollup_checks (45 passed), rollup_refresh (28), context_layers (49), config_layers (16), accept_next (31), acceptance_need (30), acceptance_checks (96), finish_sd913 (17), and cargo test --bin spec-dna for model::, layer::, config::, diag:: and rollup:: (186). cargo fmt --check and cargo clippy --all-targets -- -D warnings are clean. check --all of this repository with --no-cache gives no SD102 and no SD602."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "No key, byte for byte against the installed 0.8.0 and a build of the base e2d6dde, on 9 fixtures: separate decision and research layers with summaries and a system document, one layer of requirements+decision+research, no [layers] table, no requirements layer, a snapshot of this repository, a change with a delta and summaries, and the D86 guards. check --all text and --json in lite, standard and strict, check against a base, show, context text and --json, refresh --dry-run and --all, new summary, mv, next, next --json and finish --dry-run are identical."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "No key, SD646: a summary of an area with only draft requirements that system pins gets SD646 in check --all (off in lite, warning in standard, error in strict), and check against the base stays clean because the base has the same finding. The spec and D84 accept this upgrade change."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "No key, a removed research note that a summary pins by hand (SD643 in the base), then check --base HEAD~1: 0.8.0 and the base give error SD641 and exit 1, the change gives warning SD647 and exit 0. Same with rolls-up = [\"requirements\"]. See the blocker."
+outcome = "broke"
+
+[[attempt]]
+acceptor = 1
+text = "Key with interfaces and rules: new summary writes 4 pins (decision, interface key, note, rule key). An edit of the interface key gives SD641 its text changed, a draft interface gives SD641 not active. A delta ADD on an interface makes summaries/valves due in next; with no key it does not, as in 0.8.0."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Decisions: a new amendment gives SD641 the text in force changed; an edit of the live section Status gives no finding; superseded gives SD641 with the successor and SD642 for the new decision; a decision with no status gives SD641 not accepted; CRLF line ends give no finding; a BOM hides the front matter (SD304 and SD641, the parser of 0.8.0). The cache on gives the same verdicts."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Research: an edited note gives SD647 (off, warning, warning). A removed note gives SD647 with and without a base. A rename with the shell mv gives SD647 removed and SD647 no pin; spec-dna mv keeps the alias and gives no finding; spec-dna mv of a decision names summaries/storage and system."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "refresh: the guard refuses with exit 1 a summary with SD647, or with SD641 and SD642 of a superseded decision, and the text of the base; --holds writes and SD645 shows the claim; refresh --all --dry-run refuses the same document."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "SD646 with the key: an area with only a rejected decision, pinned by system: off, warning, error; also for a summary with no rests-on field; a summary with only a bad pin gets SD641, not SD646. A cycle (a sub-area summary pins its parent) gives SD643 and SD642 and no hang; a self pin gives SD643."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Bad keys give exit code 3 and name the key: a string, a list of integers, an unknown layer, a procedure layer, the summaries layer itself, the key on the rules layer, the key on a layer with no type summary, and a source folder inside another (also with a trailing slash). requirements-api next to requirements is valid. An empty list and a duplicate name are valid, as docs/config.md says."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "context with the key: an accepted decision and a research target get the summary tier; a proposed decision gets none; a summary with only SD647 has no stale mark, and with SD641 it has the stale mark in the text and in --json."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "D86: an old plan (pin 0.7.1 and 0.6.0) of a change that needs a record: next prints the note of the design byte for byte after the checklist, next --json has it in notes, finish prints the new text on stderr. A new plan, lite, a routine change and a draft plan are unchanged. Opt-in: a record in the folder gives the record item; a pending record stops finish; an accepted record passes; a code edit after it stops finish at step 5 with SD929."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Scale: 500 accepted decisions, 200 requirement documents, 100 notes and 50 summaries. check --all takes about 0.2 s with the debug build of the change, with and without the key, against 0.16 s with the release build of 0.8.0 and 0.17 s with the debug build of the base. The machine is loaded, so the differences are noise."
+outcome = "held"
+
+[[finding]]
+acceptor = 1
+severity = "blocker"
+path = "src/check.rs"
+line = 174
+text = "removed_note_in (src/rollup.rs:1053) changes a SD641 'the target was removed' to SD647 when the base has a research document at the id. It does not check the key or that the layer of the note is a source layer. Repro with no key (layers requirements, research and summaries, SD202 off): a summary pins research/storage/write-load by hand (SD643 in the base), git rm the note, check --base HEAD~1. 0.8.0 and the base give error SD641 and exit 1. The change gives warning SD647 'the note was removed' and exit 0. rolls-up = [\"requirements\"] gives the same. This breaks 'with no key, the roll-up gives the result of 0.8.0' and 'SD647 needs the key' of D84 and docs/diagnostics.md, and the amendment of ADR 0028 (a research document of a source layer)."
+
+[[finding]]
+acceptor = 1
+severity = "note"
+path = "docs/config.md"
+line = 326
+text = "'A project that opts in rewrites its summaries once, with spec-dna refresh --all' is not true as written. After the key, each summary has SD642 or SD647 and the text of the base, so refresh --all refuses it with exit 1, and --all takes no --holds. D84 says 'after an edit'. Tell the reader to edit each summary first, or to run spec-dna refresh <id> --holds."
