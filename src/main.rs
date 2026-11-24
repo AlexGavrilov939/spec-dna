@@ -180,9 +180,10 @@ SD923 and SD924 skip a plan that was added when the pin was before 0.7.0,
 with a note. With --reports and [evidence] reports, it also reads the test
 reports from the disk: a missing report (SD613), a stale report (SD614), an
 unreadable report (SD615), a requirement whose tag binds to no passed test
-case (SD616 with --all, SD617 for a change). It does not combine with
---staged. --json
-lists all diagnostics.",
+case (SD616 with --all, SD617 for a change), and a tag that binds a case by
+its name only (SD621 with --all, and for a change). It does not combine with
+--staged. --json lists all diagnostics. With --reports, it also gives the
+field binds: the test and the result of each full tag.",
     ),
     (
         "evidence",
@@ -1439,6 +1440,29 @@ fn skills_line(repo: &Repo) -> u32 {
         .map_or(1, |i| i as u32 + 1)
 }
 
+/// The objects of the field `binds` of `check --reports --json`: one for each
+/// full tag that names a requirement, in the order of the tags. The field
+/// `requirement` is first (design 0.8.1, D82, "Formats").
+fn bind_objects(head: &model::Corpus) -> Vec<String> {
+    let mut out = Vec::new();
+    for cv in head.covers.iter().filter(|cv| !cv.partial) {
+        let (Some(bind), proof) = (&cv.bind, &cv.proof) else {
+            continue;
+        };
+        let model::Res::Found(d, Some(key), true) = head.resolve(&cv.target) else {
+            continue;
+        };
+        let doc = &head.docs[d as usize];
+        if doc.req(&key).is_none() {
+            continue;
+        }
+        let lead = Obj::new().str("requirement", &format!("{}#{key}", doc.id));
+        let at = format!("{}:{}", cv.path, cv.line);
+        out.push(evidence::bind_object(lead, &at, bind, proof.as_ref()));
+    }
+    out
+}
+
 fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     expect_args(a, 0, 0)?;
     if a.reports && a.staged {
@@ -2013,6 +2037,9 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
                 .str("author", &x.author)
                 .end()
         });
+        // The bind of each full tag, only where the reports were read (design
+        // 0.8.1, D82, "Formats").
+        let binds_json = reads.as_ref().map(|_| bind_objects(head));
         let mut obj = Obj::new()
             .str("version", VERSION)
             .str("mode", if a.all { "all" } else { "base" })
@@ -2022,16 +2049,16 @@ fn check(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
         if cfg.change_policy != config::ChangePolicy::None {
             obj = obj.opt_str("change_base", change_base.as_deref());
         }
-        println!(
-            "{}",
-            obj.bool("ok", !failed)
-                .raw("summary", &summary)
-                .raw("diagnostics", &json::array(diags))
-                .raw("locked_links", &json::array(locked_json))
-                .raw("approvals", &json::array(approvals_json))
-                .raw("documents", &json::array(docs))
-                .end()
-        );
+        obj = obj
+            .bool("ok", !failed)
+            .raw("summary", &summary)
+            .raw("diagnostics", &json::array(diags))
+            .raw("locked_links", &json::array(locked_json))
+            .raw("approvals", &json::array(approvals_json));
+        if let Some(binds) = binds_json {
+            obj = obj.raw("binds", &json::array(binds));
+        }
+        println!("{}", obj.raw("documents", &json::array(docs)).end());
     } else {
         let shown: Vec<&diag::Diag> = order
             .iter()

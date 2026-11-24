@@ -2693,6 +2693,21 @@ fn show_reports_with_no_key_changes_nothing_and_with_conventions_is_a_usage_erro
 }
 
 #[test]
+fn check_reports_json_gives_the_field_binds_after_approvals() {
+    let r = reports_repo();
+    let (code, out, err) = r.run(&["check", "--reports", "--json", "--all"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains(r#""approvals":[],"binds":[{"requirement":"loans#renew-limit","tag":"tests/loans.test.js:2","#), "{out}");
+    golden("check-binds.json", &without_counters(&out));
+    // Without the option, or with no key, the field is not there.
+    let (_, out, _) = r.run(&["check", "--json", "--all"]);
+    assert!(!out.contains("\"binds\""), "{out}");
+    let r = tagged_repo();
+    let (_, out, _) = r.run(&["check", "--reports", "--json", "--all"]);
+    assert!(!out.contains("\"binds\""), "{out}");
+}
+
+#[test]
 fn show_reports_json_matches_golden() {
     let r = reports_repo();
     let (code, out, err) = r.run(&["show", "loans", "--reports", "--json"]);
