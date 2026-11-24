@@ -311,6 +311,10 @@ pub fn load(repo: &Repo, cfg: &Config, base: Option<&str>, use_cache: bool) -> R
     })
 }
 
+/// The record item of each change that needs a record, and the note of each change
+/// whose plan is old, both by slug.
+type AcceptMaps = (HashMap<String, AcceptItem>, HashMap<String, String>);
+
 /// The item `accept` of each open change that has an approved plan and needs a
 /// record, by the rule of `acceptance::need_for_change`. The map is empty with
 /// the acceptance off (the profile `lite`), or with no base. A plan of a version
@@ -323,7 +327,7 @@ fn accept_items(
     base: Option<&Corpus>,
     base_rev: Option<&str>,
     diff: Option<&Diff>,
-) -> Result<(HashMap<String, AcceptItem>, HashMap<String, String>), Fatal> {
+) -> Result<AcceptMaps, Fatal> {
     let mut out = HashMap::new();
     let mut notes = HashMap::new();
     // The configuration of the need (D70 item 6): the head and the base tree.
