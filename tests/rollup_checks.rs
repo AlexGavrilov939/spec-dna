@@ -811,3 +811,195 @@ fn removing_rests_on_from_a_system_document_of_the_base_gives_sd645() {
     let (_, out) = check_all(&r);
     assert!(!out.contains("SD645"), "{out}");
 }
+
+// The source layers of the roll-up (design 0.8.1, D84).
+
+const API: &str = "---\ntype: interface\nstatus: active\n---\n# Valve API\n\n- **open-close**: The valve API SHALL accept the command open and the command close.\n";
+
+const LIMITS: &str = "---\ntype: rule\nstatus: active\n---\n# Limits\n\n- **max-pressure**: A valve SHALL NOT work above 10 bar.\n";
+
+/// The layers of a project that has a layer for the interfaces and a layer for
+/// the rules. `rolls_up` is the line of the key of the summaries, or empty.
+fn source_layers(rolls_up: &str) -> String {
+    format!(
+        "[layers.foundation]\ntypes = [\"product\", \"system\", \"terms\"]\nfiles = [\"product.md\", \"system.md\", \"terms.md\"]\n\n[layers.requirements]\ntypes = [\"requirements\"]\n\n[layers.interfaces]\ntypes = [\"interface\"]\n\n[layers.rules]\ntypes = [\"rule\"]\n\n[layers.summaries]\ntypes = [\"summary\"]\n{rolls_up}\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n"
+    )
+}
+
+/// A project of the profile `standard` with the valve requirements and the
+/// layers of `source_layers`.
+fn source_project(rolls_up: &str) -> Repo {
+    let r = Repo::with_config(&format!(
+        "profile = \"standard\"\n{}",
+        source_layers(rolls_up)
+    ));
+    r.write("docs/requirements/valves/closing.md", CLOSING);
+    r
+}
+
+#[test]
+fn an_interface_source_gives_each_key_as_an_item() {
+    let r = source_project("rolls-up = [\"requirements\", \"interfaces\"]\n");
+    r.write("docs/interfaces/valves/api.md", API);
+    let r = with_summary_of(r);
+    // `new summary` writes the pin of the key of the interface.
+    let text = r.read("docs/summaries/valves.md");
+    assert!(
+        text.contains("  - interfaces/valves/api#open-close@"),
+        "{text}"
+    );
+    let (code, out) = check_all(&r);
+    assert!(!out.contains("SD64"), "{out}");
+    assert_eq!(code, 0, "{out}");
+    // A new key has no pin: SD642 names it.
+    r.write(
+        "docs/interfaces/valves/api.md",
+        &API.replace(
+            "\n- **open-close**",
+            "\n- **close-rate**: The valve API SHALL report the closing rate.\n- **open-close**",
+        ),
+    );
+    let (_, out) = check_all(&r);
+    let found = lines_of(&out, "SD642");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].contains("`interfaces/valves/api#close-rate`"),
+        "{}",
+        found[0]
+    );
+    // After a refresh, an edit of the key makes its pin stale: SD641.
+    assert_eq!(r.run(&["refresh", "summaries/valves", "--holds"]).0, 0);
+    let (_, out) = check_all(&r);
+    assert!(!out.contains("SD64"), "{out}");
+    // An edit of a part with no key does not make the summary stale.
+    edit(
+        &r,
+        "docs/interfaces/valves/api.md",
+        "# Valve API\n",
+        "# Valve API\n\nThe API of the valve.\n",
+    );
+    let (_, out) = check_all(&r);
+    assert!(!out.contains("SD64"), "{out}");
+    edit(
+        &r,
+        "docs/interfaces/valves/api.md",
+        "command open and",
+        "command open or",
+    );
+    let (code, out) = check_all(&r);
+    let found = lines_of(&out, "SD641");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].contains("`interfaces/valves/api#open-close`")
+            && found[0].contains("its text changed"),
+        "{}",
+        found[0]
+    );
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn an_interface_document_that_is_not_active_gives_no_item() {
+    let r = source_project("rolls-up = [\"requirements\", \"interfaces\"]\n");
+    r.write(
+        "docs/interfaces/valves/api.md",
+        &API.replace("status: active", "status: draft"),
+    );
+    let r = with_summary_of(r);
+    assert!(!r.read("docs/summaries/valves.md").contains("interfaces/"));
+    let (_, out) = check_all(&r);
+    assert!(!out.contains("SD64"), "{out}");
+    // The document becomes active: its key is a new item.
+    edit(
+        &r,
+        "docs/interfaces/valves/api.md",
+        "status: draft",
+        "status: active",
+    );
+    let (_, out) = check_all(&r);
+    let found = lines_of(&out, "SD642");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].contains("`interfaces/valves/api#open-close`"),
+        "{out}"
+    );
+}
+
+#[test]
+fn an_area_can_exist_in_a_source_layer_only() {
+    let r = source_project("rolls-up = [\"requirements\", \"interfaces\"]\n");
+    r.write("docs/interfaces/pumps/api.md", API);
+    r.write("docs/summaries/pumps.md", "# Pumps\n\nPumps move water.\n");
+    let (_, out) = check_all(&r);
+    // The folder `interfaces/pumps` is the area: no SD644, and the key of the
+    // interface is an item with no pin.
+    assert!(lines_of(&out, "SD644").is_empty(), "{out}");
+    let found = lines_of(&out, "SD642");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].contains("`interfaces/pumps/api#open-close`"),
+        "{out}"
+    );
+    // A summary of no folder of any source layer still gives SD644. The message
+    // names the source folders.
+    r.write("docs/summaries/zones.md", "# Zones\n\nText.\n");
+    let (_, out) = check_all(&r);
+    let found = lines_of(&out, "SD644");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].contains("requirements/zones") && found[0].contains("interfaces/zones"),
+        "{}",
+        found[0]
+    );
+}
+
+#[test]
+fn a_rule_source_gives_its_keys_and_a_layer_outside_the_key_gives_no_item() {
+    // The key names the rules only, so the requirements are no source.
+    let r = source_project("rolls-up = [\"rules\"]\n");
+    r.write("docs/rules/valves/limits.md", LIMITS);
+    let r = with_summary_of(r);
+    let text = r.read("docs/summaries/valves.md");
+    assert!(
+        text.contains("  - rules/valves/limits#max-pressure@"),
+        "{text}"
+    );
+    assert!(!text.contains("requirements/"), "{text}");
+    let (_, out) = check_all(&r);
+    assert!(!out.contains("SD64"), "{out}");
+    // A pin to a requirement that no source layer holds is SD643.
+    let hash = shown_hash(&r, "requirements/valves/closing#max-angle");
+    add_pin(&r, &format!("requirements/valves/closing#max-angle@{hash}"));
+    let (_, out) = check_all(&r);
+    let found = lines_of(&out, "SD643");
+    assert_eq!(found.len(), 1, "{out}");
+    assert!(
+        found[0].contains("`requirements/valves/closing#max-angle`")
+            && found[0].contains("source layers"),
+        "{}",
+        found[0]
+    );
+    // A new requirement is no item and gives no SD642.
+    assert!(lines_of(&out, "SD642").is_empty(), "{out}");
+}
+
+#[test]
+fn a_project_with_no_key_has_no_item_of_an_interface_or_a_rule() {
+    // Guard: the layers exist, and the summaries have no key.
+    let r = source_project("");
+    r.write("docs/interfaces/valves/api.md", API);
+    r.write("docs/rules/valves/limits.md", LIMITS);
+    let r = with_summary_of(r);
+    let text = r.read("docs/summaries/valves.md");
+    assert!(
+        !text.contains("interfaces/") && !text.contains("rules/"),
+        "{text}"
+    );
+    let (_, out) = check_all(&r);
+    assert!(!out.contains("SD64"), "{out}");
+    // A pin to the key of the interface is SD643, as in 0.8.0.
+    let hash = shown_hash(&r, "interfaces/valves/api#open-close");
+    add_pin(&r, &format!("interfaces/valves/api#open-close@{hash}"));
+    let (_, out) = check_all(&r);
+    assert_eq!(lines_of(&out, "SD643").len(), 1, "{out}");
+}

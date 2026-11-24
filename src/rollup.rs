@@ -185,6 +185,13 @@ fn within(inner: &[String], outer: &[String]) -> bool {
     inner.starts_with(outer)
 }
 
+/// True for a document that has items by its type and its status (design
+/// 0.8.1, D84, item 3): an active document of the types `requirements`,
+/// `interface` and `rule`.
+fn is_item_doc(d: &Doc) -> bool {
+    crate::evidence::needs_evidence(d)
+}
+
 /// True for a document that holds roll-up pins by its type: a summary, or a
 /// `system` or `product` document that has the field `rests-on`. The field can
 /// be empty.
@@ -198,14 +205,43 @@ pub fn is_rollup(d: &Doc) -> bool {
         }
 }
 
-/// The index of the layer that has the type `requirements`.
-fn requirements_layer(config: &Config) -> Option<usize> {
-    config.layers.layer_of_type(DocType::Requirements)
+/// The folders of the source layers of the roll-up (design 0.8.1, D84). The
+/// key `rolls-up` of the layer of the summaries names them. With no key, the
+/// source layer is the layer of the type `requirements`. A layer with no folder
+/// (`files`) has no area.
+fn source_dirs(config: &Config) -> Vec<&str> {
+    let layers = config.layers.layers();
+    config
+        .layers
+        .rollup_sources()
+        .into_iter()
+        .filter_map(|i| layers[i].dir())
+        .collect()
 }
 
-/// The folder of the layer `requirements`, if the layer has one.
-fn requirements_dir(config: &Config) -> Option<&str> {
-    requirements_layer(config).and_then(|i| config.layers.layers()[i].dir())
+/// True if the only source layer is a layer that has the type `requirements`.
+/// The messages then keep the words of 0.8.0.
+fn only_requirements(config: &Config) -> bool {
+    match config.layers.rollup_sources().as_slice() {
+        [i] => config.layers.layers()[*i]
+            .types
+            .contains(&DocType::Requirements),
+        // No source layer: the words of 0.8.0 stay while the key is absent.
+        [] => config
+            .layers
+            .layer_of_type(DocType::Summary)
+            .is_none_or(|i| config.layers.layers()[i].rolls_up.is_none()),
+        _ => false,
+    }
+}
+
+/// The words for the place of the items in a message.
+fn sources_text(config: &Config) -> &'static str {
+    if only_requirements(config) {
+        "the layer `requirements`"
+    } else {
+        "the source layers of the roll-up (`rolls-up`)"
+    }
 }
 
 /// The path of a document inside its root.
@@ -231,46 +267,48 @@ pub fn summary_area(config: &Config, d: &Doc) -> Option<Vec<String>> {
     Some(stem.split('/').map(str::to_string).collect())
 }
 
-/// The folders of a requirement document under the folder of the layer
-/// `requirements`, or `None` if the document is not in that layer. A document
-/// that a `paths` glob puts in the layer but that is not under the folder is in
-/// the root area.
-fn requirement_area(config: &Config, d: &Doc) -> Option<Vec<String>> {
-    let layer = requirements_layer(config)?;
-    if crate::check::doc_layer(config, d) != Some(layer) {
+/// The folders of a document of a source layer under the folder of that layer,
+/// or `None` if the document is in no source layer. A document that a `paths`
+/// glob puts in the layer but that is not under the folder is in the root area.
+fn source_area(config: &Config, d: &Doc) -> Option<Vec<String>> {
+    let layer = crate::check::doc_layer(config, d)?;
+    if !config.layers.rollup_sources().contains(&layer) {
         return None;
     }
     let rel = rel_path(config, d);
-    match requirements_dir(config).and_then(|dir| rel.strip_prefix(dir)?.strip_prefix('/')) {
+    match config.layers.layers()[layer]
+        .dir()
+        .and_then(|dir| rel.strip_prefix(dir)?.strip_prefix('/'))
+    {
         Some(rest) => Some(folders(rest)),
         None => Some(Vec::new()),
     }
 }
 
-/// True if the tree has the folder of an area under the folder of the layer
-/// `requirements`. The root area always has one.
+/// True if the tree has the folder of an area under the folder of a source
+/// layer. The root area always has one.
 pub fn area_exists(config: &Config, c: &Corpus, area: &[String]) -> bool {
     if area.is_empty() {
         return true;
     }
-    let Some(dir) = requirements_dir(config) else {
-        return false;
-    };
+    let dirs = source_dirs(config);
     config.roots.iter().any(|r| {
-        let mut path = String::new();
-        for part in [r.path.as_str(), dir]
-            .into_iter()
-            .chain(area.iter().map(String::as_str))
-        {
-            if part.is_empty() {
-                continue;
+        dirs.iter().copied().any(|dir| {
+            let mut path = String::new();
+            for part in [r.path.as_str(), dir]
+                .into_iter()
+                .chain(area.iter().map(String::as_str))
+            {
+                if part.is_empty() {
+                    continue;
+                }
+                if !path.is_empty() {
+                    path.push('/');
+                }
+                path.push_str(part);
             }
-            if !path.is_empty() {
-                path.push('/');
-            }
-            path.push_str(part);
-        }
-        c.dirs.contains(&path)
+            c.dirs.contains(&path)
+        })
     })
 }
 
@@ -324,16 +362,17 @@ pub fn resolve(c: &Corpus, pin: &Pin) -> Resolved {
 pub struct Rollup<'a> {
     config: &'a Config,
     c: &'a Corpus,
-    /// The active requirement documents of the layer `requirements`, with the
-    /// folders of each one.
-    reqs: Vec<(u32, Vec<String>)>,
+    /// The documents of the source layers that have items (design 0.8.1,
+    /// D84), with the folders of each one: the active documents of the types
+    /// `requirements`, `interface` and `rule`.
+    sources: Vec<(u32, Vec<String>)>,
     /// The summaries that have an area with a folder: the document and its area.
     summaries: Vec<(u32, Vec<String>)>,
 }
 
 impl<'a> Rollup<'a> {
     /// The roll-up of a tree. A tree with no roll-up document and no field
-    /// `rests-on` has nothing to read, so the scan of the requirements is
+    /// `rests-on` has nothing to read, so the scan of the source documents is
     /// skipped (a project with no summary pays nothing).
     pub fn build(config: &'a Config, c: &'a Corpus) -> Rollup<'a> {
         if c.docs.iter().any(|d| d.rests_on.is_some() || is_rollup(d)) {
@@ -342,16 +381,16 @@ impl<'a> Rollup<'a> {
             Rollup {
                 config,
                 c,
-                reqs: Vec::new(),
+                sources: Vec::new(),
                 summaries: Vec::new(),
             }
         }
     }
 
-    /// The roll-up of a tree with the requirements read. `new summary` uses it
-    /// for a tree that has no summary yet.
+    /// The roll-up of a tree with the source documents read. `new summary` uses
+    /// it for a tree that has no summary yet.
     pub fn full(config: &'a Config, c: &'a Corpus) -> Rollup<'a> {
-        let mut reqs = Vec::new();
+        let mut sources = Vec::new();
         let mut summaries = Vec::new();
         for (i, d) in c.docs.iter().enumerate() {
             let i = i as u32;
@@ -364,18 +403,26 @@ impl<'a> Rollup<'a> {
                 {
                     summaries.push((i, a));
                 }
-            } else if crate::evidence::needs_evidence(d)
-                && let Some(a) = requirement_area(config, d)
+            } else if is_item_doc(d)
+                && let Some(a) = source_area(config, d)
             {
-                reqs.push((i, a));
+                sources.push((i, a));
             }
         }
         Rollup {
             config,
             c,
-            reqs,
+            sources,
             summaries,
         }
+    }
+
+    /// The items of a source document (design 0.8.1, D84, item 3): each
+    /// requirement of an active document of the types `requirements`,
+    /// `interface` and `rule`.
+    fn items_of(&self, di: u32) -> Vec<Item> {
+        let doc = &self.c.docs[di as usize];
+        doc.reqs.iter().map(|&r| Item::Req(di, r)).collect()
     }
 
     /// The level of a roll-up document, or `None` for a summary that has no
@@ -428,10 +475,9 @@ impl<'a> Rollup<'a> {
             .filter(|(_, b)| !below.iter().any(|(_, x)| x.len() < b.len() && within(b, x)))
             .map(|(d, _)| Item::Doc(*d))
             .collect();
-        for (d, a) in &self.reqs {
+        for (d, a) in &self.sources {
             if within(a, area) && !below.iter().any(|(_, x)| within(a, x)) {
-                let doc = &self.c.docs[*d as usize];
-                items.extend(doc.reqs.iter().map(|&r| Item::Req(*d, r)));
+                items.extend(self.items_of(*d));
             }
         }
         items
@@ -439,7 +485,7 @@ impl<'a> Rollup<'a> {
 
     /// Why no frontier of a document of `level` can ever hold the item, or
     /// `None` if a frontier could hold it (design 0.8.0, D52). A frontier holds
-    /// a requirement of a document of the layer `requirements`, a summary
+    /// a requirement of a document of a source layer, a summary
     /// below the document (a `summary` pins a summary of a deeper area, a
     /// `system` document a summary, and a `product` document a summary or a
     /// `system` document). Any other target gives SD643. A target that a
@@ -452,12 +498,13 @@ impl<'a> Rollup<'a> {
         }];
         match item {
             Item::Req(..) => {
-                if doc.ty.has_requirements() && requirement_area(self.config, doc).is_some() {
+                if doc.ty.has_requirements() && source_area(self.config, doc).is_some() {
                     None
                 } else {
                     Some(format!(
-                        "a requirement of a `{}` document outside the layer `requirements`, which no frontier holds",
-                        doc.ty.name()
+                        "a requirement of a `{}` document outside {}, which no frontier holds",
+                        doc.ty.name(),
+                        sources_text(self.config)
                     ))
                 }
             }
@@ -607,20 +654,36 @@ impl<'a> Rollup<'a> {
     }
 
     fn no_area(&self, d: &Doc) -> Finding {
-        let dir = requirements_dir(self.config);
-        let message = match (summary_area(self.config, d), dir) {
-            (Some(a), Some(dir)) => format!(
-                "the summary names the area `{0}`, and the layer `requirements` has no folder `{dir}/{0}`; move the summary to the path of an existing area",
-                a.join("/")
-            ),
+        let dirs = source_dirs(self.config);
+        let only = only_requirements(self.config);
+        let message = match (summary_area(self.config, d), dirs.first()) {
             (None, _) => {
                 "the summary is not a file under the folder of its layer, so it names no area"
                     .to_string()
             }
-            (Some(a), None) => format!(
+            (Some(a), Some(dir)) if only => format!(
+                "the summary names the area `{0}`, and the layer `requirements` has no folder `{dir}/{0}`; move the summary to the path of an existing area",
+                a.join("/")
+            ),
+            (Some(a), None) if only => format!(
                 "the summary names the area `{}`, and no layer `requirements` with a folder exists",
                 a.join("/")
             ),
+            (Some(a), None) => format!(
+                "the summary names the area `{}`, and no source layer of the roll-up has a folder; add a layer with a folder to `rolls-up`",
+                a.join("/")
+            ),
+            (Some(a), Some(_)) => {
+                let folders: Vec<String> = dirs
+                    .iter()
+                    .map(|dir| format!("`{dir}/{}`", a.join("/")))
+                    .collect();
+                format!(
+                    "the summary names the area `{}`, and no source layer of the roll-up has the folder {}; move the summary to the path of an existing area",
+                    a.join("/"),
+                    folders.join(" or ")
+                )
+            }
         };
         Finding {
             kind: Kind::NoArea,
@@ -692,24 +755,31 @@ impl<'a> Rollup<'a> {
     }
 
     /// The area of the document that a delta line names, or `None` if the
-    /// requirements of the document are in no frontier. An active requirements
-    /// document of the layer `requirements` has the area of its folders. An id
-    /// that names no document is a new document (an `ADD` line): its area is
-    /// the folders of the id under the folder of the layer.
+    /// requirements of the document are in no frontier. An active document of
+    /// the types `requirements`, `interface` and `rule` in a source layer has
+    /// the area of its folders. An id that names no document is a new document
+    /// (an `ADD` line): its area is the folders of the id under the folder of a
+    /// source layer that holds one of these types.
     fn target_area(&self, id: &str) -> Option<Vec<String>> {
         match self.c.resolve(id) {
             Res::Found(d, None, _) => self
-                .reqs
+                .sources
                 .iter()
-                .find(|(i, _)| *i == d)
+                .find(|(i, _)| *i == d && self.c.docs[d as usize].ty.has_requirements())
                 .map(|(_, a)| a.clone()),
             Res::Missing => {
-                let dir: Vec<String> = requirements_dir(self.config)?
-                    .split('/')
-                    .map(str::to_string)
-                    .collect();
-                let mut parts = folders(id);
-                parts.starts_with(&dir).then(|| parts.split_off(dir.len()))
+                let layers = self.config.layers.layers();
+                let parts = folders(id);
+                self.config
+                    .layers
+                    .rollup_sources()
+                    .into_iter()
+                    .filter(|&i| layers[i].types.iter().any(|t| t.has_requirements()))
+                    .filter_map(|i| layers[i].dir())
+                    .find_map(|dir| {
+                        let dir: Vec<String> = dir.split('/').map(str::to_string).collect();
+                        parts.starts_with(&dir).then(|| parts[dir.len()..].to_vec())
+                    })
             }
             _ => None,
         }
@@ -872,12 +942,24 @@ pub fn new_summary_pins(
     area: &[String],
 ) -> Result<Vec<String>, String> {
     if !area_exists(config, c, area) {
-        return Err(match requirements_dir(config) {
-            Some(dir) => format!(
+        let dirs = source_dirs(config);
+        return Err(match dirs.first() {
+            Some(dir) if only_requirements(config) => format!(
                 "the layer `requirements` has no folder `{dir}/{}`; an area is a folder of that layer",
                 area.join("/")
             ),
-            None => "no layer with the type `requirements` has a folder, so there is no area; run `spec-dna layer add requirements --types requirements`".to_string(),
+            Some(_) => {
+                let folders: Vec<String> = dirs
+                    .iter()
+                    .map(|dir| format!("`{dir}/{}`", area.join("/")))
+                    .collect();
+                format!(
+                    "no source layer of the roll-up has the folder {}; an area is a folder of a source layer",
+                    folders.join(" or ")
+                )
+            }
+            None if only_requirements(config) => "no layer with the type `requirements` has a folder, so there is no area; run `spec-dna layer add requirements --types requirements`".to_string(),
+            None => "no source layer of the roll-up has a folder, so there is no area; name a layer with a folder in `rolls-up`".to_string(),
         });
     }
     let r = Rollup::full(config, c);
@@ -1730,6 +1812,93 @@ mod tests {
             ["summaries/valves"]
         );
         assert_eq!(due_ids(&c, &cfg, &["requirements/pumps/seal"]), ["system"]);
+    }
+
+    /// The default graph with the key `rolls-up` on the layer of the summaries.
+    fn keyed_config(rolls_up: &str) -> Config {
+        let graph = render_graph(&Graph::default_graph());
+        let at = "[layers.summaries]\ntypes = [\"summary\"]\n";
+        assert!(graph.contains(at), "{graph}");
+        Config::parse(&format!(
+            "spec-dna = \"0.1.0\"\n\n{}\n[[roots]]\npath = \"docs\"\ntype = \"mixed\"\n",
+            graph.replace(at, &format!("{at}rolls-up = {rolls_up}\n"))
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn the_keys_of_an_interface_and_a_rule_are_items_of_the_frontier_with_the_key() {
+        let docs = [
+            ("docs/requirements/valves/closing.md", req("close")),
+            ("docs/interfaces/valves/api.md", req("open-close")),
+            ("docs/rules/valves/limits.md", req("max-pressure")),
+            // A draft interface document has no item.
+            (
+                "docs/interfaces/valves/draft.md",
+                req("later").replace("active", "draft"),
+            ),
+        ];
+        let v: Vec<(&str, &str)> = docs.iter().map(|(p, t)| (*p, t.as_str())).collect();
+        let area = || Level::Summary(vec!["valves".to_string()]);
+        // With no key, only the layer `requirements` is a source.
+        let cfg = config();
+        let c = corpus(&cfg, &v);
+        assert_eq!(
+            ids(&c, &cfg, &area()),
+            ["requirements/valves/closing#close"]
+        );
+        // The key replaces the default.
+        let cfg = keyed_config("[\"requirements\", \"interfaces\", \"rules\"]");
+        let c = corpus(&cfg, &v);
+        assert_eq!(
+            ids(&c, &cfg, &area()),
+            [
+                "interfaces/valves/api#open-close",
+                "requirements/valves/closing#close",
+                "rules/valves/limits#max-pressure"
+            ]
+        );
+        let cfg = keyed_config("[\"interfaces\"]");
+        let c = corpus(&cfg, &v);
+        assert_eq!(ids(&c, &cfg, &area()), ["interfaces/valves/api#open-close"]);
+        // The root area holds the items of each source layer.
+        assert_eq!(
+            ids(&c, &cfg, &Level::System),
+            ["interfaces/valves/api#open-close"]
+        );
+    }
+
+    #[test]
+    fn the_delta_of_an_interface_or_a_rule_makes_a_summary_due_only_with_the_key() {
+        let pinned = "---\nrests-on: []\n---\n# S\n\nText.\n";
+        let docs = [
+            ("docs/requirements/valves/closing.md", req("close")),
+            ("docs/interfaces/valves/api.md", req("open-close")),
+            ("docs/rules/valves/limits.md", req("max-pressure")),
+            ("docs/summaries/valves.md", pinned.to_string()),
+        ];
+        let v: Vec<(&str, &str)> = docs.iter().map(|(p, t)| (*p, t.as_str())).collect();
+        let cfg = config();
+        let c = corpus(&cfg, &v);
+        assert!(due_ids(&c, &cfg, &["interfaces/valves/api"]).is_empty());
+        assert!(due_ids(&c, &cfg, &["interfaces/valves/new"]).is_empty());
+        let cfg = keyed_config("[\"interfaces\", \"rules\"]");
+        let c = corpus(&cfg, &v);
+        assert_eq!(
+            due_ids(&c, &cfg, &["interfaces/valves/api"]),
+            ["summaries/valves"]
+        );
+        assert_eq!(
+            due_ids(&c, &cfg, &["rules/valves/limits"]),
+            ["summaries/valves"]
+        );
+        // A new document of a source layer (an `ADD` line), and a requirement
+        // that no source layer holds.
+        assert_eq!(
+            due_ids(&c, &cfg, &["interfaces/valves/new"]),
+            ["summaries/valves"]
+        );
+        assert!(due_ids(&c, &cfg, &["requirements/valves/closing"]).is_empty());
     }
 
     #[test]
