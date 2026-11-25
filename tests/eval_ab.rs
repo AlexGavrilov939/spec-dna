@@ -136,6 +136,11 @@ case "$mode" in
         echo 'status: done' > notes.txt
         printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":1.5,"num_turns":40,"result":"ok"}\n{"type":"assist'
         exit 0 ;;
+    hangbig)
+        # 1.5 USD reported, and then `claude` hangs to the time limit.
+        echo 'status: done' > notes.txt
+        printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":1.5,"num_turns":40,"result":"ok"}\n'
+        sleep 60 ;;
     killbig)
         # 1.5 USD reported, and then a signal ends `claude`.
         echo 'status: done' > notes.txt
@@ -864,9 +869,52 @@ fn a_reported_cost_above_the_budget_is_in_the_spend_of_ab() {
         );
         assert_eq!(code, 0, "{mode}: {out}{err}");
         assert_eq!(field(&out, "spend_usd"), "15", "{mode}: {out}");
+        // The verdict counts the reported cost too: the arm `with` costs
+        // 5 x 1.5 USD, as with 0.8.0.
+        assert!(
+            out.contains("\"with\":{\"runs\":5,\"passes\":"),
+            "{mode}: {out}"
+        );
+        assert_eq!(arm_cost(&out, "with"), "7.5", "{mode}: {out}");
+        assert_eq!(arm_cost(&out, "without"), "7.5", "{mode}: {out}");
         let pair = first_pair(&out);
-        assert!(pair.contains("\"cost_usd\":null,"), "{mode}: {pair}");
+        assert!(pair.contains("\"cost_usd\":1.5,"), "{mode}: {pair}");
+        assert!(pair.contains("\"turns\":null,"), "{mode}: {pair}");
+        // `eval records` reads the cost, and it computes the same item again.
+        let file = format!("evals/results/{}", fx.results()[0]);
+        let (code, records, err) = fx.raw(&["eval", "records", &file], &[]);
+        assert_eq!(code, 0, "{mode}: {records}{err}");
+        assert!(records.contains("\"cost\":1.5,"), "{mode}: {records}");
     }
+}
+
+/// The `cost_usd` of an arm of the first skill of a result of `--ab`.
+fn arm_cost<'a>(json: &'a str, arm: &str) -> &'a str {
+    let at = json
+        .find(&format!("\"{arm}\":{{\"runs\":"))
+        .unwrap_or_else(|| panic!("no arm {arm} in {json}"));
+    field(&json[at..], "cost_usd")
+}
+
+#[test]
+fn the_verdict_counts_a_reported_cost_above_the_budget_after_a_time_limit() {
+    // The first call reports 1.5 USD and hangs to the time limit. The 9 other
+    // calls cost 0.1 USD: the arm `with` costs 1.5 + 4 x 0.1 USD, as with 0.8.0.
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.modes(&["hangbig"]);
+    let (code, out, err) = fx.run_env(
+        &["tdd", "--max-total-usd", "100", "--runs", "1", "--json"],
+        &[("SPEC_DNA_EVAL_TIMEOUT", "8")],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(field(&out, "spend_usd"), "2.4", "{out}");
+    assert_eq!(arm_cost(&out, "with"), "1.9", "{out}");
+    assert_eq!(arm_cost(&out, "without"), "0.5", "{out}");
+    let pair = first_pair(&out);
+    assert!(
+        pair.contains("\"subtype\":\"timeout\",\"cost_usd\":1.5,"),
+        "{pair}"
+    );
 }
 
 #[test]
@@ -879,7 +927,8 @@ fn a_reported_cost_above_the_budget_is_in_the_spend_of_arms() {
         let (code, out, err) = fx.arms("none,lean", &["--max-total-usd", "100", "--json"], &[]);
         assert_eq!(code, 0, "{mode}: {out}{err}");
         assert_eq!(field(&out, "spend_usd"), "1.6", "{mode}: {out}");
-        assert!(out.contains("\"cost_usd\":null,"), "{mode}: {out}");
+        assert!(out.contains("\"cost_usd\":1.5,"), "{mode}: {out}");
+        assert!(!out.contains("\"cost_usd\":null,"), "{mode}: {out}");
     }
 }
 

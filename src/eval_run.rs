@@ -139,14 +139,16 @@ pub(crate) struct Planned {
 pub(crate) struct RunResult {
     pub(crate) claude_exit: i32,
     pub(crate) subtype: Option<String>,
-    /// The `total_cost_usd` of `claude`, if it gave one for the whole run. A
-    /// run that was killed, or whose stream is cut, has none.
+    /// The `total_cost_usd` of `claude`, if it gave one. A run that was
+    /// killed, or whose stream is cut, has it only above its budget
+    /// (`run_cost`).
     pub(crate) cost: Option<f64>,
     /// The last `total_cost_usd` of the stream, also of a run that is not
     /// whole. A refused attempt counts it, or 0.
     pub(crate) reported: Option<f64>,
-    /// The cost that the cap counts (`counted_cost`). For an interrupted run,
-    /// the cost that it has to pay: 0 if the signal ended its agent.
+    /// The cost that the cap counts: the cost, or the budget of the run. For
+    /// an interrupted run, the cost that it has to pay: 0 if the signal ended
+    /// its agent.
     pub(crate) charged: f64,
     pub(crate) checks: Vec<(String, bool)>,
     pub(crate) passed: bool,
@@ -994,11 +996,11 @@ pub(crate) fn one_attempt(
         _ => -1,
     };
     // The run is whole when `claude` ended by itself and no work followed its
-    // last result event. Else the last result does not give the cost or the
-    // turns of the run (`counted_cost` gives what it counts).
+    // last result event. Else the last result does not give the turns of the
+    // run, and it gives the cost only as `run_cost` says.
     let whole = matches!(ended, Ended::Exited(code) if code >= 0) && !cut;
     let (reported, mut subtype) = read_result(&stdout);
-    let cost = reported.filter(|_| whole);
+    let cost = run_cost(whole, reported, p.eval.max_budget_usd);
     let denials = result_denials(&stdout);
     let class = if timed_out {
         None
@@ -1041,9 +1043,9 @@ pub(crate) fn one_attempt(
             drop(temp);
             // The agent ran, so its cost is paid.
             let paid = if whole {
-                reported.unwrap_or(0.0)
+                cost.unwrap_or(0.0)
             } else {
-                counted_cost(None, reported, p.eval.max_budget_usd)
+                cost.unwrap_or(p.eval.max_budget_usd)
             };
             return Ok(RunResult {
                 claude_exit,
@@ -1075,7 +1077,7 @@ pub(crate) fn one_attempt(
         subtype,
         cost,
         reported,
-        charged: counted_cost(cost, reported, p.eval.max_budget_usd),
+        charged: cost.unwrap_or(p.eval.max_budget_usd),
         checks,
         passed,
         class,
@@ -1556,12 +1558,13 @@ fn read_events(r: impl Read) -> Stream {
     stream
 }
 
-/// What the cap counts for a run: its cost. A run with no cost counts its
-/// budget, or the cost that its stream reported, if that is higher: the budget
-/// is a limit that `claude` checks against an estimate, and a known spend is
-/// never dropped.
-fn counted_cost(cost: Option<f64>, reported: Option<f64>, budget: f64) -> f64 {
-    cost.unwrap_or_else(|| budget.max(reported.unwrap_or(0.0)))
+/// The `cost_usd` of a run. A whole run has the cost that its last result
+/// reports. A run that is not whole has the reported cost only if it is above
+/// the budget: the budget is a limit that `claude` checks against an estimate,
+/// and a known spend is never dropped. Else it has none, and the spend and the
+/// verdict count its budget.
+fn run_cost(whole: bool, reported: Option<f64>, budget: f64) -> Option<f64> {
+    reported.filter(|cost| whole || *cost > budget)
 }
 
 /// The `result` events of the output of `claude`, in order: the lines that hold
@@ -2261,12 +2264,15 @@ mod tests {
     }
 
     #[test]
-    fn a_run_with_no_cost_counts_its_budget_or_a_higher_reported_cost() {
-        assert_eq!(counted_cost(Some(0.2), Some(0.2), 1.0), 0.2);
-        assert_eq!(counted_cost(Some(1.5), Some(1.5), 1.0), 1.5);
-        assert_eq!(counted_cost(None, None, 1.0), 1.0);
-        assert_eq!(counted_cost(None, Some(0.2), 1.0), 1.0);
-        assert_eq!(counted_cost(None, Some(1.5), 1.0), 1.5);
+    fn a_run_that_is_not_whole_has_a_cost_only_above_its_budget() {
+        for reported in [None, Some(0.2), Some(1.0), Some(1.5)] {
+            assert_eq!(run_cost(true, reported, 1.0), reported);
+        }
+        assert_eq!(run_cost(false, None, 1.0), None);
+        assert_eq!(run_cost(false, Some(0.2), 1.0), None);
+        // A cost of the budget adds nothing: it does not exceed it.
+        assert_eq!(run_cost(false, Some(1.0), 1.0), None);
+        assert_eq!(run_cost(false, Some(1.5), 1.0), Some(1.5));
     }
 
     #[test]

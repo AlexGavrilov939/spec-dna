@@ -540,8 +540,8 @@ fn a_plain_line_after_the_last_result_keeps_the_cost() {
 #[test]
 fn a_run_that_is_not_whole_counts_a_reported_cost_above_its_budget() {
     // The stream reports 1.5 USD for a budget of 1 USD, and then the time
-    // limit or a signal ends `claude`, or the stream is cut. The run has no
-    // cost, and it counts the larger of the 2 values.
+    // limit or a signal ends `claude`, or the stream is cut. A reported cost
+    // above the budget is the cost of the run. The turns are unknown.
     for shape in [
         "hung",
         "signal",
@@ -557,7 +557,8 @@ fn a_run_that_is_not_whole_counts_a_reported_cost_above_its_budget() {
         }
         let (_, out, _) = fx.run_env(&["--json"], &env);
         for part in [
-            "\"cost_usd\":null",
+            "\"cost_usd\":1.5,",
+            "\"turns\":null,\"segments\":1,",
             "\"spend_usd\":1.5,\"results\"",
             "\"spend_usd\":1.5,\"stopped\"",
         ] {
