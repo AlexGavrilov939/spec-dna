@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime};
 
+use crate::harness_text;
 use crate::json::{self, Obj, Value};
 
 /// The most bytes that a hook reads from stdin or from a script file.
@@ -80,6 +81,7 @@ pub fn run(args: &[String]) {
                     &mut run_git,
                 )
             }
+            "subagent-card" => subagent_card(&input),
             _ => None,
         };
         if let Some(text) = out {
@@ -342,6 +344,28 @@ fn token_sum(usage: &Value) -> u64 {
         .as_u64()
         .saturating_add(usage.get("cache_creation_input_tokens").as_u64())
         .saturating_add(usage.get("cache_read_input_tokens").as_u64())
+}
+
+// ---------------------------------------------------------------------------
+// subagent-card
+// ---------------------------------------------------------------------------
+
+/// Returns the `agent_type` of an event with the name `event`, if it is not
+/// empty. An internal agent of Claude Code can have an empty one.
+fn subagent_type<'a>(v: &'a Value, event: &str) -> Option<&'a str> {
+    if v.get("hook_event_name").as_str() != Some(event) {
+        return None;
+    }
+    v.get("agent_type").as_str().filter(|t| !t.is_empty())
+}
+
+/// Handles one SubagentStart event. It returns the JSON that adds the card to
+/// the context of the subagent. The event cannot block.
+pub fn subagent_card(input: &str) -> Option<String> {
+    let v = json::parse(input).ok()?;
+    let agent_type = subagent_type(&v, "SubagentStart")?;
+    let card = harness_text::subagent_card(agent_type);
+    Some(output("SubagentStart", "additionalContext", &card))
 }
 
 // ---------------------------------------------------------------------------

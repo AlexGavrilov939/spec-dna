@@ -407,6 +407,79 @@ fn fanout_is_silent_on_bad_input() {
     }
 }
 
+// ---- subagent-card ----
+
+/// The card of every role but `acceptor`. The test holds its own copy, so a
+/// change of one byte fails.
+const CARD: &str = "Subagent card. Your agent file and your brief have priority over this card.
+1. Do only the task of the brief. Change only the files of `Files`. If the task needs more, stop and report it.
+2. Read the brief, then the files that it names. Run `spec-dna context <file>` before an edit. Search only for a fact that these do not give.
+3. Do not commit, push or change the git state.
+4. Report the result, the changed files, each command that you ran with its result, and the open issues.
+5. For a rule that the project files do not state, add `Lessons:` before the last line, with one line for each: `- Target: <file>. Text: <sentence>. Evidence: <what happened>.`
+6. End the report with one line: `State: COMPLETE`, `State: COMPLETE_WITH_CONCERNS`, `State: NEEDS_CONTEXT` or `State: BLOCKED`.";
+
+const ACCEPTOR_LINE: &str = "3. Commit only `acceptance.toml`, and do not push.";
+
+fn start_event(agent_type: &str) -> String {
+    format!(
+        r#"{{"session_id":"s1","hook_event_name":"SubagentStart","agent_id":"a1","agent_type":"{agent_type}"}}"#
+    )
+}
+
+/// The output of the card: the card holds no quote and no backslash, so only
+/// its line ends have an escape.
+fn card_output(card: &str) -> String {
+    format!(
+        "{{\"hookSpecificOutput\":{{\"hookEventName\":\"SubagentStart\",\"additionalContext\":\"{}\"}}}}\n",
+        card.replace('\n', "\\n")
+    )
+}
+
+#[test]
+fn subagent_card_gives_the_card_to_each_named_subagent() {
+    let dir = Dir::new();
+    assert_eq!(CARD.len(), 788);
+    for agent_type in ["general-purpose", "verifier", "Explore", "my-own-agent"] {
+        let (code, out, err) = hook(&dir, &["subagent-card"], &start_event(agent_type), &[]);
+        assert_eq!((code, err.as_str()), (0, ""), "{agent_type}");
+        assert_eq!(out, card_output(CARD), "{agent_type}");
+    }
+}
+
+#[test]
+fn subagent_card_gives_the_acceptor_its_own_third_line() {
+    let dir = Dir::new();
+    let card = CARD.replace(
+        "3. Do not commit, push or change the git state.",
+        ACCEPTOR_LINE,
+    );
+    assert_eq!(card.len(), 791);
+    let (code, out, _) = hook(&dir, &["subagent-card"], &start_event("acceptor"), &[]);
+    assert_eq!((code, out), (0, card_output(&card)));
+}
+
+#[test]
+fn subagent_card_is_silent_with_no_agent_type_and_on_bad_input() {
+    let dir = Dir::new();
+    let good = start_event("general-purpose");
+    // The positive control.
+    assert_ne!(hook(&dir, &["subagent-card"], &good, &[]).1, "");
+    for input in [
+        "",
+        "not json",
+        "{}",
+        &start_event(""),
+        r#"{"hook_event_name":"SubagentStart","agent_id":"a1"}"#,
+        r#"{"hook_event_name":"SubagentStart","agent_type":7}"#,
+        &good.replace("SubagentStart", "SubagentStop"),
+        r#"{"agent_type":"general-purpose"}"#,
+    ] {
+        let (code, out, err) = hook(&dir, &["subagent-card"], input, &[]);
+        assert_eq!((code, out.as_str(), err.as_str()), (0, "", ""), "{input}");
+    }
+}
+
 #[test]
 fn hook_help_prints_the_help_of_the_command() {
     let dir = Dir::new();
