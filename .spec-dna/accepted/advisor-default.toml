@@ -1,0 +1,99 @@
+format = 2
+change = "advisor-default"
+scope = [".claude/agents/README.md", ".claude/agents/fallback-advisor.md", ".claude/agents/ownership.md", "CHANGELOG.md", "CLAUDE.md", "docs/adr/0004-harness.md", "docs/config.md", "docs/design/0.8.1-a-lifecycle-and-harness.md", "docs/evals.md", "docs/glossary.md", "docs/harness.md", "docs/init.md", "docs/profiles.md", "scripts/demo-replay.sh", "src/harness.rs", "src/init.rs", "tests/cli.rs", "tests/eval_run.rs", "tests/generated_lint.rs", "tests/golden/harness/model-team-no-advisor.md", "tests/golden/harness/model-team.md", "tests/golden/harness/settings-standard.json", "tests/harness.rs", "tests/harness_roles.rs", "tests/init_profiles.rs", "tests/upgrade_cli.rs"]
+paths = ["scripts/demo-replay.sh", "src/harness.rs", "src/init.rs", "tests/cli.rs", "tests/eval_run.rs", "tests/generated_lint.rs", "tests/golden/harness/settings-standard.json", "tests/harness.rs", "tests/harness_roles.rs", "tests/init_profiles.rs", "tests/upgrade_cli.rs"]
+tree = "2caa2fa1b5f0b067"
+result = "accepted"
+acknowledged-by = []
+
+[[acceptor]]
+roles = ["acceptor"]
+brief = "7c6a90171d409420"
+session = "c51acbf1-5aed-497f-8ed7-0e87fb4f43ac"
+agent = "acceptor"
+model = "claude-opus-5-5"
+result = "accepted"
+
+[[attempt]]
+acceptor = 1
+text = "Proof: each test binary of the Proof ran alone and passed: init_profiles 37, the unit tests harness:: 59 and init:: 19, harness_roles 34, harness_skills 44, generated_lint 2, harness 45, cli 132, eval_run 57, eval_ab 92, upgrade_cli 90. cargo fmt --check, cargo clippy --all-targets -D warnings and pre-commit run --all-files pass. check --all gives no SD102 and no SD602 (only SD928 of the skeleton of this record). The full cargo test did not run, by the limit of this session."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Upgrade keeps each choice: in a scratch folder, the released 0.8.0 binary made 9 projects (lite, standard and strict, each with advisor=fable and advisor=none; standard and strict with no row advisor; standard with the policy none and fable). Then upgrade and a plain init of the new binary ran on copies. In each project, spec-dna.toml and .claude/settings.json keep their bytes, and fallback-advisor.md stays where it was. Only CLAUDE.md (the new consult sentence where the advisor is on), model-team.md and acceptor.md (D93 of another change) change."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "New project in each profile: lite and standard write advisor = none with agent opus and effort xhigh, no advisorModel, no fallback-advisor.md and no advisor sentence in CLAUDE.md. strict writes fable, advisorModel fable, fallback-advisor.md and the sentence of D98. The model-team line of standard has 521 bytes (953 in 0.8.0, 1,099 with the advisor), and init reports 2013 bytes per request, as CHANGELOG.md says. The full level keeps the default of the profile."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Question 13: the preview shows advisor=none (default) in standard and advisor=fable (default) in strict. An interactive init through a pty with the answer strict to question 1 shows advisor=fable in the default line of question 13. An answer advisor=none in strict, or advisor=fable in standard, wins, also with harness-models before profile in the answers file."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Rule of text: where the advisor is on, the CLAUDE.md line asks for a consult only in a change of class higher-risk and says that no gate checks it. model-team.md of standard and strict says that no hook and no check enforces it. A 0.8.0 line gets SD502 and init writes the new line (harness_roles test and the upgrade copies)."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Frozen texts (docs/evals.md): in new standard and strict projects, the h: hashes of specify, finish, write-plan and review, and of acceptor.md (8d2fbb209d82b266 in standard, f541cad357de8926 in strict), equal the freeze table. The diff changes no golden file of a skill or of the acceptor, and the lite page keeps the text of 0.7.1."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Reconfigure of 0.8.0 projects with a new answer to question 1: standard with fable to strict and to lite keeps fable. strict with fable (also with no row) to standard becomes none, removes fallback-advisor.md and keeps advisorModel with a note. standard and lite with none to strict become fable. A reconfigure with no answer keeps each role. All as docs/init.md states."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Warning of D97 item 6: a new init with the policy none and advisor=fable, a plain init on a 0.8.0 project with that table, and init --json give the warning. The policies three-class and two-class, and advisor=none, give none. upgrade gives none, as the comment of the field says."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "scripts/demo-replay.sh did not run: the Proof does not name it, and this session limits the runs. Its edit removes fallback-advisor from the files that the demo expects. A fresh init of standard in a scratch repository writes verifier, Explore and model-team and no fallback-advisor, so the edited list agrees."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Texts of this repository: CLAUDE.md, the 3 texts of ownership.md, the 2 texts and the row of README.md and the description of fallback-advisor.md equal the table of D98. CLAUDE.md grows by 131 bytes. Each changed file is in scope (plus plan.md of the change). The diff has no secret and no new input path."
+outcome = "held"
+
+[[finding]]
+acceptor = 1
+severity = "note"
+path = "src/harness.rs"
+line = 1447
+text = "Known point (D76), confirmed: a new lite project has no advisor, but its frozen model-team.md of 0.7.1 tells a person to run /advisor and to look for the Advising line. The restart line of init names no advisor, so the 2 texts disagree."
+
+[[finding]]
+acceptor = 1
+severity = "note"
+path = "src/harness.rs"
+line = 2152
+text = "Known point, confirmed: a reconfigure from strict to standard moves the role to none, removes fallback-advisor.md and keeps advisorModel = fable in .claude/settings.json with a note. Claude Code then still gives the Fable advisor, while the table says none and the CLAUDE.md line has no advisor rule. This is the 0.8.0 rule for each role that goes."
+
+[[finding]]
+acceptor = 1
+severity = "note"
+path = "src/init.rs"
+line = 424
+text = "Known point 3, judged: the code moves a value that equals the default of the old profile, as docs/init.md says and as the Proof asks (standard to strict moves none to fable). The file keeps no source of a value, so the sentence of D97 item 3 that a value a person set stays cannot hold for a none that a person set in standard. A 0.8.0 project where a person turned the advisor off gets fable, advisorModel and fallback-advisor.md, a paid model, on a reconfigure to strict. The preview marks question 13 as (default), not as changed from advisor=none; only the diff of spec-dna.toml shows the move. The key advisor of the acceptor has had the same rule since 0.8.0. My view: acceptable, because the docs state the real rule and the note names question 13. But D97 item 3 should state this limit, or the preview should mark a moved advisor."
+
+[[finding]]
+acceptor = 1
+severity = "note"
+path = "src/harness.rs"
+line = 1038
+text = "The generated fallback-advisor.md, frozen by the guard of the plan, still offers advice at any decision point with no higher-risk limit. The CLAUDE.md line tells the agent to brief fallback-advisor if the advisor tool is missing, fails or declines, in a sentence of its own. So a main session in routine work with no advisor tool can read it as a call to brief fallback-advisor. This repository got the limit in its own fallback-advisor.md (D98 item 4), but consumer projects do not."
+
+[[finding]]
+acceptor = 1
+severity = "note"
+path = "docs/intent/advisor-default/plan.md"
+text = "Process: the Risks say that a test the probe could not see gets the answer of t3 in a task of its own, which the plan records. Commit 87573aa changed the 2 deny-rule tests of tests/harness.rs, and no task records it. Also, commit 741aac1 changes the restart line of init and the list Check after a restart of model-team.md for a team with no advisor. The spec does not list these among the changed texts, but CHANGELOG.md states them. Both stay inside Files."

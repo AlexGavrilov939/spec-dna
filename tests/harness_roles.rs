@@ -62,6 +62,10 @@ Report: the documents that you changed, and the output of `spec-dna check`. Do n
 <!-- spec-dna harness v0.5.0 h:13263900c4a2a0bc -->
 ";
 
+/// The answer of question 13 of a test that reads the files of the advisor. A
+/// new project of `lite` or `standard` has no advisor (D97).
+const ADVISOR: &str = "harness-models = [\"advisor=fable\"]\n";
+
 /// Runs `init` with an answers file and the other arguments. The answers file
 /// is outside the repository.
 fn init_with(r: &Repo, answers: &str, extra: &[&str]) -> (i32, String, String) {
@@ -81,7 +85,7 @@ fn golden(name: &str) -> String {
 
 fn full_repo() -> Repo {
     let r = Repo::new();
-    let (code, out, err) = init_with(&r, "harness = \"full\"\n", &[]);
+    let (code, out, err) = init_with(&r, &format!("harness = \"full\"\n{ADVISOR}"), &[]);
     assert_eq!(code, 0, "{out}{err}");
     r
 }
@@ -96,7 +100,7 @@ fn project_with(harness: &str) -> Repo {
 #[test]
 fn lean_writes_the_verifier_and_no_checker() {
     let r = Repo::new();
-    let (code, out, err) = r.run(&["init", "--non-interactive"]);
+    let (code, out, err) = init_with(&r, ADVISOR, &[]);
     assert_eq!(code, 0, "{out}{err}");
     for f in LEAN_FILES {
         assert!(r.dir.join(f).exists(), "{f}");
@@ -173,6 +177,52 @@ fn the_agent_files_match_the_golden_files() {
         // This test reads the same file with the helper.
         assert_eq!(md_lint(&golden(name)), [], "{name}");
     }
+}
+
+/// The model-team line that spec-dna 0.8.0 wrote for the default team of a
+/// project of 0.8.0, with its marker.
+const LINE_0_8_0: &str = "Model team: opus builds. The advisor (fable) gives advice and writes no code. `verifier` (opus) tests finished work. `Explore` (haiku) searches. Consult the advisor before you choose an approach, before you say that a task is done, and when the same error occurs twice. Each consult sends the whole context at the advisor price, so consult before the context grows large. If the advisor tool is missing, fails or declines, brief `fallback-advisor`. Run `verifier` before you say that a task is done. A trivial task needs only the one command that proves it. Send a search that needs more than one command, and a docs search, to `Explore`. Run a one-command search yourself. Give a subagent that writes code or reviews work the model `sonnet` or `opus`, not `haiku`. For a small task that fits in this session, use no subagent. If a file disagrees with the advice, tell the advisor in a second consult. <!-- spec-dna harness v0.8.0 h:4db0568726b9b2cd -->";
+
+/// A project of 0.8.0 with the advisor keeps the advisor, and `init` writes the
+/// line of this version. Until then, `check` reports the old line.
+#[test]
+fn init_gives_a_project_of_0_8_0_with_the_advisor_the_new_line() {
+    let r = project_with(
+        "[harness]\nlevel = \"lean\"\n[harness.roles]\nadvisor = { claude-code = \"fable\", agent = \"opus\", effort = \"xhigh\" }\n",
+    );
+    let (code, out, err) = r.run(&["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let claude = r.read("CLAUDE.md");
+    let line = claude
+        .lines()
+        .find(|l| l.starts_with("Model team: "))
+        .unwrap_or_else(|| panic!("no model-team line\n{claude}"));
+    r.write("CLAUDE.md", &claude.replace(line, LINE_0_8_0));
+    let (_, out, err) = r.run(&["check"]);
+    assert!(
+        out.contains("SD502") && out.contains("CLAUDE.md"),
+        "no SD502 for the line of 0.8.0: {out}{err}"
+    );
+    let (code, out, err) = r.run(&["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let claude = r.read("CLAUDE.md");
+    assert!(
+        claude.contains(
+            "Consult the advisor only in a change of class `higher-risk` (the `class` of its `intent.md`): before you choose an approach, before you say that a task is done, and when the same error occurs twice. In other work, do not consult it. This rule is text: no gate checks it. "
+        ),
+        "{claude}"
+    );
+    assert!(
+        !claude.contains("Consult the advisor before you choose an approach"),
+        "{claude}"
+    );
+    let settings = r.read(".claude/settings.json");
+    assert!(
+        settings.contains("\"advisorModel\": \"fable\""),
+        "{settings}"
+    );
+    let (code, out, err) = r.run(&["check"]);
+    assert_eq!(code, 0, "{out}{err}");
 }
 
 #[test]
@@ -563,7 +613,7 @@ fn lite_writes_the_agent_files_of_0_7_1_at_each_level() {
     ];
     for (level, want) in [("none", &[][..]), ("lean", &LEAN[..]), ("full", &FULL[..])] {
         let r = Repo::new();
-        let answers = format!("profile = \"lite\"\nharness = \"{level}\"\n");
+        let answers = format!("profile = \"lite\"\nharness = \"{level}\"\n{ADVISOR}");
         let (code, out, err) = init_with(&r, &answers, &[]);
         assert_eq!(code, 0, "{level}: {out}{err}");
         for name in FULL {
@@ -592,7 +642,7 @@ fn lite_writes_the_agent_files_of_0_7_1_at_each_level() {
     // The other profiles keep the text of this release.
     for profile in ["standard", "strict"] {
         let r = Repo::new();
-        let answers = format!("profile = \"{profile}\"\nharness = \"full\"\n");
+        let answers = format!("profile = \"{profile}\"\nharness = \"full\"\n{ADVISOR}");
         let (code, out, err) = init_with(&r, &answers, &[]);
         assert_eq!(code, 0, "{profile}: {out}{err}");
         for name in FULL {

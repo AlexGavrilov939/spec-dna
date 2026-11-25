@@ -120,7 +120,7 @@ protect-approvals = true        # the hook `protect-approvals` denies an approva
 
 [harness.roles]                 # a role that is not here takes its default
 orchestrator = { claude-code = "opus", effort = "xhigh", fallback = ["opus", "sonnet"] }
-advisor = { claude-code = "fable", agent = "opus", effort = "xhigh" }
+advisor = { claude-code = "fable", agent = "opus", effort = "xhigh" }  # init writes "none" in a new project of `lite` and `standard`
 verifier = { claude-code = "opus", effort = "high" }
 acceptor = { claude-code = "opus", effort = "high", advisor = false }  # only with the skill `review`; no role in `lite`
 researcher = { claude-code = "haiku", effort = "high" }
@@ -214,7 +214,7 @@ sonnet = "high"
 | `evals.max-total-usd` | number | `20` | The maximum spend of `eval run`, in USD. A number above 0. |
 | `conventions` | table | `{}` | For each type, pointers to the sections of project documents that state the conventions for documents of that type. See [Conventions](#conventions). |
 | `harness` | table | none | The agent harness. No table is the same as level `none`. See [The table `harness`](#the-table-harness). |
-| `harness.level` | string | required in the table | `none` installs nothing. `lean` installs the orchestrator, the advisor, the verifier, the researcher and the helper, and the acceptor when `skills` has `review` (the profile `lite` has no acceptor). `full` also installs the implementer and the code-simplifier. With `none`, spec-dna reads the other keys and ignores them. |
+| `harness.level` | string | required in the table | `none` installs nothing. `lean` installs the orchestrator, the advisor (unless its role is `none`), the verifier, the researcher and the helper, and the acceptor when `skills` has `review` (the profile `lite` has no acceptor). `full` also installs the implementer and the code-simplifier. With `none`, spec-dna reads the other keys and ignores them. |
 | `harness.deny` | list of strings | `[]` | Claude Code adapter. Tool names. spec-dna removes each one from the `tools` list of every generated agent, and adds it to `permissions.deny` of `.claude/settings.json`. A rule for the whole tool, `<Tool>(*)` or `<Tool>(**)`, counts as the tool name. A list that removes each tool of a generated agent is an error that names the agent. |
 | `harness.context-meter` | list of integers | `[300000, 600000]` | The context sizes, in tokens, at which the hook `context-meter` tells the main session its size. The values are greater than 0 and in ascending order. `[]` disables the main-session meter. |
 | `harness.subagent-meter` | integer | `250000` | The context size of a subagent, in tokens, for the same hook. `0` disables it. |
@@ -591,6 +591,8 @@ The defaults:
 | `code-simplifier` | `sonnet` | `high` | `full` |
 | `helper` | `haiku` | none | `lean`, `full` |
 
+The table gives the defaults of the binary: a role that the file does not set takes them. Thus a table with no row `advisor` reads as `fable`. `init` writes another default for this role into a new configuration: `none` in `lite` and `standard`, and `fable` in `strict`, with `agent = "opus"` and `effort = "xhigh"` ([init.md](init.md#the-preset-of-a-profile)). `upgrade` applies no preset, so it changes the role of no project.
+
 A role that the level does not include is an error, for example `harness.roles.implementer`: the role is in the level `full`. The role `acceptor` is in each level, but a configuration has it only with the skill `review`, and the profile `lite` has it never. A configuration that has no such role (no skill `review`, or the profile `lite`) writes no agent file. It keeps the entry of `acceptor` only when `claude-code` or `effort` is not the default, and a new project writes no entry for it. The key `advisor` alone never keeps the entry. These rules apply to the values:
 
 - A model is a string that is not empty and has no spaces.
@@ -598,6 +600,7 @@ A role that the level does not include is an error, for example `harness.roles.i
 - A value in `[harness.efforts]` cannot be `max`.
 - For `modelSettings`, spec-dna maps an alias to a model id. A value with a context suffix, such as `opus[1m]`, and the values `opusplan`, `default` and `best` have no id. For such a main model, spec-dna writes no effort, and `init` reports it.
 - The advisor should not be a weaker model than the orchestrator. If it is weaker, the configuration is still valid, and `init` prints a warning. spec-dna ranks the known aliases from strong to weak: `fable`, `opus`, `sonnet`, `haiku`.
+- The advisor can be on while `[change] policy` is `none`. Then `init` prints a warning, because the model-team line asks for a consult only in a change of class `higher-risk` ([init.md](init.md#the-preset-of-a-profile)).
 
 ### The key `advisor` of the entry `acceptor`
 

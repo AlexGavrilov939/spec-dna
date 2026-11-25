@@ -26,7 +26,7 @@ This folder defines 15 Claude Code agents, with one file for each agent. An agen
 | Finished work, before you say that it is done | `checker` |
 | The acceptance record of a `higher-risk` change, with the line that `spec-dna next` prints | `acceptor` |
 | A wide search or a docs lookup | `Explore` |
-| A decision point while the advisor tool is off or fails | `fallback-advisor` |
+| A decision point of a `higher-risk` change while the advisor tool is off or fails | `fallback-advisor` |
 
 ## Roster
 
@@ -68,7 +68,7 @@ This folder defines 15 Claude Code agents, with one file for each agent. An agen
 | Agent | Owns | Model | Effort | Edits files |
 | --- | --- | :-: | :-: | :-: |
 | [Explore](Explore.md) | A read-only search of the repository and the web. It replaces the built-in `Explore` | haiku | high | no |
-| [fallback-advisor](fallback-advisor.md) | Advice at a decision point while the advisor tool is off or fails | opus | xhigh | no |
+| [fallback-advisor](fallback-advisor.md) | Advice at a decision point of a `higher-risk` change while the advisor tool is off or fails | opus | xhigh | no |
 
 There is no product role. The owner decides what to build and when.
 
@@ -86,7 +86,7 @@ Each agent file in this folder sets the `model` and the `effort` of its agent. E
 
 - The built-in `Plan` subagent uses the model of the main session. `CLAUDE_CODE_SUBAGENT_MODEL` does not change it.
 - A `model` parameter in an Agent tool call overrides the `model` field of an agent file. Do not pass a `model` parameter to an agent of this folder. Give `sonnet` only to a subagent without a `model` field that must write code.
-- Subagents also get the advisor tool. Each agent can call Fable, and each call costs tokens.
+- Subagents also get the advisor tool. Each agent can call Fable, and each call costs tokens. `CLAUDE.md` asks for a consult only in a `higher-risk` change, and no gate enforces it.
 
 ### Fallbacks
 

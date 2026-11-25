@@ -24,6 +24,8 @@ fn answers(level: &str) -> String {
     if level != "none" {
         text.push_str("harness-skills = [\"brainstorm\", \"specify\", \"clarify\", \"write-plan\", \"execute\", \"tdd\", \"review\", \"verify\", \"finish\", \"debug\", \"post-mortem\"]\n");
         text.push_str("harness-review-md = true\n");
+        // The lint reads the files of the advisor too, so it turns it on (D97).
+        text.push_str("harness-models = [\"advisor=fable\"]\n");
     }
     if level == "full" {
         text.push_str("evals = \"skeleton\"\n");

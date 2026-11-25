@@ -36,7 +36,7 @@ This file gives the responsible agent and the approver of each task and each pat
 These roles have no row in the matrix:
 
 - The main session builds a small task itself. It then acts as the R of the task and keeps the invariants of the responsible agent. It also makes each commit and pull request, after the approval of the owner.
-- The advisor (Fable) and `fallback-advisor` give advice at a decision point. They are C when the main session asks them.
+- The advisor (Fable) and `fallback-advisor` give advice at a decision point of a `higher-risk` change. They are C when the main session asks them.
 - `Explore` searches on request. It owns no task and no path.
 - `acceptor` writes the acceptance record of a `higher-risk` change, from the brief of `spec-dna accept --brief`, and commits it alone. It writes `acceptance.toml` only, and it edits no code. It is not `checker`: `checker` verifies the work of an agent before the owner accepts it, and `acceptor` writes the record that the gate of `finish` reads.
 
@@ -107,7 +107,7 @@ If a change needs a new ADR or an amendment, the row "Information model" also ap
 | --- | --- | --- | --- | --- |
 | 1. Scope | OWN | OWN | ARC | The task and its limits |
 | 2. Route | The main session | The main session | This file | The responsible agent and the change sets |
-| 3. Design, if a contract or 2 or more modules change | ARC | ARC | The responsible agents, the advisor | A decision, or the draft of an ADR amendment |
+| 3. Design, if a contract or 2 or more modules change | ARC | ARC | The responsible agents; the advisor in a `higher-risk` change | A decision, or the draft of an ADR amendment |
 | 4. Accept an ADR or an amendment | OWN | OWN | ARC | The accepted text |
 | 5. Build | The responsible agent, or the main session | ARC | TST | The diff, with its tests |
 | 6. Docs | The responsible agent | DOC | - | Docs that agree with the code, in STE |
@@ -123,7 +123,7 @@ If a change needs a new ADR or an amendment, the row "Information model" also ap
 | Agents disagree on an approach | `architect` | Before the build |
 | A change touches the information model or a contract of the change sets | `architect`, then the owner for an ADR | Before the build |
 | A failure has no obvious cause | `failure-analyst` | Before any fix |
-| The same error occurs 2 times | The advisor; if it is not available, `fallback-advisor` | At once |
+| The same error occurs 2 times | In a `higher-risk` change, the advisor, or `fallback-advisor` if it is not available. In other work, `failure-analyst` | At once |
 | The same fix fails 3 times | `architect` and `failure-analyst` | Stop the work |
 | A secret, transcript text or consumer project data is in a diff, a fixture, a doc or a commit | The owner | At once; stop the commit |
 | A new dependency, language or tool | `architect`, then the owner | Before the change |

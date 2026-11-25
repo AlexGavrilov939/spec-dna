@@ -2422,11 +2422,26 @@ fn a_second_upgrade_of_the_fixture_of_0_7_1_changes_nothing_in_each_profile() {
     }
 }
 
+/// The consult sentence of the model-team line of 0.7.1, and the sentence of
+/// design 0.8.1, D98. This is the one change of text of a generated file of
+/// `lite`.
+const CONSULT_0_7_1: &str = "Consult the advisor before you choose an approach, before you say that a task is done, and when the same error occurs twice. ";
+const CONSULT_D98: &str = "Consult the advisor only in a change of class `higher-risk` (the `class` of its `intent.md`): before you choose an approach, before you say that a task is done, and when the same error occurs twice. In other work, do not consult it. This rule is text: no gate checks it. ";
+
+/// A marker line without the 16 digits of its hash.
+fn without_marker_hash(line: &str) -> String {
+    let (head, tail) = line.rsplit_once(" h:").expect("a marker has a hash");
+    let digits = tail.chars().take_while(char::is_ascii_hexdigit).count();
+    assert_eq!(digits, 16, "{line}");
+    format!("{head} h:{}", &tail[digits..])
+}
+
 /// What the first `upgrade` of each fixture of 0.7.1 writes. `upgrade` sets no
 /// key and adds no skill: the configuration differs from the fixture in the pin
 /// line only. In `standard` and `strict`, it adds the agent `acceptor`, and the
 /// text of each skill moves. In `lite`, it adds no file, and each changed line of
-/// a generated file is a marker line with the new version and the same hash.
+/// a generated file is a marker line with the new version and the same hash. The
+/// one exception is the model-team line, which gets the consult sentence of D98.
 #[test]
 fn the_first_upgrade_of_the_fixture_of_0_7_1_writes_the_files_of_its_profile() {
     for (profile, name) in V071 {
@@ -2457,17 +2472,31 @@ fn the_first_upgrade_of_the_fixture_of_0_7_1_writes_the_files_of_its_profile() {
                 .filter(|l| l.starts_with('+') && !l.starts_with("+++"))
                 .collect();
             assert_eq!(old_lines.len(), new_lines.len(), "{profile}");
+            let mut team_lines = 0;
             for (o, n) in old_lines.iter().zip(&new_lines) {
                 // The pin line of the configuration is the one pair that is no marker.
                 if o.contains("spec-dna = \"") {
                     continue;
                 }
+                let want = o[1..].replace("v0.7.1", &format!("v{VERSION}"));
+                // D98: the sentence changes, so the hash of the marker changes too.
+                if want.starts_with("Model team: ") {
+                    team_lines += 1;
+                    assert_eq!(want.matches(CONSULT_0_7_1).count(), 1, "{want}");
+                    assert_eq!(
+                        without_marker_hash(&want.replace(CONSULT_0_7_1, CONSULT_D98)),
+                        without_marker_hash(&n[1..]),
+                        "{profile}: the model-team line changes in the consult sentence only"
+                    );
+                    continue;
+                }
                 assert_eq!(
-                    o[1..].replace("v0.7.1", &format!("v{VERSION}")),
+                    want,
                     n[1..],
                     "{profile}: a changed line of a generated file is a marker"
                 );
             }
+            assert_eq!(team_lines, 1, "{profile}");
         } else {
             assert_eq!(new_files, [".claude/agents/acceptor.md"], "{profile}");
             let skill = repo.read(".claude/skills/spec-dna-review/SKILL.md");

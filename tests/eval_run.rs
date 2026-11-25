@@ -591,6 +591,31 @@ fn an_untracked_eval_and_an_untracked_fixture_file_are_read() {
     assert!(fx.files().contains("./extra.txt"), "{}", fx.files());
 }
 
+/// Guard (design 0.8.1, D97, item 5): the arm `lean` keeps the advisor, which
+/// a new project of `standard` no longer has. A record of the arm keeps its
+/// meaning.
+#[test]
+fn the_copy_of_the_arm_lean_has_the_advisor() {
+    let fx = Fx::with(&[ev("example")]);
+    let edit =
+        "cat .claude/settings.json > \"$STUB_FILES.settings\"; echo 'status: done' > notes.txt";
+    let (code, out, err) = fx.run_env(&["--harness", "lean"], &[("STUB_EDIT", edit)]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(fx.runs().len(), 1);
+    let settings = read(&fx.path("files.settings"));
+    assert!(
+        settings.contains("\"advisorModel\": \"fable\""),
+        "{settings}"
+    );
+    let files = fx.files();
+    assert!(
+        files
+            .lines()
+            .any(|l| l == "./.claude/agents/fallback-advisor.md"),
+        "{files}"
+    );
+}
+
 #[test]
 fn the_check_file_of_the_project_is_the_one_that_runs() {
     let fx = Fx::with(&[ev("example")]);
