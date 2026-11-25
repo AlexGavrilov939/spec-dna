@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 ---
 # A tag binds the test under it: spec
 
