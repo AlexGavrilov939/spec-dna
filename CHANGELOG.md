@@ -4,6 +4,10 @@ This file lists the changes of each version. The project uses [Semantic Versioni
 
 ## Unreleased
 
+### Upgrade from 0.8.0
+
+- A 0.8.0 project of the profile `standard` with the advisor off gets SD502 on `.claude/agents/model-team.md` and `.claude/agents/acceptor.md` until `init` or `upgrade` writes them again.
+
 ### Added
 
 - The key `layers.<name>.rolls-up`. The layer of the type `summary` lists its source layers: a layer of the type `requirements`, `interface`, `rule`, `decision` or `research`. A summary then pins each requirement of an active interface or rule document, each `accepted` decision as a whole document, and each research document as a whole document. The pin of a decision or a research document matches the hash of its text in force: the text outside the history and live sections, with the amendment sections. A new amendment of an accepted decision makes the summary stale (SD641), and an edit of its live section `Status` does not. SD641 names the successor of a `superseded` decision. `refresh` writes the new items, `new summary` works in a project with only decisions and research, `context` serves the summary of the area of such a document, and `mv` names the summaries that a move changes. A name of a layer of another type, the key on a layer with no type `summary`, and a source folder inside another are errors of the configuration (exit code 3). A decision and a research document are items only when the key names their layer: with no key, also in a layer that has these types, the roll-up gives the result of 0.8.0, with its messages and fix texts.
