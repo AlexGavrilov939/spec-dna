@@ -131,6 +131,21 @@ case "$mode" in
         echo 'status: done' > notes.txt
         printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.1,"num_turns":40,"result":"ok"}\n{"type":"assist'
         exit 0 ;;
+    cutbig)
+        # A cut stream that reports 1.5 USD, above the budget of 1 USD.
+        echo 'status: done' > notes.txt
+        printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":1.5,"num_turns":40,"result":"ok"}\n{"type":"assist'
+        exit 0 ;;
+    killbig)
+        # 1.5 USD reported, and then a signal ends `claude`.
+        echo 'status: done' > notes.txt
+        printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":1.5,"num_turns":40,"result":"ok"}\n'
+        kill -KILL $$ ;;
+    onelimit)
+        # One result event with a limit, and exit code 0.
+        echo 'status: done' > notes.txt
+        printf '{"type":"result","subtype":"error_max_turns","is_error":true,"total_cost_usd":0.1,"num_turns":5}\n'
+        exit 0 ;;
     refusedcut)
         # A refusal that reports its cost, and an event after it.
         printf '{"type":"result","subtype":"success","is_error":true,"api_error_status":503,"result":"x","total_cost_usd":0.5}\n'
@@ -766,11 +781,11 @@ fn a_cut_run_of_ab_and_arms_counts_its_budget() {
     let with = &pair[..pair.find("\"without\":").unwrap()];
     assert!(with.contains("\"cost_usd\":null,"), "{with}");
     assert!(with.contains("\"turns\":null,\"segments\":1,"), "{with}");
-    // The cut run failed, and its arm counts the budget too, as for a run
-    // with no cost.
-    assert!(with.contains("\"passed\":false"), "{with}");
+    // The run passes, as in 0.8.0, and its arm counts the budget too, as for
+    // a run with no cost.
+    assert!(with.contains("\"passed\":true"), "{with}");
     assert!(
-        out.contains("\"with\":{\"runs\":5,\"passes\":4,\"pass_rate\":0.8,\"cost_usd\":1.4,"),
+        out.contains("\"with\":{\"runs\":5,\"passes\":5,\"pass_rate\":1,\"cost_usd\":1.4,"),
         "{out}"
     );
     let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
@@ -804,6 +819,23 @@ fn a_cut_run_that_a_signal_stops_in_its_check_pays_its_budget() {
 }
 
 #[test]
+fn a_check_that_a_signal_stops_pays_a_reported_cost_above_the_budget() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM[..1]);
+    let path = fx.repo.dir.join(format!("evals/{}.json", TEAM[0]));
+    let eval = fs::read_to_string(&path).unwrap().replace(
+        "file_has notes.txt 'status: done'",
+        "kill -INT $PPID; sleep 30",
+    );
+    fs::write(&path, eval).unwrap();
+    fx.repo.commit("a check that interrupts");
+    fx.modes(&["cutbig"]);
+    let (code, out, err) = fx.arms("none", &["--max-total-usd", "100", "--json"], &[]);
+    assert_eq!(code, 130, "{out}{err}");
+    assert_eq!(field(&out, "spend_usd"), "1.5", "{out}");
+}
+
+#[test]
 fn a_refused_attempt_with_a_cut_stream_counts_the_cost_that_it_reports() {
     // Guard: a refused attempt counts the cost that `claude` reports, 0.5 USD,
     // also when an event follows its result. 10 runs of 0.1 USD follow.
@@ -819,22 +851,67 @@ fn a_refused_attempt_with_a_cut_stream_counts_the_cost_that_it_reports() {
 }
 
 #[test]
-fn a_limit_in_an_earlier_segment_is_no_refusal_and_the_run_failed() {
-    // The agent ran out of turns: the run counts and fails, and no new attempt
-    // starts, also when a later segment is a refusal of the API.
+fn a_reported_cost_above_the_budget_is_in_the_spend_of_ab() {
+    // The repro of the acceptance: the first call is killed after it reported
+    // 1.5 USD for a budget of 1 USD, and the 9 other calls report 1.5 USD
+    // each. The spend is 15 USD, as with 0.8.0.
+    for mode in ["killbig", "cutbig"] {
+        let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+        fx.modes(&[mode]);
+        let (code, out, err) = fx.run_env(
+            &["tdd", "--max-total-usd", "100", "--runs", "1", "--json"],
+            &[("STUB_COST", "1.5")],
+        );
+        assert_eq!(code, 0, "{mode}: {out}{err}");
+        assert_eq!(field(&out, "spend_usd"), "15", "{mode}: {out}");
+        let pair = first_pair(&out);
+        assert!(pair.contains("\"cost_usd\":null,"), "{mode}: {pair}");
+    }
+}
+
+#[test]
+fn a_reported_cost_above_the_budget_is_in_the_spend_of_arms() {
+    // The first call reports 1.5 USD and is not whole. The other costs 0.1.
+    for mode in ["killbig", "cutbig"] {
+        let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+        fx.add_plain(&TEAM[..1]);
+        fx.modes(&[mode]);
+        let (code, out, err) = fx.arms("none,lean", &["--max-total-usd", "100", "--json"], &[]);
+        assert_eq!(code, 0, "{mode}: {out}{err}");
+        assert_eq!(field(&out, "spend_usd"), "1.6", "{mode}: {out}");
+        assert!(out.contains("\"cost_usd\":null,"), "{mode}: {out}");
+    }
+}
+
+// The pass of a side and a refusal are those of 0.8.0 for the same last event
+// and exit code.
+
+#[test]
+fn one_limit_result_with_exit_code_0_passes_a_side_as_in_0_8_0() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.modes(&["onelimit"]);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("\"with\":{\"runs\":5,\"passes\":5,"), "{out}");
+    let pair = first_pair(&out);
+    assert!(pair.contains("\"subtype\":\"error_max_turns\""), "{pair}");
+}
+
+#[test]
+fn the_last_result_event_decides_a_refusal_as_in_0_8_0() {
+    // The last event is a refusal of the API, with a limit before it: the
+    // attempt is excluded and runs again. It counts the 0.2 USD that it
+    // reports, and 10 runs of 0.1 USD follow.
     let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
     fx.modes(&["limitrefused"]);
     let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
     assert_eq!(code, 0, "{out}{err}");
-    assert_eq!(fx.calls().len(), 10, "no new attempt");
+    assert_eq!(fx.calls().len(), 11, "a new attempt");
     assert!(
-        out.contains("\"excluded\":{\"with\":0,\"without\":0}"),
+        out.contains("\"excluded\":{\"with\":1,\"without\":0}"),
         "{out}"
     );
-    let pair = first_pair(&out);
-    let with = &pair[..pair.find("\"without\":").unwrap()];
-    assert!(with.contains("\"subtype\":\"error_max_turns\""), "{with}");
-    assert!(with.contains("\"passed\":false"), "{with}");
+    assert_eq!(field(&out, "spend_usd"), "1.2", "{out}");
 }
 
 #[test]

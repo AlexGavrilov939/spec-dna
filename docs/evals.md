@@ -123,8 +123,8 @@ The command needs the table `[evals]`. A pin that differs from the version of th
 6. It copies the files of the fixture into the root of the folder. Then it copies `CLAUDE.md`, `AGENTS.md`, `REVIEW.md` and the files of `.claude/`, except `.claude/settings.local.json`, from the working tree. A file of the project replaces a fixture file at the same path. With `--arms` or `--harness`, this copy applies only to the arm `project`: a built-in arm gets the files that its table writes (see [Harness arms](#harness-arms)).
 7. The copy uses the list of git, so it does not copy a file that git ignores. It copies no symbolic link, and a warning names it.
 8. It starts a git repository in the folder. The base commit has the author `spec-dna <eval@spec-dna.invalid>`, the date `2000-01-01T00:00:00Z`, no signature and no hook. If `branch` is set and is not `main`, it switches to a new branch of that name. If `change` is set, it copies the files of that folder over the copy. It makes one commit "spec-dna eval change" on that branch (the same author and date as the base commit, no signature, no hook).
-9. It starts `claude` in the folder, and it reads the `result` events of the output. It takes `total_cost_usd`, `subtype` and `modelUsage` from the last event, and `num_turns` from each event. [A limit of a segment](#a-limit-and-a-run-that-is-not-whole) replaces the subtype. It measures the wall time of the process of `claude`. If the cost is absent, the spend counts `max-budget-usd` for the run. [A run that is not whole](#a-limit-and-a-run-that-is-not-whole) has no cost.
-10. It runs each check with `sh -c` in the folder. The checks also run when `claude` failed. A run passes when `claude` exits with code 0, no segment stopped at a limit, [the stream is not cut](#a-limit-and-a-run-that-is-not-whole) and each check passes.
+9. It starts `claude` in the folder, and it reads the `result` events of the output. It takes `total_cost_usd`, `subtype` and `modelUsage` from the last event, and `num_turns` from each event. It measures the wall time of the process of `claude`. If the cost is absent, the spend counts `max-budget-usd` for the run. [A run that is not whole](#a-run-that-is-not-whole) has no cost, and the spend can count more than the budget for it.
+10. It runs each check with `sh -c` in the folder. The checks also run when `claude` failed. A run passes when `claude` exits with code 0 and each check passes.
 11. It deletes the folder, also after an error. It adds the cost to the spend. If the spend is above `max-total-usd` and a run remains, it stops.
 12. An eval passes when its passed runs are at least `min(pass-at, runs)`. The pass rate is the share of the evals that pass, not of the runs. The suite passes when the pass rate is at least `min-pass-rate`.
 
@@ -143,20 +143,20 @@ Details of the steps 9 and 10:
 - The script of a check sources `check.sh` of the project, never the copy. Then it runs the `run` text of the check.
 - The environment of a check has `SPEC_DNA_CHECK_SH`, the absolute path of `check.sh`, and `SPEC_DNA_EVAL_BASE`, the id of the commit that `HEAD` has when the agent starts. If the eval has the key `change`, it is the commit of the change. Thus a check that compares a file with the base (`tests_unchanged`) does not see the change as an edit of the agent. The diff of the change against the branch `main` stays. The agent sees it, and so does an acceptor.
 
-### A limit and a run that is not whole
-
-If a segment of a run has the subtype `error_max_turns` or `error_max_budget_usd`, the run stopped at a limit. A later segment can succeed, but the run failed all the same. Its `subtype` is that of the first such segment ([ADR 0033](adr/0033-protocol-2-of-the-model-team-measurement.md) scores a limit as 0).
+### A run that is not whole
 
 A run is not whole in these cases:
 
 - A time limit or a signal ended `claude`.
 - The stream is cut. After the last `result` event, it has an `assistant` or `user` event (a segment in flight), a JSON object with no end (a cut line) or a line of more than 16 MiB. Another event, such as a `system` event of a hook, does not cut the stream.
 
-A cut run failed, also when `claude` exits with code 0 and each check passes ([ADR 0033](adr/0033-protocol-2-of-the-model-team-measurement.md) scores an error and a limit as 0). Its `subtype` stays that of the last `result` event, so read `passed` for the result of the run.
+This changes the cost and the turns only. The subtype, the pass and [a refusal](#runs-that-the-api-refuses) follow the rules of each run: the last `result` event, the exit code and the checks decide. Thus a cut run can pass when `claude` exits with code 0.
 
-The last `result` event of such a run does not give the cost of the run. Thus `cost_usd` and `turns` are `null`, and the spend counts `max-budget-usd` for the run. `segments` is the number of `result` events that the runner read. `tokens` and `models` come from the last of them, so they can be lower than the totals of the run. A run that a time limit killed has the subtype `timeout`, also after a limit.
+The last `result` event of such a run does not give the cost of the run. Thus `cost_usd` and `turns` are `null`. The spend counts the larger of `max-budget-usd` and the last cost that `claude` reported, so it drops no known spend. `segments` is the number of `result` events that the runner read. `tokens` and `models` come from the last of them, so they can be lower than the totals of the run. A run that a time limit killed has the subtype `timeout`.
 
-A [refused attempt](#runs-that-the-api-refuses) counts the last cost that `claude` reports, or 0, also when it is not whole. A run of `--ab` or `--arms` that a signal stops during a check is in the spend. It counts its cost, and a run that is not whole counts its budget.
+The cost of an arm is not the spend. In [the verdict](#the-verdict) of `--ab` and in `eval verdict --compare`, a side with `cost_usd` `null` counts `max-budget-usd`. When `claude` reported more than that, the cost of the arm is lower than the part of the spend for its runs.
+
+A [refused attempt](#runs-that-the-api-refuses) counts the last cost that `claude` reports, or 0, also when it is not whole. A run of `--ab` or `--arms` that a signal stops during a check is in the spend. It counts its cost, and a run that is not whole counts the larger of its budget and the reported cost.
 
 ### Output
 
@@ -229,7 +229,7 @@ The check has these limits:
 
 - `claude_code` is the first word of `claude --version`, or `null`. `stopped` is `null`, `"max-total-usd"` or `"disk-space"`.
 - After a stop, `pass_rate` is `null`, `passed` is `false`, and an eval that did not start has `"results":[]`.
-- `claude_exit` is the exit code of `claude`, or -1 if a signal ended it. `cost_usd` is `null` when `claude` gave no cost, and for [a run that is not whole](#a-limit-and-a-run-that-is-not-whole). `spend_usd` is the sum that the cap uses.
+- `claude_exit` is the exit code of `claude`, or -1 if a signal ended it. `cost_usd` is `null` when `claude` gave no cost, and for [a run that is not whole](#a-run-that-is-not-whole). `spend_usd` is the sum that the cap uses.
 - `harness` is the harness arm of the copies: `project`, or the value of `--harness`.
 - Each result has, after `checks`, the keys `tokens`, `models`, `turns`, `segments` and `seconds`. `tokens` and `models` are the same sums and names as in the result of `--ab` (`null` and `[]` when `claude` gave no `modelUsage`). `seconds` is the wall time of the process of `claude` with 1 decimal. A result of 0.7.x has none of these 5 keys, and a result of 0.8.0 has no `segments`.
 - [Turns and segments](#turns-and-segments) gives the meaning of `turns` and `segments`.
@@ -244,10 +244,10 @@ A project can keep the result files in `<[evals] dir>/results`. `spec-dna stats 
 A segment is the part of a run that ends with one `result` event of `claude`. A background task that ends after the agent stopped wakes the agent, so a run can have more than one segment.
 
 - `segments` is the number of `result` events of the run. It is 0 when the output has no such event, and the run then has `turns` `null`.
-- `turns` is the sum of `num_turns` over these events. It is `null` when there is no event, when one event has no integer `num_turns` of 0 or more, and for [a run that is not whole](#a-limit-and-a-run-that-is-not-whole).
+- `turns` is the sum of `num_turns` over these events. It is `null` when there is no event, when one event has no integer `num_turns` of 0 or more, and for [a run that is not whole](#a-run-that-is-not-whole).
 - `--max-turns` probably limits each segment, and not the whole run. Thus `turns` can be more than `max-turns` when `segments` is more than 1.
 
-The cost, the models and the tokens come from the last event, because they are totals of the session. The subtype also comes from it, except after [a limit](#a-limit-and-a-run-that-is-not-whole).
+The cost, the subtype, the models and the tokens come from the last event. The cost, the models and the tokens are totals of the session. Known limit: a turn-limit stop in an earlier segment does not show when a later segment succeeds ([ADR 0033](adr/0033-protocol-2-of-the-model-team-measurement.md) would score it 0).
 
 In a result of 0.8.0, `turns` holds the `num_turns` of the last segment only. It can be much lower than the count of the whole run.
 
@@ -469,7 +469,7 @@ These rules apply to both arms:
 - In the copy of a fixture, the runner writes the version of the binary into the pin line of `spec-dna.toml`, so a fixture does not give exit code 3 in each run.
 - The line of the adapter that the copy adds is the line of this binary, not the line of the project. The pin of the copy is the version of this binary, so a line of another version or build would give SD502 in the copy. The runner also sets `SD501 = "off"` and `SD502 = "off"` under `[rules]` in `spec-dna.toml` of the copy, in both arms. The arm `without` edits the generated lines and the adapter skill by design, and the adapter skill of the project lists the types of the project, not of the fixture. A table `[rules]` that the fixture has keeps its other keys. A plain `eval run` changes none of these files.
 - The `PATH` of the agent and of each check has the folder of the running binary first, so `spec-dna` in a copy is the binary under test.
-- An agent that runs more than 25 minutes, and a check that runs more than 5 minutes, are killed with their process group. The run counts as failed, with the subtype `timeout`, and it is no refusal. A run whose agent the limit killed is [not whole](#a-limit-and-a-run-that-is-not-whole), so it counts its budget. `SPEC_DNA_EVAL_TIMEOUT` (the agent) and `SPEC_DNA_EVAL_CHECK_TIMEOUT` (a check) set the limits in seconds, from 1 to 86,400. Another value is a usage error.
+- An agent that runs more than 25 minutes, and a check that runs more than 5 minutes, are killed with their process group. The run counts as failed, with the subtype `timeout`, and it is no refusal. A run whose agent the limit killed is [not whole](#a-run-that-is-not-whole), so it has no cost. `SPEC_DNA_EVAL_TIMEOUT` (the agent) and `SPEC_DNA_EVAL_CHECK_TIMEOUT` (a check) set the limits in seconds, from 1 to 86,400. Another value is a usage error.
 - The working tree never changes.
 
 A pair is the same eval and the same run number in both arms. For each eval and run number, `with` runs first for an odd number, and `without` runs first for an even number. The runner runs one run at a time.
@@ -480,7 +480,7 @@ The cap is checked before each run: if the spend and the `max-budget-usd` of the
 
 #### Stop and resume
 
-The runner writes the result file after each arm of a pair, with a hidden temporary file and a rename, so a kill loses no paid run. Until the end, the file says `"stopped": "interrupted"`. SIGHUP, SIGINT and SIGTERM stop the command: it kills the agent and its process group, removes the copy, writes the result with `"stopped": "interrupted"`, and exits with 129 (SIGHUP), 130 (SIGINT) or 143 (SIGTERM). A run of the agent that ended before the signal is in `spend_usd`, with its cost, or with its budget when it is [not whole](#a-limit-and-a-run-that-is-not-whole). A Ctrl-C does not reach the git helpers of the runner, so an interrupt is never an error of git.
+The runner writes the result file after each arm of a pair, with a hidden temporary file and a rename, so a kill loses no paid run. Until the end, the file says `"stopped": "interrupted"`. SIGHUP, SIGINT and SIGTERM stop the command: it kills the agent and its process group, removes the copy, writes the result with `"stopped": "interrupted"`, and exits with 129 (SIGHUP), 130 (SIGINT) or 143 (SIGTERM). A run of the agent that ended before the signal is in `spend_usd`, with its cost, or with the amount that [a run that is not whole](#a-run-that-is-not-whole) counts. A Ctrl-C does not reach the git helpers of the runner, so an interrupt is never an error of git.
 
 ```text
 spec-dna eval run --ab <target> --resume evals/results/skills-<time>.json --max-total-usd <n>
@@ -490,7 +490,7 @@ spec-dna eval run --ab <target> --resume evals/results/skills-<time>.json --max-
 
 ### Runs that the API refuses
 
-The runner treats a refused attempt as no run. A refused attempt is an account limit, a credit or a login problem, 401, 403, 429, a 5xx status, a page of Cloudflare or a lost connection. A result of `claude` with a `subtype` that starts with `error_max_` (the agent ran out of turns or budget) is never a refusal. Nor is a run with [a limit in any segment](#a-limit-and-a-run-that-is-not-whole). A run that exits with code 0 and has no `"is_error": true` is never a refusal. Else an attempt is refused in these cases, by its last `result` event:
+The runner treats a refused attempt as no run. A refused attempt is an account limit, a credit or a login problem, 401, 403, 429, a 5xx status, a page of Cloudflare or a lost connection. A result of `claude` with a `subtype` that starts with `error_max_` (the agent ran out of turns or budget) is never a refusal. A run that exits with code 0 and has no `"is_error": true` is never a refusal. Else an attempt is refused in these cases, by its last `result` event:
 
 1. The result object has `"is_error": true` and an `api_error_status` of 401, 403, 429 or 500 to 599. The text does not matter, and it can be long.
 2. The result object has a `result` text with fewer than 600 bytes and a marker.

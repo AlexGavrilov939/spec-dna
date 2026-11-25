@@ -145,9 +145,8 @@ pub(crate) struct RunResult {
     /// The last `total_cost_usd` of the stream, also of a run that is not
     /// whole. A refused attempt counts it, or 0.
     pub(crate) reported: Option<f64>,
-    /// The cost that the cap counts: the cost, or the budget of the run. For
-    /// an interrupted run, the cost that it has to pay: the budget if its
-    /// agent ended and the run is not whole.
+    /// The cost that the cap counts (`counted_cost`). For an interrupted run,
+    /// the cost that it has to pay: 0 if the signal ended its agent.
     pub(crate) charged: f64,
     pub(crate) checks: Vec<(String, bool)>,
     pub(crate) passed: bool,
@@ -996,11 +995,10 @@ pub(crate) fn one_attempt(
     };
     // The run is whole when `claude` ended by itself and no work followed its
     // last result event. Else the last result does not give the cost or the
-    // turns of the run, and the run counts its budget (ADR 0033).
+    // turns of the run (`counted_cost` gives what it counts).
     let whole = matches!(ended, Ended::Exited(code) if code >= 0) && !cut;
     let (reported, mut subtype) = read_result(&stdout);
     let cost = reported.filter(|_| whole);
-    let limited = first_limit(&stdout).is_some();
     let denials = result_denials(&stdout);
     let class = if timed_out {
         None
@@ -1045,7 +1043,7 @@ pub(crate) fn one_attempt(
             let paid = if whole {
                 reported.unwrap_or(0.0)
             } else {
-                p.eval.max_budget_usd
+                counted_cost(None, reported, p.eval.max_budget_usd)
             };
             return Ok(RunResult {
                 claude_exit,
@@ -1071,14 +1069,13 @@ pub(crate) fn one_attempt(
         checks.push((c.name.clone(), ended == Ended::Exited(0)));
     }
     drop(temp);
-    // A cut run failed, also when `claude` exits with 0 (ADR 0033).
-    let passed = claude_exit == 0 && !limited && !cut && checks.iter().all(|c| c.1);
+    let passed = claude_exit == 0 && checks.iter().all(|c| c.1);
     Ok(RunResult {
         claude_exit,
         subtype,
         cost,
         reported,
-        charged: cost.unwrap_or(p.eval.max_budget_usd),
+        charged: counted_cost(cost, reported, p.eval.max_budget_usd),
         checks,
         passed,
         class,
@@ -1497,8 +1494,9 @@ struct Stream {
     /// True if work followed the last `result` event: a message of a segment
     /// in flight (an `assistant` or `user` event), an object with no end (a cut
     /// line), or a line that the reader discarded. The last result then does
-    /// not give the cost of the run, and the run failed. Another event, such as
-    /// a `system` event of a hook, can follow the last result.
+    /// not give the cost of the run. It changes the money only, never the pass
+    /// of the run. Another event, such as a `system` event of a hook, can
+    /// follow the last result.
     cut: bool,
 }
 
@@ -1558,17 +1556,12 @@ fn read_events(r: impl Read) -> Stream {
     stream
 }
 
-/// The first limit that a segment of the run stopped at: `error_max_turns` or
-/// `error_max_budget_usd`. A later segment can succeed, and the run stopped at
-/// the limit all the same (ADR 0033: a limit scores 0).
-fn first_limit(stdout: &[u8]) -> Option<String> {
-    result_events(stdout).iter().find_map(|event| {
-        event
-            .get("subtype")
-            .as_str()
-            .filter(|s| matches!(*s, "error_max_turns" | "error_max_budget_usd"))
-            .map(str::to_string)
-    })
+/// What the cap counts for a run: its cost. A run with no cost counts its
+/// budget, or the cost that its stream reported, if that is higher: the budget
+/// is a limit that `claude` checks against an estimate, and a known spend is
+/// never dropped.
+fn counted_cost(cost: Option<f64>, reported: Option<f64>, budget: f64) -> f64 {
+    cost.unwrap_or_else(|| budget.max(reported.unwrap_or(0.0)))
 }
 
 /// The `result` events of the output of `claude`, in order: the lines that hold
@@ -1588,9 +1581,8 @@ fn result_object(stdout: &[u8]) -> Option<Value> {
     result_events(stdout).pop()
 }
 
-/// Reads `total_cost_usd` of the last result event of `claude`, and the
-/// subtype of the run: the first limit of a segment, else the subtype of the
-/// last event. Nothing else is read.
+/// Reads `total_cost_usd` and `subtype` of the last result event of `claude`.
+/// Nothing else is read.
 fn read_result(stdout: &[u8]) -> (Option<f64>, Option<String>) {
     let Some(obj) = result_object(stdout) else {
         return (None, None);
@@ -1606,7 +1598,7 @@ fn read_result(stdout: &[u8]) -> (Option<f64>, Option<String>) {
             (1..=40).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
         })
         .map(str::to_string);
-    (cost, first_limit(stdout).or(subtype))
+    (cost, subtype)
 }
 
 /// The sorted names of the models of `modelUsage` in the result of `claude`.
@@ -1751,9 +1743,8 @@ fn is_refusal_status(status: u32) -> bool {
 /// It is no run, and no result counts it.
 ///
 /// A result of `claude` with a `subtype` that starts with `error_max_` (the
-/// agent ran out of turns or budget) is never a refusal, and nor is a run with
-/// such a limit in any segment (`first_limit`). Nor is a run that exits with 0
-/// and has no error flag. Else, by the last result event:
+/// agent ran out of turns or budget) is never a refusal. Nor is a run that
+/// exits with 0 and has no error flag. Else, by the last result event:
 ///
 /// 1. A result object with `is_error` and an `api_error_status` of 401, 403,
 ///    429 or 500 to 599 is a refusal, whatever its text is.
@@ -1778,8 +1769,7 @@ fn is_refusal_status(status: u32) -> bool {
 pub(crate) fn refusal(claude_exit: i32, stdout: &[u8], stderr: &[u8]) -> Option<Refusal> {
     let obj = result_object(stdout);
     let is_error = obj.as_ref().is_some_and(|o| o.get("is_error").is_true());
-    // An agent that stopped at a limit in one segment did run.
-    if (claude_exit == 0 && !is_error) || first_limit(stdout).is_some() {
+    if claude_exit == 0 && !is_error {
         return None;
     }
     let short = |t: &str| {
@@ -2217,14 +2207,12 @@ mod tests {
 {"type":"result","subtype":"error_max_turns","total_cost_usd":0.2}
 {"type": "result", "subtype": "error_max_budget_usd", "total_cost_usd": 0.5}
 "#;
-        // The cost is that of the last event, and the subtype is the first
-        // limit of a segment.
         assert_eq!(
             read_result(text),
-            (Some(0.5), Some("error_max_turns".to_string()))
+            (Some(0.5), Some("error_max_budget_usd".to_string()))
         );
-        // With no limit, the subtype is that of the last event.
-        let text = br#"{"type":"result","subtype":"error_during_execution","total_cost_usd":0.2}
+        // A limit of an earlier segment does not show (D95 item 5).
+        let text = br#"{"type":"result","subtype":"error_max_turns","total_cost_usd":0.2}
 {"type":"result","subtype":"success","total_cost_usd":0.3}
 "#;
         assert_eq!(read_result(text), (Some(0.3), Some("success".to_string())));
@@ -2270,6 +2258,15 @@ mod tests {
             assert_eq!(read_events(text.as_bytes()).out, text.as_bytes());
         }
         assert!(read_events(&b""[..]).out.is_empty());
+    }
+
+    #[test]
+    fn a_run_with_no_cost_counts_its_budget_or_a_higher_reported_cost() {
+        assert_eq!(counted_cost(Some(0.2), Some(0.2), 1.0), 0.2);
+        assert_eq!(counted_cost(Some(1.5), Some(1.5), 1.0), 1.5);
+        assert_eq!(counted_cost(None, None, 1.0), 1.0);
+        assert_eq!(counted_cost(None, Some(0.2), 1.0), 1.0);
+        assert_eq!(counted_cost(None, Some(1.5), 1.0), 1.5);
     }
 
     #[test]
