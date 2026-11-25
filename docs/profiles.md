@@ -24,7 +24,7 @@ An error fails `check` when the error is new against the base. A warning never f
 | `evidence` | SD103 (a `verified-by` path is not in the git tree), SD105 (a `covers:` tag names no requirement) | warning | error | error |
 | `evidence` | SD608 (an active requirement has no evidence) | off | warning | error |
 | `reports` | SD613 (report missing), SD614 (report stale), SD615 (report unreadable), SD617 (change unproven) | off | error | error |
-| `reports` | SD616 (an active requirement is unproven by the reports), SD621 (a tag binds a case by its name only) | off | warning | error |
+| `reports` | SD616 (an active requirement is unproven by the reports), SD621 (a tag has a weak bind) | off | warning | error |
 | `proof` | SD618 (a proof debt and no evidence) | off | warning | warning |
 | `proof` | SD619 (a proof marker that is not valid or stale) | off | warning | error |
 | `proof` | SD620 (a requirement is below the level `reliable`) | off | error | error |
