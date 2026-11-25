@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 ---
 # Each subagent gets a card and ends with a state, an agent stops after 3 failed fixes, and a change lists its lessons: plan
 
