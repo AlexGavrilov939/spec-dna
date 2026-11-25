@@ -588,8 +588,9 @@ fn same_owner(_dir: &Path, _meta: &fs::Metadata) -> bool {
 }
 
 /// Makes the state folder of `fix-limit`, if it is not there. It returns `None`
-/// for a folder that the hook must not use. Then the hook reads, writes and
-/// deletes nothing there.
+/// for a folder that the hook must not use. Then the hook keeps no state there
+/// and changes no other file. The owner test of `own_dir` makes and removes one
+/// empty file in a real folder.
 fn state_folder(dir: &Path) -> Option<()> {
     fs::create_dir_all(dir).ok()?;
     own_dir(dir).then_some(())
