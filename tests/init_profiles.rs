@@ -1389,6 +1389,131 @@ fn a_new_strict_project_has_the_advisor() {
     );
 }
 
+// ---- `lite` keeps its files (harness additions of 0.8.1) ----
+
+/// The adapter line of 0.8.0, in `AGENTS.md` and `CLAUDE.md`. `{V}` stands for
+/// the version of the binary.
+const LITE_ADAPTER_LINE: &str = "If a task edits code or docs, run `spec-dna context <files>` once. Before a commit, run `spec-dna check`. Rules: test first (tdd), cause first (debug), proof before done (verify), review is data (review), isolated work (execute). Detail: `spec-dna skill show <name>`. An agent writes an approval commit only when the owner says so explicitly in the chat.<!-- spec-dna v{V} h:b9b4ed5ebfbbd534 -->";
+
+/// The model-team lines of 0.8.0 for a new project of `lite`, by level.
+const LITE_TEAM_LINES: [(&str, &str); 2] = [
+    (
+        "lean",
+        "Model team: opus builds. `verifier` (opus) tests finished work. `Explore` (haiku) searches. Run `verifier` before you say that a task is done. A trivial task needs only the one command that proves it. Send a search that needs more than one command, and a docs search, to `Explore`. Run a one-command search yourself. Give a subagent that writes code or reviews work the model `sonnet` or `opus`, not `haiku`. For a small task that fits in this session, use no subagent. <!-- spec-dna harness v{V} h:3d5380c9b5698d17 -->",
+    ),
+    (
+        "full",
+        "Model team: opus builds. `verifier` (opus) tests finished work. `Explore` (haiku) searches. Run `verifier` before you say that a task is done. A trivial task needs only the one command that proves it. Send a search that needs more than one command, and a docs search, to `Explore`. Run a one-command search yourself. Give a code change to `implementer`. After the checks pass, give the diff to `code-simplifier`. Give a subagent that writes code or reviews work the model `sonnet` or `opus`, not `haiku`. For a small task that fits in this session, use no subagent. <!-- spec-dna harness v{V} h:025cb55ceb82cd0b -->",
+    ),
+];
+
+/// The hash of the team page that 0.8.0 wrote for a new project of `lite`, by
+/// level. The page of a new project has no advisor, so it is not the file
+/// `model-team-0.7.1.md`.
+const LITE_PAGE_HASHES: [(&str, &str); 2] =
+    [("lean", "ab92f591110b9695"), ("full", "c52a50a56812fa89")];
+
+/// The names of the entries of a folder, in order.
+fn names_in(r: &Repo, dir: &str) -> Vec<String> {
+    let mut out: Vec<String> = fs::read_dir(r.dir.join(dir))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    out.sort();
+    out
+}
+
+/// Guard: each generated file of a new project of `lite` keeps its bytes. Only
+/// `spec-dna.toml` gets new lines, and this test does not read it.
+#[test]
+fn a_new_lite_project_keeps_the_files_of_0_8_0() {
+    let version = |line: &str| line.replace("{V}", VERSION);
+    for (level, team_line) in LITE_TEAM_LINES {
+        let r = repo();
+        let answers = format!("profile = \"lite\"\nharness = \"{level}\"\n");
+        let (code, out, err) = init_with(&r, &answers, &[]);
+        assert_eq!(code, 0, "{level}: {out}{err}");
+        assert_eq!(
+            r.read(".claude/settings.json"),
+            harness_golden("settings-lite.json"),
+            "{level}"
+        );
+        assert_eq!(
+            r.read("AGENTS.md"),
+            format!("{}\n", version(LITE_ADAPTER_LINE)),
+            "{level}"
+        );
+        assert_eq!(
+            r.read("CLAUDE.md"),
+            format!(
+                "{}\n\n{}\n",
+                version(LITE_ADAPTER_LINE),
+                version(team_line)
+            ),
+            "{level}"
+        );
+        let agents: &[&str] = match level {
+            "lean" => &["Explore.md", "model-team.md", "verifier.md"],
+            _ => &[
+                "Explore.md",
+                "code-simplifier.md",
+                "implementer.md",
+                "model-team.md",
+                "verifier.md",
+            ],
+        };
+        assert_eq!(names_in(&r, ".claude/agents"), agents, "{level}");
+        for name in agents.iter().filter(|n| **n != "model-team.md") {
+            assert_eq!(
+                normalize_marker(&r.read(&format!(".claude/agents/{name}"))),
+                harness_golden(&format!("agents-0.7.1/{name}")),
+                "{level}: {name}"
+            );
+        }
+        let page = r.read(".claude/agents/model-team.md");
+        let hash = LITE_PAGE_HASHES.iter().find(|h| h.0 == level).unwrap().1;
+        assert!(
+            page.ends_with(&format!(
+                "\n<!-- spec-dna harness v{VERSION} h:{hash} -->\n"
+            )),
+            "{level}:\n{page}"
+        );
+        let skills: Vec<String> = names_in(&r, ".claude/skills")
+            .into_iter()
+            .filter(|s| s != "spec-dna")
+            .collect();
+        assert!(skills.len() >= 3, "{level}: {skills:?}");
+        for skill in &skills {
+            assert_eq!(
+                normalize_marker(&r.read(&format!(".claude/skills/{skill}/SKILL.md"))),
+                harness_golden(&format!("skills-0.7.1/{skill}.md")),
+                "{level}: {skill}"
+            );
+        }
+        // A clean tree for `check`.
+        r.commit("adopt spec-dna");
+        let (code, out, err) = run(&r, &["check"]);
+        assert_eq!(code, 0, "{level}: {out}{err}");
+    }
+    // With the parts of the page of 0.7.1, a new project of `lite` writes that
+    // page.
+    let r = repo();
+    let answers = format!(
+        "profile = \"lite\"\nharness = \"full\"\nharness-models = [\"advisor=fable\"]\nharness-skills = [{}]\nharness-review-md = true\nharness-protect-tests = \"fix-branches\"\n",
+        all_skills()
+            .iter()
+            .map(|s| format!("\"{s}\""))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let (code, out, err) = init_with(&r, &answers, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(
+        normalize_marker(&r.read(".claude/agents/model-team.md")),
+        harness_golden("model-team-0.7.1.md")
+    );
+}
+
 /// A new project of `profile` at the level `lean`, in a commit.
 fn project_of(profile: &str) -> Repo {
     let r = repo();
