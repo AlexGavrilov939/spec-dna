@@ -41,7 +41,7 @@ The definition line is a test when one form of this closed list matches it. The 
 | `def` | Python | `def <name>(` or `async def <name>(` | `<name>` |
 | `fn` | Rust | `fn <name>(`, after any of `pub`, `pub(crate)`, `async`, `const` and `unsafe` | `<name>` |
 | `func` | Go | `func <Name>(`, or `func (<receiver>) <Name>(` | `<Name>` |
-| call | JavaScript, TypeScript, Ruby, Kotlin | `it`, `test`, `specify`, `example` or `scenario`, with any of `.only`, `.skip`, `.todo`, `.concurrent` and `.failing`, then `(` or a space, then a literal in `'`, `"` or a backtick. In Kotlin, `fun`, a text in backticks, then `(` | the text of the literal, or the text in the backticks |
+| call | JavaScript, TypeScript, Ruby, Kotlin | `it`, `test`, `specify`, `example` or `scenario`, with any of `.only`, `.skip`, `.todo`, `.concurrent`, `.failing`, `.fails` and `.sequential`, and `.runIf(<condition>)` and `.skipIf(<condition>)` with the condition on the same line, then `(` or a space, then a literal in `'`, `"` or a backtick. In Kotlin, `fun`, a text in backticks, then `(` | the text of the literal, or the text in the backticks |
 | method | Java, Kotlin, C#, PHP, Scala | a word and `(`, where an annotation or an attribute came before, or where the line has `void`, `fun`, `function` or `def` before the word. | the word |
 | explicit | each | `case:<name>` in the tag | `<name>` |
 
@@ -59,7 +59,7 @@ A bind is strong only when each case that it binds is an own case. A strong bind
 
 - The identity of a test is the test file, the chain of the module, class or group titles around the definition, and the name. A report writes the test file as the `file` of a case, or as its whole `classname`. The row tail of a runner is no part of the identity: parameters, a data set, a subtest or the case of a macro.
 - spec-dna builds the identity from the definition under the tag. An own case has this identity in the report, and no other definition of the project builds it.
-- A case that names the test is another test only when a field differs that the report and the built identity both hold in full. Such a case leaves the set of the tag. No case leaves the set because another case fits better.
+- A case that names the test is another test only when a field differs that the report and the built identity both hold in full, or when its field names [another file](#a-case-of-another-file). Such a case leaves the set of the tag. No case leaves the set because another case fits better.
 - Each other case that names the test is a weak link. It stays in the set, and it takes part in [the proof](#the-proof).
 - When spec-dna cannot build the identity, or the identity is not unique, the bind is weak.
 
@@ -73,7 +73,22 @@ spec-dna reads each case whose name can name the test. This list is wide on purp
 - A Go method of a suite (`func (s *ValveSuite) TestCloses()`, testify) has the case `<Test function>/<method>`, for example `TestValveSuite/TestCloses`. The function is the one whose lines have `suite.Run(t, new(ValveSuite))` or `suite.Run(t, &ValveSuite{...})`, in the test files of the same folder. The case of another function, a case with the method name alone, and a type that no function runs bind nothing (`no-case`). A function that runs 2 suites with a method of this name binds neither, because the 2 cases have one name.
 - The form call. The literal is a whole segment of the name of the case, or the end of that name after a space. A name that has a segment of ` > ` never matches by its last word. A Kotlin test with a name in backticks has its whole text as its name, with its parentheses and brackets, and the report can add the parameters of the method.
 - A case whose name is the built name of the test, with or without a row tail.
+- For the end after a space, spec-dna reads the cases whose last word is the last word of the title.
 - A word of the line that is not the name of the test never binds. In particular, the word `it` of an import line binds no case.
+
+### A case of another file
+
+A case can name the test and belong to another file, for example a test of another language in the same report. spec-dna leaves such a case out of the set when 2 facts hold: its `file` or its `classname` names a file of the code tree in full, and neither the field nor the identity ties the case to the tag file. This applies to each row, and also to a pair that no row lists. A case that can be the case of the tag never leaves this way.
+
+| The field | It names a file of the code tree when |
+| --- | --- |
+| `file` | a case with the `file` of another file is another test, with or without such a file in the tree |
+| a `classname` with `::` | the part after the last `::`, and after its last `/`, is the stem of the file, or the name of its folder when the stem is `main` |
+| a `classname` that is a path of a script, or with `/` and a `.` in its last segment | the paths are equal, or one ends with `/` and the other |
+| another `classname` with `/` | the folder of the file ends it |
+| another `classname` with no space | `$`, `+` and `\` read as `.`. The dotted path of the file ends with it, or with its part before the last `.`. A name of one segment also names a file of a folder with this name |
+
+A `classname` with a space is a title, and the `classname` of jest-junit that equals the name is a title too. Such a text names no file. The identity ties a case to the tag file in 3 cases: the class chain ends the `classname` of a JVM or .NET case (or spec-dna cannot read the chain), the row is the one of cargo-nextest, or the row is the one of Go. In these 2 rows, only a field that differs leaves a case out. `case:` reads the `file` only: a case whose `classname` names another file stays as a weak link.
 
 ### The chain of groups
 
@@ -96,9 +111,9 @@ The form of the definition and the shape of the case give the row. The extension
 | pytest, `xunit2` | `def`; a dotted `classname`, no `file` | `classname`: the dotted path of the file and the class chain, where one ends the other at a `.`. Name: the function, then `[...]` | `classname`, name | the chain is unreadable |
 | pytest, `xunit1` | `def`; `file` and `classname` | the `file`, and the `classname` and name of `xunit2` | `file`, `classname`, name | the chain is unreadable |
 | cargo-nextest, integration test | `fn`; a `classname` with `::` | `classname`: `<package>::<binary>`. The binary is `<name>` for `tests/<name>.rs`, or `<dir>` for `tests/<dir>/main.rs` and its modules. Name: the module path under the binary, the `mod` chain and the function, then `::<row>` | `classname`, name | with no `Cargo.toml`, 2 crates have the binary. The scanner cannot build the identity when `tests/<dir>/main.rs` is no test file |
-| cargo-nextest, unit test | `fn`; a `classname` `<package>` or `<package>::bin/<name>` | `<package>` for the library, and `<package>::bin/<name>` for `src/main.rs` and `src/bin/`. Name: the module path of the file, the `mod` chain and the function, then `::<row>` | `classname`, name | there is no `Cargo.toml`. Also a `<package>::bin/<name>` case for a module file outside `src/bin/`: the path does not tell whether the library or a binary declares the module |
+| cargo-nextest, unit test | `fn`; a `classname` `<package>` or `<package>::bin/<name>` | `<package>` for the library, and `<package>::bin/<name>` for a binary. A module file of `src/` is in the library when the crate has only `src/lib.rs`, and in the binary `bin/<package>` when it has only `src/main.rs`. With both, the root file that has the line `mod <name>;` for its first module segment tells the target. `src/bin/<name>.rs` is `bin/<name>`. Name: the module path of the file, the `mod` chain and the function, then `::<row>` | `classname`, name | there is no `Cargo.toml`. Also a module file when both roots declare the module, or neither does, or no root file is there |
 | Go | `func`; any `classname` with no `::` | the import path (the `module` line of `go.mod` and the folder below it), or the folder below the module (gotestsum `relative`). With no `go.mod`, the folder ends the `classname`. Name: the function, then `/<subtest>`. A testify method: `<function>/<method>` | `classname`, name | gotestsum `short`. With no `go.mod`: the root package, or 2 folders end the `classname` |
-| JUnit and xUnit | method; a dotted `classname`, no `file` | `classname`: the package or namespace and the class chain. `$` and `+` read as `.`. With no `package` or `namespace` line, the class chain ends the `classname`, and the `classname` names the tag file. Name: `M`, `C.M` or `N.C.M` (`MethodFormat`), then `(...)` or `[...]` | `classname`, name | a method with `@DisplayName` or `DisplayName =`. A test of a nested class whose case has the outer class as its `classname`. No `package` or `namespace` line, and a `classname` that does not name the tag file |
+| JUnit and xUnit | method; a dotted `classname`, no `file` | `classname`: the full class name, that is the package or namespace and the class chain. 2 classes of one name in 2 namespaces are 2 identities. `$` and `+` read as `.`. With no `package` or `namespace` line, the class chain ends the `classname`, and the `classname` names the tag file. Name: `M`, `C.M` or `N.C.M` (`MethodFormat`), then `(...)` or `[...]` | `classname`, name | a method with `@DisplayName` or `DisplayName =`. A test of a nested class whose case has the outer class as its `classname`. No `package` or `namespace` line, and a `classname` that does not name the tag file |
 | PHPUnit | method; `file` and `classname` | the `file`. The `classname` ends with the class chain. Name: the method, then the words `with data set` and the data set | `file`, `classname`, name | the chain is unreadable |
 | RSpec, jest-junit with `addFileAttribute` | call; `file` and `classname` | the `file`. Name: the titles of the groups and the literal, joined with a space. RSpec writes no space between a group of a bare constant and a group below it whose title starts with `#`, `.` or `::`. The joins of Vitest and Playwright count too | `file`, name | a title is not a plain literal |
 | Vitest, Playwright | call; a `classname` that is a path of a script | `classname`: the path. Name: the titles and the literal, joined with ` > ` (Vitest) or ` › ` (Playwright). A `[<project>]` prefix of Playwright goes | `classname`, name | a title is not a plain literal |
@@ -106,26 +121,30 @@ The form of the definition and the shape of the case give the row. The extension
 | Line format | any form; no `classname` | the name | none | always |
 | Another pair | for example `fn` with a dotted `classname` that is no package name | none | none | always |
 
-The package and the import path come from the nearest `Cargo.toml` (`[package] name`) and `go.mod` (the line `module`) at or above a Rust or Go test file. A bind reads these files from the working tree, each one once. It reads no other file than the test files and these.
+The package and the import path come from the nearest `Cargo.toml` (`[package] name`) and `go.mod` (the line `module`) at or above a Rust or Go test file. A bind reads these files from the working tree, each one once. Beside the test file of the tag, it reads only these files, `src/lib.rs` and `src/main.rs` of the crate of a module file, and the `_test.go` files of the folder of a Go test file. It also reads the list of the paths of the code tree, with the test files that git does not track.
 
 ### A unique identity
 
-The identity is not unique when another definition of the tag file builds it:
+The identity is not unique when another definition can build it:
 
 - the same name 2 times in one chain, 2 methods of one name (an overload), or 2 RSpec examples with one full title;
+- a call with any modifier of the form table: `test.skip('closes')` beside `test.runIf(true)('closes')` is 2 definitions;
 - a template with a literal and no placeholder, such as `it.each(rows)('closes')`, that has the full title of the test;
+- a template in the same chain whose literal can give the title, when each placeholder (`%s`, `$name`, `${...}`, `#{...}`) reads as any text. The title can follow a table on more than one line;
+- a line `include_examples` or `include_context` in a group of the chain, because RSpec writes the examples of another file with the title and the `file` of this group;
+- a `func` of the same name and receiver in another `_test.go` file of the folder, for example for other build constraints;
 - a method of the same name in a class inside the class of the test, because a newer Surefire writes the outer class for such a method;
 - a `mod` with the name of a Rust test, for a case that its rows share;
 - a method whose display name is the name of the case;
 - a definition of the same name whose chain is unreadable.
 
-It is also not unique when its file field names more than one test file of the project. Examples: `tests.test_api` in 2 packages of pytest with no root, one binary in 2 crates with no `Cargo.toml`, one `spec.ts` path in 2 projects, one Java class in 2 modules, one C# file name in 2 projects, and a `partial` class of C#.
+It is also not unique when its file field names more than one file of the code tree with the extension of the tag file. Each file of the code tree counts, also outside `[evidence] tests`, and each test file that git does not track. For the JVM and .NET, the full class name counts, never the stem of the file: spec-dna counts the files whose dotted path ends with the full class name. Examples: `tests.test_api` in 2 packages of pytest with no root, one binary in 2 crates with no `Cargo.toml`, one `spec.ts` path in 2 projects, one Java class in 2 modules, and a `partial` class of C#.
 
 ### The proof
 
 The worst of all identities of the set decides: a failed case, then a skipped case, then a passed case. An empty set gives `no-case`. A case that passed after a rerun (`flakyFailure`, `rerunFailure`) counts as a fail. A skipped case is no pass and no fail. Each row of a table and each subtest is a case of its own, so a skipped row leaves the requirement unproven. Each weak link is a case of its own too.
 
-An own case that comes more than once is one test that ran again. It passed when a run passed and no run failed. This applies to a case once in each of several reports, and to the projects of Playwright in one report: a title joined with ` › `, or a title with no group in a file that has no template. Each other repeat is a case of its own, so a skipped repeat leaves the requirement unproven.
+An own case that comes more than once is one test that ran again. It passed when a run passed and no run failed. This applies to a case once in each of several reports. In one report, it applies only to the projects of Playwright: a title joined with ` › `, or a title with a `[<project>]` prefix, in a `classname` that is a path. Each other repeat is a case of its own, so a skipped repeat leaves the requirement unproven. This includes each repeat of an identity that is not unique, and each repeat in one report of jest-junit or Vitest. A Playwright test with no `describe` and no prefix looks as a Vitest test, so its 2 projects are 2 cases.
 
 A requirement passes when a tag of it is proven and no case of its tags failed. A `verified-by` record is a check by a person: the report does not apply to it.
 
@@ -154,7 +173,7 @@ The value takes the place of the built name, and spec-dna builds no name. A case
 - for a Rust file, the binary id of the file with the package of `Cargo.toml`, and for a Go file, the import path or the folder;
 - a dotted `classname` that names the file. Classes that the tag file declares can follow the file. They can also follow the package or namespace of the file.
 
-A case whose `classname` names another file is weak, never another test, because `case:` exists for a layout that spec-dna reads wrong. A case with no full field is weak, also when it is the one case of the name. 2 own cases of 2 identities are not unique. Thus `case:` ends only the SD621 of the cause `no-identity`.
+A case whose `classname` names another file is weak, never another test, because `case:` exists for a layout that spec-dna reads wrong. Thus [the step of another file](#a-case-of-another-file) reads only the `file` for `case:`. A case with no full field is weak, also when it is the one case of the name. 2 own cases of 2 identities are not unique. Thus `case:` ends only the SD621 of the cause `no-identity`.
 
 ### The weak bind (SD621)
 
@@ -197,25 +216,25 @@ A nextest report has no skipped test by default, so the tag of a skipped test fi
 
 A report cannot tell these cases apart, or the scanner cannot read them. Each one is a limit of the bind, not an error. When the scanner sees the clash, the bind is weak (SD621).
 
-1. One `classname` for 2 files in a repository of several projects: 2 `rootdir` folders of pytest, gotestsum `short`, the default package of Java or one full class name in 2 modules, one C# class in 2 projects or a `partial` class, and projects of Playwright with one relative path. The scanner sees the clash only when both files are test files of `[evidence] tests`.
-2. Go build constraints: one `TestX` in 2 files of a package. spec-dna does not read the other files of the folder for this, so it does not see the clash.
+1. One `classname` for 2 files in a repository of several projects: 2 `rootdir` folders of pytest, gotestsum `short`, the default package of Java or one full class name in 2 modules, one C# class in 2 projects or a `partial` class, and projects of Playwright with one relative path. The scanner sees the clash when the paths show it. For the JVM and .NET, both paths must end with the full class name, as folders or as dots. A C# class with one full name in 2 files whose folders do not show the namespace gives a silent bind, unless the class is `partial`. spec-dna does not read the namespace of another file.
+2. A clash with a file outside the code tree: an untracked file outside `[evidence] tests`, or a file that `tree-exclude` matches. The stamp does not cover such a file, so the bind does not read it.
 3. jest-junit with no `addFileAttribute`: always weak.
 4. A Rust or Go tree with no `Cargo.toml` or `go.mod` above the tag file, and a binary, a module path or a folder that 2 files share.
-5. Inherited and shared tests: pytest base classes, abstract bases and interface defaults of JUnit, abstract cases of PHPUnit, shared examples of RSpec. A tag on the base gives a weak bind or `no-case`. A shared example that the tag file includes with `include_examples` and does not define can give the full title of another test.
-6. Generated names: templates, `.each`, `@TestFactory`, a display name that is not a literal, the phrased names of Surefire. A template with a placeholder gives no name to compare. Use `case:`, which stays weak where [The name of a case with `case:`](#the-name-of-a-case-with-case) says.
+5. Inherited and shared tests: pytest base classes, abstract bases and interface defaults of JUnit, abstract cases of PHPUnit, shared examples of RSpec. A tag on the base gives a weak bind or `no-case`. A tag in a group with `include_examples` or `include_context` is weak.
+6. Generated names: templates, `.each`, `@TestFactory`, a display name that is not a literal, the phrased names of Surefire. A tag above a template has no name to compare. Use `case:`, which stays weak where [The name of a case with `case:`](#the-name-of-a-case-with-case) says. A template that can give the title of a plain test makes that test weak. spec-dna does not see the title of a table in a template literal of more than one line, or a `.runIf` whose condition takes more than one line.
 7. Lines that the scanner cannot read: no indent, a title from a variable or a constant path, a group head on 2 lines, a test on 2 lines before its `(` (`no-test`).
 8. Custom Rust targets (`[[test]] path`, `harness = false`, `#[path]`, a binary of `[[bin]]` with another name): the mapping is wrong, so the bind is weak or `no-case`.
 9. A runner that does not write a skipped test (nextest by default): `no-case`, which is the correct result.
-10. A custom `classNameTemplate` or `titleTemplate` of jest-junit that changes the name: the case has another title, so the tag gets `no-case`.
+10. A custom `classNameTemplate` or `titleTemplate` of jest-junit that changes the name: the case has another title, so the tag gets `no-case`. A `classNameTemplate` of one word can also name another file of the code tree. Then the case is another test.
 11. A Scala test with `def` reads as the form `def`, so its JUnit `classname` is another test. Use `case:`.
-12. A report of 2 languages: a case of another language with the same name can have a shape that no row reads. It is then a weak link (`by-name`) of the tag.
+12. A report of 2 languages: a case of another language with the same name is another test when its field names a file of the code tree ([A case of another file](#a-case-of-another-file)). When it names no file, and no row reads its shape, it is a weak link (`by-name`) of the tag.
 13. A name of more than 256 characters or more than 32 separators has not each part as a key. It binds by the built name, also with its row tail, or by `case:` (the reason `long-name`).
 
 ## The code tree and the stamp
 
 The code tree is one hash of the code as it was when the tests ran. It covers each file that git tracks, with the bytes on the disk. A symbolic link counts with the text that it names, as git stores it, and a submodule counts with its entry in the git index (the tree does not look into it). It leaves out these paths: the files that `tree-exclude` matches (default: each Markdown file), the folders of the `intent` layer, `.spec-dna/`, the files that `init` writes with `spec-dna.toml` and the report files with their stamps. Thus a change of documents never makes a report stale, and a change of code does.
 
-An untracked file does not count. A file that git does not track yet is not in the tree, so a `git add` of a new file after the stamp makes the report stale. A test file that git does not track yet is not in the tree hash, but `check`, `finish` and `accept` read it for its `classname`: more test files only narrow a fit. A test file that git ignores and does not track stays unread.
+An untracked file does not count. A file that git does not track yet is not in the tree, so a `git add` of a new file after the stamp makes the report stale. A test file that git does not track yet is not in the tree hash, but `check`, `finish` and `accept` count its path for [a unique identity](#a-unique-identity) and for [a case of another file](#a-case-of-another-file). A test file that git ignores and does not track stays unread.
 
 A tag proves a requirement only when its test file is in the code tree: git has the file in its index, and `tree-exclude` does not match it. A tag in another file binds no test case, and SD616 or SD617 names the file with the reason `outside-tree`. Run `git add`, then the tests and `spec-dna evidence stamp`. `check` without `--reports` keeps the rule of 0.7.1: a tag alone is evidence, also in an untracked file.
 
