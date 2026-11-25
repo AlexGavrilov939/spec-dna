@@ -15,6 +15,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime};
 
+use sha2::{Digest, Sha256};
+
 use crate::harness_text;
 use crate::json::{self, Obj, Value};
 
@@ -83,6 +85,15 @@ pub fn run(args: &[String]) {
             }
             "subagent-card" => subagent_card(&input),
             "return-state" => return_state(&input),
+            "fix-limit" => {
+                let project = std::env::var_os("CLAUDE_PROJECT_DIR").map(PathBuf::from);
+                fix_limit(
+                    &input,
+                    &FixOpts::parse(flags),
+                    project.as_deref(),
+                    &std::env::temp_dir().join("spec-dna-fix"),
+                )
+            }
             _ => None,
         };
         if let Some(text) = out {
@@ -452,6 +463,146 @@ pub fn return_state(input: &str) -> Option<String> {
             .str("reason", RETURN_STATE_REASON)
             .end(),
     )
+}
+
+// ---------------------------------------------------------------------------
+// fix-limit
+// ---------------------------------------------------------------------------
+
+/// The flags of `fix-limit`. A limit of 0 turns the hook off.
+#[derive(Default)]
+pub struct FixOpts {
+    pub limit: u64,
+    /// One `--intent <dir>` for each folder of the `intent` layer, from the
+    /// repository root. An edit below one of them is no fix.
+    pub intent: Vec<String>,
+}
+
+impl FixOpts {
+    fn parse(args: &[String]) -> Self {
+        FixOpts {
+            limit: flag_value(args, "--limit")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
+            intent: flag_values(args, "--intent")
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+        }
+    }
+}
+
+const MSG_FIX_LIMIT: &str = "spec-dna fix limit: this command failed after {n} fixes. Stop the fixes of this problem. Tell the person the command, the cause that each fix assumed, the error now, and the next step that you propose. A subagent ends its report with `State: BLOCKED`.";
+
+/// The first 8 bytes of SHA-256 of the session id and the command, in
+/// hexadecimal. Each run of white space of the command counts as one space.
+/// The session id is the salt. The state holds this hash and no command text
+/// (ADR 0004, amendment of 2026-11-25).
+fn command_hash(session: &str, command: &str) -> String {
+    let mut text = String::with_capacity(command.len());
+    let mut space = false;
+    for ch in command.chars() {
+        if !ch.is_whitespace() {
+            text.push(ch);
+        } else if !space {
+            text.push(' ');
+        }
+        space = ch.is_whitespace();
+    }
+    let mut sha = Sha256::new();
+    sha.update(session);
+    sha.update([0]);
+    sha.update(text);
+    sha.finalize()[..8]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// True if the edit of `file` is below one of the `--intent` folders of the
+/// project.
+fn below_intent(v: &Value, opts: &FixOpts, project: Option<&Path>, file: &str) -> bool {
+    let root = project
+        .and_then(Path::to_str)
+        .filter(|p| !p.is_empty())
+        .or_else(|| v.get("cwd").as_str().filter(|c| !c.is_empty()));
+    let Some((_, rel)) = root.and_then(|r| relative_to(r, file)) else {
+        return false;
+    };
+    opts.intent
+        .iter()
+        .any(|d| below(d.trim_end_matches('/'), &rel).is_some())
+}
+
+/// Handles one event of `Bash`, `Edit` or `Write`. A failed fix is a failure
+/// of a command after the same agent made an edit since its last failure. At
+/// the limit, the hook returns the JSON that tells the agent to stop, once for
+/// each command. It cannot block.
+///
+/// `state_dir` holds one file for each count and one for the edit mark of each
+/// agent. The names are `<session>.<agent>.<hash>` and
+/// `<session>.<agent>.edit`. A count file holds a number, and a mark is empty.
+pub fn fix_limit(
+    input: &str,
+    opts: &FixOpts,
+    project: Option<&Path>,
+    state_dir: &Path,
+) -> Option<String> {
+    if opts.limit == 0 {
+        return None;
+    }
+    let v = json::parse(input).ok()?;
+    let session = v.get("session_id").as_str().filter(|s| valid_id(s))?;
+    let agent = match v.get("agent_id") {
+        Value::Null => "main",
+        Value::Str(a) if a.is_empty() => "main",
+        Value::Str(a) if valid_id(a) => a,
+        _ => return None,
+    };
+    let mark = state_dir.join(format!("{session}.{agent}.edit"));
+    let count_file = || {
+        let command = v.get("tool_input").get("command").as_str()?;
+        let hash = command_hash(session, command);
+        Some(state_dir.join(format!("{session}.{agent}.{hash}")))
+    };
+    let event = v.get("hook_event_name").as_str()?;
+    match (event, v.get("tool_name").as_str()?) {
+        ("PostToolUseFailure", "Bash") => {
+            let path = count_file()?;
+            fs::create_dir_all(state_dir).ok()?;
+            remove_stale(state_dir);
+            // Each failure uses up the mark, so one edit counts once.
+            let edited = fs::remove_file(&mark).is_ok();
+            let old = fs::read_to_string(&path)
+                .ok()
+                .and_then(|t| t.parse::<u64>().ok());
+            let count = match old {
+                None => 0,
+                Some(n) if edited => n.saturating_add(1),
+                Some(_) => return None,
+            };
+            fs::write(&path, count.to_string()).ok()?;
+            // The count goes up by 1, so it equals the limit once.
+            (count == opts.limit).then(|| {
+                let text = MSG_FIX_LIMIT.replace("{n}", &opts.limit.to_string());
+                output("PostToolUseFailure", "additionalContext", &text)
+            })
+        }
+        ("PostToolUse", "Bash") => {
+            let _ = fs::remove_file(count_file()?);
+            None
+        }
+        ("PostToolUse", "Edit" | "Write") => {
+            let file = v.get("tool_input").get("file_path").as_str()?;
+            if !below_intent(&v, opts, project, file) {
+                fs::create_dir_all(state_dir).ok()?;
+                remove_stale(state_dir);
+                fs::write(&mark, "").ok()?;
+            }
+            None
+        }
+        _ => None,
+    }
 }
 
 // ---------------------------------------------------------------------------

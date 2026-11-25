@@ -663,6 +663,361 @@ fn return_state_takes_the_final_text_when_no_call_is_a_handback() {
     assert_eq!(return_state(&dir, &input), "");
 }
 
+// ---- fix-limit ----
+
+const COMMAND: &str = "pytest tests/test_valve.py --maxfail=1";
+
+fn limit_message(n: u32) -> String {
+    format!(
+        "spec-dna fix limit: this command failed after {n} fixes. Stop the fixes of this problem. Tell the person the command, the cause that each fix assumed, the error now, and the next step that you propose. A subagent ends its report with `State: BLOCKED`."
+    )
+}
+
+fn limit_output(n: u32) -> String {
+    format!(
+        "{{\"hookSpecificOutput\":{{\"hookEventName\":\"PostToolUseFailure\",\"additionalContext\":\"{}\"}}}}\n",
+        limit_message(n)
+    )
+}
+
+/// A tool event of the session `s1`. `agent`: the `agent_id` of a subagent.
+fn tool_event(event: &str, tool: &str, input: &str, agent: Option<&str>) -> String {
+    let agent = agent.map_or(String::new(), |a| format!(r#""agent_id":"{a}","#));
+    format!(
+        r#"{{"session_id":"s1",{agent}"hook_event_name":"{event}","tool_name":"{tool}","tool_input":{input}}}"#
+    )
+}
+
+fn bash_input(command: &str) -> String {
+    format!(r#"{{"command":{}}}"#, quoted(command))
+}
+
+/// One project directory and one state folder, with the calls of one hook.
+struct Fix {
+    dir: Dir,
+    args: Vec<String>,
+}
+
+impl Fix {
+    fn new() -> Fix {
+        let dir = Dir::new();
+        fs::create_dir_all(dir.0.join("docs/intent/dose")).unwrap();
+        fs::create_dir_all(dir.0.join("docs/intent-notes")).unwrap();
+        fs::create_dir_all(dir.0.join("src")).unwrap();
+        let args = ["fix-limit", "--limit", "3", "--intent", "docs/intent"]
+            .map(str::to_string)
+            .to_vec();
+        Fix { dir, args }
+    }
+
+    fn run(&self, event: &str) -> String {
+        let args: Vec<&str> = self.args.iter().map(String::as_str).collect();
+        let root = self.dir.0.to_str().unwrap();
+        let (code, out, err) = hook(&self.dir, &args, event, &[("CLAUDE_PROJECT_DIR", root)]);
+        assert_eq!((code, err.as_str()), (0, ""), "{event}");
+        out
+    }
+
+    /// A failed `Bash` call.
+    fn fail_as(&self, command: &str, agent: Option<&str>) -> String {
+        let input = bash_input(command);
+        self.run(&tool_event("PostToolUseFailure", "Bash", &input, agent))
+    }
+
+    fn fail(&self) -> String {
+        self.fail_as(COMMAND, None)
+    }
+
+    /// A `Bash` call that passed.
+    fn pass(&self, command: &str) {
+        let input = bash_input(command);
+        let out = self.run(&tool_event("PostToolUse", "Bash", &input, None));
+        assert_eq!(out, "");
+    }
+
+    /// An edit of the file at `path`, from the root of the project.
+    fn edit_as(&self, tool: &str, path: &str, agent: Option<&str>) {
+        let file = self.dir.0.join(path);
+        let input = format!(r#"{{"file_path":{}}}"#, quoted(file.to_str().unwrap()));
+        let out = self.run(&tool_event("PostToolUse", tool, &input, agent));
+        assert_eq!(out, "");
+    }
+
+    fn edit(&self) {
+        self.edit_as("Edit", "src/valve.py", None);
+    }
+
+    /// The names and the texts of the state files.
+    fn state(&self) -> Vec<(String, String)> {
+        let Ok(entries) = fs::read_dir(self.dir.0.join("tmp/spec-dna-fix")) else {
+            return Vec::new();
+        };
+        let mut out: Vec<(String, String)> = entries
+            .map(|e| {
+                let e = e.unwrap();
+                let name = e.file_name().into_string().unwrap();
+                (name, fs::read_to_string(e.path()).unwrap())
+            })
+            .collect();
+        out.sort();
+        out
+    }
+}
+
+#[test]
+fn fix_limit_speaks_once_at_the_third_failed_fix() {
+    let fix = Fix::new();
+    assert_eq!(limit_message(3).len(), 249);
+    // The first failure is the problem, and not a fix.
+    assert_eq!(fix.fail(), "");
+    for _ in 0..2 {
+        fix.edit();
+        assert_eq!(fix.fail(), "");
+    }
+    fix.edit();
+    assert_eq!(fix.fail(), limit_output(3));
+    for _ in 0..4 {
+        fix.edit();
+        assert_eq!(fix.fail(), "", "the message comes once for each key");
+    }
+}
+
+#[test]
+fn fix_limit_counts_no_run_without_an_edit() {
+    let fix = Fix::new();
+    // An edit before the first failure is no fix.
+    fix.edit();
+    for _ in 0..8 {
+        assert_eq!(fix.fail(), "");
+    }
+    // One edit counts for one failure, also of another command.
+    let fix = Fix::new();
+    assert_eq!(fix.fail_as("make a", None), "");
+    assert_eq!(fix.fail_as("make b", None), "");
+    fix.edit();
+    assert_eq!(fix.fail_as("make a", None), "");
+    // The failure of `make a` removed the mark.
+    for _ in 0..4 {
+        assert_eq!(fix.fail_as("make b", None), "");
+    }
+    fix.edit();
+    assert_eq!(fix.fail_as("make a", None), "");
+    fix.edit();
+    assert_eq!(fix.fail_as("make a", None), limit_output(3));
+    // `make b` has its own count, which no edit raised.
+    fix.edit();
+    assert_eq!(fix.fail_as("make b", None), "");
+}
+
+#[test]
+fn fix_limit_deletes_the_count_when_the_command_passes() {
+    let fix = Fix::new();
+    assert_eq!(fix.fail(), "");
+    for _ in 0..2 {
+        fix.edit();
+        assert_eq!(fix.fail(), "");
+    }
+    // The pass of another command deletes nothing.
+    fix.pass("ls");
+    fix.pass(COMMAND);
+    // A new problem: 3 more fixes before the message.
+    assert_eq!(fix.fail(), "");
+    for _ in 0..2 {
+        fix.edit();
+        assert_eq!(fix.fail(), "");
+    }
+    fix.edit();
+    assert_eq!(fix.fail(), limit_output(3));
+}
+
+#[test]
+fn fix_limit_takes_runs_of_white_space_as_one_space() {
+    let fix = Fix::new();
+    assert_eq!(fix.fail_as("go test ./pump", None), "");
+    for command in ["go  test ./pump", "go\ttest\n./pump"] {
+        fix.edit();
+        assert_eq!(fix.fail_as(command, None), "");
+    }
+    fix.edit();
+    assert_eq!(fix.fail_as("go test   ./pump", None), limit_output(3));
+    // A changed command starts a new count.
+    fix.edit();
+    assert_eq!(fix.fail_as("go test ./pump -v", None), "");
+}
+
+#[test]
+fn fix_limit_keeps_a_count_for_each_agent() {
+    let fix = Fix::new();
+    let (a, b) = (Some("a1"), Some("b2"));
+    for agent in [a, b, None] {
+        assert_eq!(fix.fail_as(COMMAND, agent), "");
+    }
+    // The edits of one subagent raise only its own count.
+    for _ in 0..2 {
+        fix.edit_as("Write", "src/valve.py", a);
+        assert_eq!(fix.fail_as(COMMAND, b), "");
+        assert_eq!(fix.fail_as(COMMAND, None), "");
+        assert_eq!(fix.fail_as(COMMAND, a), "");
+    }
+    fix.edit_as("Edit", "src/valve.py", a);
+    assert_eq!(fix.fail_as(COMMAND, a), limit_output(3));
+    fix.edit();
+    assert_eq!(fix.fail_as(COMMAND, None), "");
+}
+
+#[test]
+fn fix_limit_marks_no_edit_below_an_intent_folder() {
+    let fix = Fix::new();
+    assert_eq!(fix.fail(), "");
+    for path in [
+        "docs/intent/dose/plan.md",
+        "docs/intent/dose/acceptance.toml",
+        "docs/intent/new.md",
+    ] {
+        for _ in 0..4 {
+            fix.edit_as("Edit", path, None);
+            assert_eq!(fix.fail(), "", "{path}");
+        }
+    }
+    // A folder with a longer name is not below the folder: 3 edits count.
+    for _ in 0..2 {
+        fix.edit_as("Write", "docs/intent-notes/n.md", None);
+        assert_eq!(fix.fail(), "");
+    }
+    fix.edit_as("Write", "docs/intent-notes/n.md", None);
+    assert_eq!(fix.fail(), limit_output(3));
+}
+
+#[test]
+fn fix_limit_takes_the_root_of_the_cwd_of_the_input() {
+    let fix = Fix::new();
+    assert_eq!(fix.fail(), "");
+    let root = fix.dir.0.to_str().unwrap();
+    let args: Vec<&str> = fix.args.iter().map(String::as_str).collect();
+    // No `CLAUDE_PROJECT_DIR`: the `cwd` of the input is the root.
+    let edit = |path: &str| {
+        let file = fix.dir.0.join(path);
+        let event = format!(
+            r#"{{"session_id":"s1","cwd":{},"hook_event_name":"PostToolUse","tool_name":"Edit","tool_input":{{"file_path":{}}}}}"#,
+            quoted(root),
+            quoted(file.to_str().unwrap())
+        );
+        assert_eq!(hook(&fix.dir, &args, &event, &[]).1, "");
+    };
+    for _ in 0..4 {
+        edit("docs/intent/dose/plan.md");
+        assert_eq!(fix.fail(), "");
+    }
+    // The positive control.
+    for _ in 0..2 {
+        edit("src/valve.py");
+        assert_eq!(fix.fail(), "");
+    }
+    edit("src/valve.py");
+    assert_eq!(fix.fail(), limit_output(3));
+}
+
+#[test]
+fn fix_limit_state_holds_no_byte_of_the_command() {
+    let fix = Fix::new();
+    let secret = "deploy --token=hunter2 ./zebra";
+    assert_eq!(fix.fail_as(secret, None), "");
+    fix.edit_as("Edit", "src/valve.py", Some("a1"));
+    fix.edit();
+    assert_eq!(fix.fail_as(secret, Some("a1")), "");
+    let state = fix.state();
+    // 2 counts and no mark of the agent `a1`, which its failure removed, and
+    // the mark of the main agent.
+    assert_eq!(state.len(), 3, "{state:?}");
+    for (name, text) in &state {
+        for word in ["deploy", "token", "hunter2", "zebra", "./"] {
+            assert!(
+                !name.contains(word) && !text.contains(word),
+                "{name}: {text}"
+            );
+        }
+        assert!(text.bytes().all(|b| b.is_ascii_digit()), "{name}: {text:?}");
+        let parts: Vec<&str> = name.split('.').collect();
+        assert_eq!((parts.len(), parts[0]), (3, "s1"), "{name}");
+        assert!(["main", "a1"].contains(&parts[1]), "{name}");
+        assert!(
+            parts[2] == "edit"
+                || (parts[2].len() == 16 && parts[2].bytes().all(|b| b.is_ascii_hexdigit())),
+            "{name}"
+        );
+    }
+    // The session id salts the hash: the same command has another name in
+    // another session.
+    let hash_of = |session: &str| {
+        let fix = Fix::new();
+        let event = tool_event("PostToolUseFailure", "Bash", &bash_input(secret), None)
+            .replace("\"s1\"", &format!("\"{session}\""));
+        assert_eq!(fix.run(&event), "");
+        fix.state()[0].0.rsplit('.').next().unwrap().to_string()
+    };
+    assert_ne!(hash_of("s1"), hash_of("s2"));
+}
+
+#[test]
+fn fix_limit_removes_a_state_file_that_is_older_than_3_days() {
+    let fix = Fix::new();
+    let state = fix.dir.0.join("tmp/spec-dna-fix");
+    fs::create_dir_all(&state).unwrap();
+    let old = state.join("s0.main.0123456789abcdef");
+    fs::write(&old, "2").unwrap();
+    let past = std::time::SystemTime::now() - std::time::Duration::from_secs(4 * 24 * 3600);
+    fs::File::options()
+        .write(true)
+        .open(&old)
+        .unwrap()
+        .set_modified(past)
+        .unwrap();
+    assert_eq!(fix.fail(), "");
+    assert!(!old.exists());
+    assert_eq!(fix.state().len(), 1);
+}
+
+#[test]
+fn fix_limit_is_off_at_0_and_silent_on_input_that_it_does_not_know() {
+    for args in [
+        &["fix-limit", "--limit", "0"][..],
+        &["fix-limit"][..],
+        &["fix-limit", "--limit", "x"][..],
+    ] {
+        let mut fix = Fix::new();
+        fix.args = args.iter().map(|a| a.to_string()).collect();
+        for _ in 0..5 {
+            assert_eq!(fix.fail(), "", "{args:?}");
+            fix.edit();
+        }
+        assert!(fix.state().is_empty(), "{args:?}");
+    }
+    let fix = Fix::new();
+    let good = tool_event("PostToolUseFailure", "Bash", &bash_input(COMMAND), None);
+    for input in [
+        "".to_string(),
+        "not json".to_string(),
+        "{}".to_string(),
+        good.replace("\"s1\"", "\"../s1\""),
+        good.replace("\"session_id\":\"s1\",", ""),
+        good.replace("\"s1\",", "\"s1\",\"agent_id\":\"../a\","),
+        good.replace("\"s1\",", "\"s1\",\"agent_id\":7,"),
+        good.replace("\"Bash\"", "\"Read\""),
+        good.replace("\"Bash\"", "\"Edit\""),
+        good.replace("PostToolUseFailure", "PreToolUse"),
+        good.replace("\"command\"", "\"cmd\""),
+        // An edit with no path.
+        tool_event("PostToolUse", "Edit", "{}", None),
+        tool_event("PostToolUse", "NotebookEdit", r#"{"file_path":"/x/y"}"#, None),
+    ] {
+        assert_eq!(fix.run(&input), "", "{input}");
+        assert!(fix.state().is_empty(), "{input}");
+    }
+    // The positive control.
+    assert_eq!(fix.run(&good), "");
+    assert_eq!(fix.state().len(), 1);
+}
+
 #[test]
 fn hook_help_prints_the_help_of_the_command() {
     let dir = Dir::new();
