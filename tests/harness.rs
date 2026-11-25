@@ -1594,7 +1594,10 @@ fn reconfigure_removes_the_entries_of_a_report_hook_that_is_off() {
     for hook in NEW_HOOKS {
         assert!(!settings.contains(hook), "{hook}\n{settings}");
     }
-    assert!(settings.contains("spec-dna hook context-meter"), "{settings}");
+    assert!(
+        settings.contains("spec-dna hook context-meter"),
+        "{settings}"
+    );
     let cfg = r.read("spec-dna.toml");
     assert!(
         cfg.contains("\nsubagent-card = false\nfix-limit = 0\n"),

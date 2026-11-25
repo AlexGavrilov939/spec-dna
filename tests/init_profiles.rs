@@ -1473,8 +1473,14 @@ fn reconfigure_keeps_the_report_keys_of_the_file() {
     );
     reconfigure(&r, "");
     let settings = r.read(".claude/settings.json");
-    assert!(settings.contains("spec-dna hook subagent-card"), "{settings}");
-    assert!(settings.contains("spec-dna hook fix-limit --limit 2 "), "{settings}");
+    assert!(
+        settings.contains("spec-dna hook subagent-card"),
+        "{settings}"
+    );
+    assert!(
+        settings.contains("spec-dna hook fix-limit --limit 2 "),
+        "{settings}"
+    );
 }
 
 /// A project of 0.8.0 has a file with no key. `init` and `--reconfigure` add
@@ -1564,11 +1570,7 @@ fn a_new_lite_project_keeps_the_files_of_0_8_0() {
         );
         assert_eq!(
             r.read("CLAUDE.md"),
-            format!(
-                "{}\n\n{}\n",
-                version(LITE_ADAPTER_LINE),
-                version(team_line)
-            ),
+            format!("{}\n\n{}\n", version(LITE_ADAPTER_LINE), version(team_line)),
             "{level}"
         );
         let agents: &[&str] = match level {

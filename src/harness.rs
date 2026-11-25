@@ -3307,8 +3307,9 @@ opus = "xhigh"
                 .contains("protect-tests = \"off\"\n\n[harness.roles]")
         );
         assert!(
-            on.toml_section()
-                .contains("protect-tests = \"off\"\nsubagent-card = true\nfix-limit = 3\n\n[harness.roles]"),
+            on.toml_section().contains(
+                "protect-tests = \"off\"\nsubagent-card = true\nfix-limit = 3\n\n[harness.roles]"
+            ),
             "{}",
             on.toml_section()
         );

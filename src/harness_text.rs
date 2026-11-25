@@ -709,7 +709,10 @@ mod tests {
             assert!(card.len() <= 800, "{agent_type}: {} bytes", card.len());
             assert_eq!(card.len(), size, "{agent_type}");
             assert!(card.is_ascii() && !card.contains("{{"), "{agent_type}");
-            assert!(!card.ends_with('\n') && !card.contains('\r'), "{agent_type}");
+            assert!(
+                !card.ends_with('\n') && !card.contains('\r'),
+                "{agent_type}"
+            );
             assert_eq!(card.lines().count(), 7, "{agent_type}");
         }
         assert!(subagent_card("acceptor").contains(CARD_ACCEPTOR_COMMIT));

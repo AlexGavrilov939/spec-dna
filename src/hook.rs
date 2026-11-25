@@ -1,7 +1,7 @@
 //! The hooks of the agent harness: `spec-dna hook <name> [flags]`.
 //!
-//! A hook runs on each tool call of an agent. It reads one JSON object from
-//! stdin and one file at most. It never reads `spec-dna.toml`, never checks the
+//! A hook runs on a tool call, or at the start or the stop of a subagent. It
+//! reads one JSON object from stdin and one file at most. It never reads `spec-dna.toml`, never checks the
 //! pin and never scans the repository. Unknown flags and bad values are
 //! ignored, the exit code is always 0, and an error gives no output.
 //! `protect-tests` reads no file. It runs `git` at most 2 times, and only for

@@ -577,7 +577,10 @@ fn return_state_is_silent_on_input_that_it_does_not_know() {
         good.replace("SubagentStop", "Stop"),
         // A key that is absent or not a boolean never blocks.
         good.replace("\"stop_hook_active\":false,", ""),
-        good.replace("\"stop_hook_active\":false", "\"stop_hook_active\":\"false\""),
+        good.replace(
+            "\"stop_hook_active\":false",
+            "\"stop_hook_active\":\"false\"",
+        ),
         good.replace(",\"last_assistant_message\":\"The work.\"", ""),
         good.replace("\"The work.\"", "null"),
     ] {
@@ -615,10 +618,7 @@ fn return_state_reads_the_message_of_the_last_handback() {
     // The report is the `message` of the call, and the final text is not.
     write_transcript(
         &t,
-        &[
-            handback("The work.\nState: BLOCKED"),
-            assistant(10, 5),
-        ],
+        &[handback("The work.\nState: BLOCKED"), assistant(10, 5)],
     );
     let input = with_transcript(&stop_event("I handed the report back."), &t);
     assert_eq!(return_state(&dir, &input), "");
@@ -634,7 +634,8 @@ fn return_state_reads_the_message_of_the_last_handback() {
     assert_eq!(return_state(&dir, &input), block_output());
     // No `last_assistant_message`: the call alone is a report.
     write_transcript(&t, &[handback("State: COMPLETE")]);
-    let input = with_transcript(&stop_event(""), &t).replace(",\"last_assistant_message\":\"\"", "");
+    let input =
+        with_transcript(&stop_event(""), &t).replace(",\"last_assistant_message\":\"\"", "");
     assert_eq!(return_state(&dir, &input), "");
     // A far call: the hook reads from the end of the file, past one chunk.
     write_transcript(&t, &[handback("State: COMPLETE"), assistant(10, 600_000)]);
@@ -1008,7 +1009,12 @@ fn fix_limit_is_off_at_0_and_silent_on_input_that_it_does_not_know() {
         good.replace("\"command\"", "\"cmd\""),
         // An edit with no path.
         tool_event("PostToolUse", "Edit", "{}", None),
-        tool_event("PostToolUse", "NotebookEdit", r#"{"file_path":"/x/y"}"#, None),
+        tool_event(
+            "PostToolUse",
+            "NotebookEdit",
+            r#"{"file_path":"/x/y"}"#,
+            None,
+        ),
     ] {
         assert_eq!(fix.run(&input), "", "{input}");
         assert!(fix.state().is_empty(), "{input}");
