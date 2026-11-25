@@ -1142,6 +1142,43 @@ fn the_copy_of_the_arm_lean_has_the_advisor() {
     );
 }
 
+/// Guard (harness additions of 0.8.1): no built-in arm writes the keys or the
+/// entries of the 3 report hooks, so its copy keeps the setup of 0.8.0. A new
+/// protocol turns them on.
+#[test]
+fn the_copy_of_each_built_in_arm_has_no_report_hook() {
+    let edit = "cat spec-dna.toml > \"$STUB_FILES.toml\"; cat .claude/settings.json .claude/agents/model-team.md > \"$STUB_FILES.harness\" 2>/dev/null; echo 'status: done' > notes.txt";
+    for arm in ["none", "lean", "lean-no-advisor", "full"] {
+        let fx = Fx::with(&[ev("example")]);
+        let (code, out, err) = fx.run_env(&["--harness", arm], &[("STUB_EDIT", edit)]);
+        assert_eq!(code, 0, "{arm}: {out}{err}");
+        assert_eq!(fx.runs().len(), 1, "{arm}");
+        let cfg = read(&fx.path("files.toml"));
+        // The positive control: the file is the table of the arm.
+        assert!(cfg.contains("[harness]\nlevel = "), "{arm}: {cfg}");
+        let harness = read(&fx.path("files.harness"));
+        assert_eq!(
+            harness.contains("spec-dna hook context-meter"),
+            arm != "none",
+            "{arm}: {harness}"
+        );
+        for gone in [
+            "subagent-card",
+            "return-state",
+            "fix-limit",
+            "SubagentStart",
+            "SubagentStop",
+            "PostToolUseFailure",
+            "## Subagent card",
+        ] {
+            assert!(
+                !cfg.contains(gone) && !harness.contains(gone),
+                "{arm}: {gone}\n{cfg}\n{harness}"
+            );
+        }
+    }
+}
+
 #[test]
 fn the_check_file_of_the_project_is_the_one_that_runs() {
     let fx = Fx::with(&[ev("example")]);
