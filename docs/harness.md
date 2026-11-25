@@ -388,7 +388,7 @@ Subagent card. Your agent file and your brief have priority over this card.
 
 For the agent `acceptor`, line 3 is ``3. Commit only `acceptance.toml`, and do not push.``, and the card has 791 bytes. The team page prints the card, so a pull request shows each change of it. The card adds nothing to the output of `spec-dna accept --brief`.
 
-The hooks reference of Claude Code states that the input of `SubagentStart` has `agent_type`, and that the hook cannot block. The hook gives no output for an empty or absent `agent_type`.
+The hook reads `agent_type` of the input, and it gives no output for an empty or absent one. The hooks reference of Claude Code states that a `SubagentStart` hook cannot block, and that it can add `additionalContext`.
 
 The hook cannot prove these things:
 
