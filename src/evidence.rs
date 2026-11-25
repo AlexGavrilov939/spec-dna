@@ -3558,13 +3558,25 @@ impl<'a> Binder<'a> {
         out
     }
 
-    /// The cases that can name the test: the cases with its name, with its last
-    /// segment or with its last word as a key. The index is wide, and
-    /// `Identity::names` decides.
+    /// The cases that can name the test: the cases with its name or its last
+    /// segment as a key and, for a title, the cases of the bucket of its last
+    /// word that end with it, as a whole or before the parameters of a name in
+    /// backticks. The index is wide, and `Identity::names` decides.
     fn named_by(&self, test: &TestName) -> Vec<usize> {
-        let mut out: Vec<usize> = name_keys(&test.name)
+        let name = test.name.as_str();
+        let whole = [name, last_segment(name)];
+        let ends = |case: &str| {
+            case.ends_with(name) || test.bt && tail_variants(case).iter().any(|v| v.ends_with(name))
+        };
+        let last_words = name_keys(name)
+            .into_iter()
+            .filter(|key| test.call && !whole.contains(key))
+            .flat_map(|key| self.lookup(key))
+            .filter(|i| ends(&self.cases[**i as usize].name));
+        let mut out: Vec<usize> = whole
             .iter()
-            .flat_map(|k| self.lookup(k))
+            .flat_map(|key| self.lookup(key))
+            .chain(last_words)
             .map(|i| *i as usize)
             .collect();
         out.sort_unstable();
@@ -7723,6 +7735,28 @@ mod index_cost {
         let binder = Binder::new(&names, &[]);
         let entries = binder.index.entries();
         assert!(entries <= 6 * names.len(), "{entries}");
+    }
+
+    /// The bucket of a last word is no part of the union: only a case that ends
+    /// with the title is.
+    #[test]
+    fn a_case_that_shares_only_the_last_word_is_not_classified() {
+        let text = "// covers: a#b\nit('valve closes', () => {\n});\n";
+        let lines: Vec<&str> = text.lines().collect();
+        let cases: Vec<Case> = (0..100)
+            .map(|i| Case {
+                name: format!("Suite {i} pump closes"),
+                classname: None,
+                file: None,
+                outcome: Outcome::Pass,
+                report: "r.xml".to_string(),
+            })
+            .collect();
+        let binder = Binder::new(&cases, &[]);
+        calls::reset();
+        let (proof, _) = binder.bind("t/v.test.js", &lines, 0, None);
+        assert_eq!(proof, Proof::Unbound);
+        assert_eq!(calls::get()[calls::JUDGE], 0);
     }
 
     /// A test name with more words than a case keeps ends of finds its case.
