@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 ---
 # `transcript --cost` gives the USD of a change, and `outline` gives the line ranges of the definitions of a code file: plan
 
