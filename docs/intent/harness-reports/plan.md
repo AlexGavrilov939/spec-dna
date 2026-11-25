@@ -198,3 +198,17 @@ Each test fails before the code, unless it says "guard".
 - Guards with no change: the golden files of the frozen texts, `skills-0.7.1/`, `agents-0.7.1/`, `model-team-0.7.1.md`, `settings-lean.json`, and the golden files of `tests/golden/upgrade/`.
 
 `pre-commit run --all-files`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test` pass, `checker` reports no open blocker, and the record of the acceptor has the result `accepted`.
+
+## Deviations
+
+- d1 (plan): check gives SD502, not SD504 as t9 and Proof say, for an absent entry. check keeps its code, and SD502 is the documented meaning.
+- d2 (plan): t1a and t1b did not run before t4 to t6, so t18, t19 and t23 lack their facts.
+- d3 (plan): the fix-limit hash has a zero byte between session id and command, and does not trim the command.
+- d4 (plan): return-state blocks only when stop_hook_active is the boolean false. With no report it prints nothing.
+- d5 (plan): --reconfigure from level none adds no key, unlike the advisor preset. The case with no [harness] table has no test for these keys.
+- d6 (plan): the new lite team page is pinned by the hash that master writes. model-team-0.7.1.md is proven with answers that match it.
+- d7 (plan): question 12 now says "up to 7 hooks" (names). A strict preview prints 8, because it counts entries.
+- d8 (plan): 2 extra commits (formatting with a module comment, and a docs correction). The context meter's reader is now the shared scan_back. fmt and clippy first ran after t12, and the full cargo test did not run before each commit.
+- d9 (plan): fix-limit uses its state folder only if it is a folder, and no symlink, that the user owns. std gives no user id, so the owner of a new file there is the test. It makes the mark with create_new and replaces the count with a rename. The context meter has no such test of its folder.
+- d10 (plan): t6 gives one file for each count and one for each mark. fix-limit also makes one empty file for each message, `<session>.<agent>.<hash>.said`, and only the call that creates it speaks. With the rename alone, 32 threads still gave 5 to 8 messages for one key.
+- d11 (plan): t5 takes the message of the last SubagentHandback call as the report. A state line at the end of last_assistant_message now also passes when an assistant text follows that call in the transcript. So a message with no state line gets no block if such a final text has one. No live run confirmed this form of the transcript.
