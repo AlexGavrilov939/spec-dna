@@ -1,5 +1,5 @@
 ---
-status: approved
+status: draft
 ---
 # The eval runner counts each segment, runs one arm alone, and keeps a floor of free space: spec
 
@@ -24,6 +24,7 @@ None. This change adds, changes or removes no requirement, because this reposito
 - [x] Each test that runs `eval run` reads the free space of the machine, so a machine with less than 2,048 MiB free in its temporary folder stops these tests. Resolved: that is the rule of each machine, and the message names the key. The tests of the floor put a stub `df` on `PATH`, so they do not depend on the machine.
 - [x] The slice of the design does not list `src/main.rs`, `src/init.rs` and `src/eval_pack.rs`. Resolved: `src/main.rs` holds the help text of `eval` and the arguments of `--compare`. A new field of the table `[evals]` changes each literal of the table, in `src/init.rs` and in the unit tests of `src/evals.rs` and `src/eval_pack.rs`, so the plan first gives the table one function with the default values.
 - [x] `--max-turns` probably limits each segment, so `turns` can be more than `max-turns`. Resolved: the docs state it, and `segments` shows when it can occur (D95 item 6).
+- [x] D95 does not give the cost of a run that the runner stops (a time limit or a signal) or of a cut stream. Resolved in the build on 2026-11-25, by the agent that ran the build, not by an answer of the owner: the spend counts the larger of `max-budget-usd` and the last reported cost. `cost_usd` holds that cost only when it is above the budget, else `null`, and `turns` is `null`. The pull request names this rule for the owner to confirm.
 
 ## Open questions
 
