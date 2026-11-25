@@ -11,7 +11,7 @@
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -657,6 +657,12 @@ pub fn fix_limit(
             remove_stale(state_dir);
             // Each failure uses up the mark, so one edit counts once.
             let edited = fs::remove_file(&mark).is_ok();
+            // A pass at the same time as a failure can leave the file of the
+            // message with no count file. A new count removes it. A count file
+            // that cannot be read keeps it, so the message stays said.
+            if fs::symlink_metadata(&path).is_err_and(|e| e.kind() == ErrorKind::NotFound) {
+                let _ = fs::remove_file(said_file(&path));
+            }
             let old = fs::read_to_string(&path)
                 .ok()
                 .and_then(|t| t.parse::<u64>().ok());
