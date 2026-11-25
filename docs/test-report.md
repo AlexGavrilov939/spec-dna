@@ -121,7 +121,7 @@ The form of the definition and the shape of the case give the row. The extension
 | Line format | any form; no `classname` | the name | none | always |
 | Another pair | for example `fn` with a dotted `classname` that is no package name | none | none | always |
 
-The package and the import path come from the nearest `Cargo.toml` (`[package] name`) and `go.mod` (the line `module`) at or above a Rust or Go test file. A bind reads these files from the working tree, each one once. Beside the test file of the tag, it reads only these files, `src/lib.rs` and `src/main.rs` of the crate of a module file, and the `_test.go` files of the folder of a Go test file. It also reads the list of the paths of the code tree, with the test files that git does not track.
+The package and the import path come from the nearest `Cargo.toml` (`[package] name`) and `go.mod` (the line `module`) at or above a Rust or Go test file. A bind reads these files from the working tree, each one once. Beside the test file of the tag, it reads these files, `src/lib.rs` and `src/main.rs` of the crate of a module file, and the `_test.go` files of the folder of a Go test file. It also reads the list of the paths of the code tree, with the test files that git does not track. A tag in a JVM or .NET file also reads [the class index](#the-class-index).
 
 ### A unique identity
 
@@ -138,13 +138,26 @@ The identity is not unique when another definition can build it:
 - a method whose display name is the name of the case;
 - a definition of the same name whose chain is unreadable.
 
-It is also not unique when its file field names more than one file of the code tree with the extension of the tag file. Each file of the code tree counts, also outside `[evidence] tests`, and each test file that git does not track. For the JVM and .NET, the full class name counts, never the stem of the file: spec-dna counts the files whose dotted path ends with the full class name. Examples: `tests.test_api` in 2 packages of pytest with no root, one binary in 2 crates with no `Cargo.toml`, one `spec.ts` path in 2 projects, one Java class in 2 modules, and a `partial` class of C#.
+It is also not unique when its file field names more than one file of the code tree with the extension of the tag file. Each file of the code tree counts, also outside `[evidence] tests`, and each test file that git does not track. For the JVM and .NET, the full class name counts, never the stem of the file: spec-dna counts the files whose dotted path ends with the full class name, and it asks [the class index](#the-class-index). Examples: `tests.test_api` in 2 packages of pytest with no root, one binary in 2 crates with no `Cargo.toml`, one `spec.ts` path in 2 projects, one Java class in 2 modules, and a `partial` class of C#.
+
+### The class index
+
+For a tag in a `.java`, `.kt` or `.cs` file, the identity is also not unique when another file of one of these 3 kinds declares the class. The folders and the names of the files do not count. This applies to the test under the tag and to `case:`.
+
+spec-dna builds the index one time in each run, when the first tag needs it. It reads each such file of the code tree, and each such test file that git does not track. It keeps a hash of each class name that a file declares, with the namespace lines of the file, and no text of a file. If 2 names have one hash, a bind can be weak, and no bind becomes silent.
+
+- A declaration is the word `class` or `interface`, or `object` in a `.java` or `.kt` file, and the name after it. Modifiers, annotations and attributes can stand before the word, on the same line. Thus `data class`, `record class` and `partial class` count.
+- The namespace of a `.java` or `.kt` file is its `package` line. A `.cs` file has the name of each of its `namespace` lines, and each name that some of them give when joined in their order. Thus `namespace A {` and `namespace B {` also give `A.B`.
+- For a nested class, the index compares the outermost class. It records no nesting, so each class with that name counts, also a nested one.
+- With no `package` or `namespace` line in the tag file, 2 namespaces count: the default one, and the part of the `classname` before the class chain.
+- For `case:`, the last part of a dotted `classname` is a class. So is each part before it that the tag file declares.
+- spec-dna reads lines. It does not read the rest of a line after `//`, or after a `/*` with no `*/` on the line. It does not read a line that starts with `*` before its `*/`, or a `#` line of a `.cs` file. It also does not read a comment or a string that starts and ends on one line. Another line of a comment or of a string reads as code. A `package` or `namespace` counts only when the line ends after its name, or goes on with `;` or `{`. A line that reads as code can make a bind weak without a twin. Limit 15 gives the one case where it can hide a twin.
 
 ### The proof
 
 The worst of all identities of the set decides: a failed case, then a skipped case, then a passed case. An empty set gives `no-case`. A case that passed after a rerun (`flakyFailure`, `rerunFailure`) counts as a fail. A skipped case is no pass and no fail. Each row of a table and each subtest is a case of its own, so a skipped row leaves the requirement unproven. Each weak link is a case of its own too.
 
-An own case that comes more than once is one test that ran again. It passed when a run passed and no run failed. This applies to a case once in each of several reports. In one report, it applies only to the projects of Playwright: a title joined with ` › `, or a title with a `[<project>]` prefix, in a `classname` that is a path. Each other repeat is a case of its own, so a skipped repeat leaves the requirement unproven. This includes each repeat of an identity that is not unique, and each repeat in one report of jest-junit or Vitest. A Playwright test with no `describe` and no prefix looks as a Vitest test, so its 2 projects are 2 cases.
+An own case that comes more than once is one test that ran again. It passed when a run passed and no run failed. This applies to a case once in each of several reports. In one report, it applies only to the projects of Playwright: a title joined with ` › `, or a title with a `[<project>]` prefix, in a `classname` that is a path. Each other repeat is a case of its own, so a skipped repeat leaves the requirement unproven. This includes each repeat of an identity that is not unique, and each repeat in one report of jest-junit or Vitest. [Limit 14](#the-limits-of-the-bind) tells which test of Playwright is no such run.
 
 A requirement passes when a tag of it is proven and no case of its tags failed. A `verified-by` record is a check by a person: the report does not apply to it.
 
@@ -210,13 +223,15 @@ The shapes below come from the documentation or the source of each runner. A tab
 | Ruby, rspec_junit_formatter | `spec.valve_spec` | `Valve closes on timeout` | `./spec/valve_spec.rb` |
 | .NET, JunitXml.TestLogger | `Valves.Tests.ValveTest` | `ClosesOnTimeout`, `ClosesOnTimeout(seconds: 30)` (with `MethodFormat`, the class or the namespace comes first) | none |
 
+No report that a real runner wrote confirms these shapes: the base folder of the path of Playwright, the default display name of xUnit, the `$` of a `@Nested` class of JUnit, the rows `name(int)[1]` of Kotlin, and the `-` of a package name in the binary id of nextest.
+
 A nextest report has no skipped test by default, so the tag of a skipped test finds no case (`no-case`). With the phrased names on, Surefire writes the display names, so the name of the method is no part of the name of the case, and the tag needs `case:`. JunitXml.TestLogger takes the name from the method in its current source. Other versions and other runners can write a display name, so a method with a display name gives a weak bind.
 
 ### The limits of the bind
 
 A report cannot tell these cases apart, or the scanner cannot read them. Each one is a limit of the bind, not an error. When the scanner sees the clash, the bind is weak (SD621).
 
-1. One `classname` for 2 files in a repository of several projects: 2 `rootdir` folders of pytest, gotestsum `short`, the default package of Java or one full class name in 2 modules, one C# class in 2 projects or a `partial` class, and projects of Playwright with one relative path. The scanner sees the clash when the paths show it. For the JVM and .NET, both paths must end with the full class name, as folders or as dots. A C# class with one full name in 2 files whose folders do not show the namespace gives a silent bind, unless the class is `partial`. spec-dna does not read the namespace of another file.
+1. One `classname` for 2 files in a repository of several projects: 2 `rootdir` folders of pytest, gotestsum `short`, the default package of Java or one full class name in 2 modules, one C# class in 2 projects or a `partial` class, and projects of Playwright with one relative path. The scanner sees the clash when the paths show it. For the JVM and .NET, [the class index](#the-class-index) also sees each `.java`, `.kt` or `.cs` file of the code tree that declares the class. So for them, a silent bind needs a twin outside the code tree (limit 2), or one of limit 15.
 2. A clash with a file outside the code tree: an untracked file outside `[evidence] tests`, or a file that `tree-exclude` matches. The stamp does not cover such a file, so the bind does not read it.
 3. jest-junit with no `addFileAttribute`: always weak.
 4. A Rust or Go tree with no `Cargo.toml` or `go.mod` above the tag file, and a binary, a module path or a folder that 2 files share.
@@ -229,6 +244,8 @@ A report cannot tell these cases apart, or the scanner cannot read them. Each on
 11. A Scala test with `def` reads as the form `def`, so its JUnit `classname` is another test. Use `case:`.
 12. A report of 2 languages: a case of another language with the same name is another test when its field names a file of the code tree ([A case of another file](#a-case-of-another-file)). When it names no file, and no row reads its shape, it is a weak link (`by-name`) of the tag.
 13. A name of more than 256 characters or more than 32 separators has not each part as a key. It binds by the built name, also with its row tail, or by `case:` (the reason `long-name`).
+14. A Playwright test with no `describe` and no project prefix has the shape of a Vitest test. When it runs in 2 projects, its 2 cases in one report count as 2 cases, not as 2 runs, and the worst result of them decides.
+15. [The class index](#the-class-index) does not read a C# `record` without the word `class`, a Java `record`, a `struct` or an `enum`. It does not read a file of Scala or Groovy, or a `.kts` file. A twin class in one of these gives a silent bind when no path shows the clash. A tag in a file of Scala or Groovy, or in a `.kts` file, does not ask the index. A line of a comment or a string that reads as a `package` or `namespace` line also takes the classes below it out of the default namespace. This matters only for a tag in the default namespace.
 
 ## The code tree and the stamp
 
