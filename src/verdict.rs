@@ -13,6 +13,7 @@
 
 use crate::harness::Skill;
 use crate::json;
+use std::collections::BTreeMap;
 
 /// The seed of the generator.
 pub const SEED: u64 = 24;
@@ -861,10 +862,14 @@ pub fn read_items(bytes: &[u8]) -> Vec<ItemVerdict> {
 /// Why `compare` stops.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CompareError {
-    /// The arms are not 2 arms of the file: exit code 2.
+    /// The arms are not 2 arms of the files: exit code 2.
     Usage(String),
-    /// The file is no result of `eval run --arms`: exit code 3.
-    NotArms,
+    /// A file is no result of `eval run --arms`: exit code 3. The text is the
+    /// path of the file.
+    NotArms(String),
+    /// A run of one eval in one arm is in 2 files: exit code 3. The text is
+    /// the message.
+    Joined(String),
 }
 
 /// One side of a result of `--arms`: the pass and the cost that the cap
@@ -877,6 +882,8 @@ struct ArmSide {
 
 /// The runs of one eval in a result of `--arms`.
 struct ArmsEval {
+    /// The id of the eval. The join of files uses it.
+    id: Option<String>,
     /// The runs that the plan has for the eval.
     runs: u32,
     /// The run number, and a side for each arm (`None`: not done).
@@ -905,6 +912,8 @@ pub fn complete_waves(evals: &[(u32, Vec<(u32, bool)>)]) -> u32 {
 
 /// A result of `eval run --arms`.
 struct ArmsFile {
+    /// The version of Claude Code that made the runs, if the file names it.
+    claude_code: Option<String>,
     arms: Vec<String>,
     evals: Vec<ArmsEval>,
 }
@@ -932,8 +941,10 @@ impl ArmsFile {
     }
 }
 
+/// Reads one result of `--arms`. The error is a file that the runner never
+/// writes, and the caller adds its path.
 fn read_arms_file(bytes: &[u8]) -> Result<ArmsFile, CompareError> {
-    let not = || CompareError::NotArms;
+    let not = || CompareError::NotArms(String::new());
     let text = std::str::from_utf8(bytes).map_err(|_| not())?;
     let value = json::parse(text).map_err(|_| not())?;
     let arms: Vec<String> = match value.get("arms") {
@@ -944,7 +955,7 @@ fn read_arms_file(bytes: &[u8]) -> Result<ArmsFile, CompareError> {
             .ok_or_else(not)?,
         _ => return Err(not()),
     };
-    if !(2..=3).contains(&arms.len()) {
+    if !(1..=3).contains(&arms.len()) {
         return Err(not());
     }
     let json::Value::Arr(items) = value.get("evals") else {
@@ -1004,9 +1015,101 @@ fn read_arms_file(bytes: &[u8]) -> Result<ArmsFile, CompareError> {
                 .collect();
             results.push((run, sides.ok_or_else(not)?));
         }
-        evals.push(ArmsEval { runs, results });
+        evals.push(ArmsEval {
+            id: item.get("id").as_str().map(str::to_string),
+            runs,
+            results,
+        });
     }
-    Ok(ArmsFile { arms, evals })
+    Ok(ArmsFile {
+        claude_code: value.get("claude_code").as_str().map(str::to_string),
+        arms,
+        evals,
+    })
+}
+
+/// Joins result files of `--arms` (D100): the evals by their id, the runs by
+/// their number, and the arms as the union of the arms of the files, in the
+/// order that they first appear. A side that 2 files hold is a conflict. The
+/// second value is the notes: a note says that the files come from different
+/// versions of Claude Code.
+fn join_arms_files(files: &[(String, Vec<u8>)]) -> Result<(ArmsFile, Vec<String>), CompareError> {
+    let mut parsed = Vec::new();
+    let mut arms: Vec<String> = Vec::new();
+    for (path, bytes) in files {
+        let file = read_arms_file(bytes).map_err(|_| CompareError::NotArms(path.clone()))?;
+        for a in &file.arms {
+            if !arms.contains(a) {
+                arms.push(a.clone());
+            }
+        }
+        parsed.push((path, file));
+    }
+    // The file that holds each side, to name it in a conflict.
+    let mut holder: BTreeMap<(String, u32, usize), &str> = BTreeMap::new();
+    let mut joined: Vec<(String, ArmsEval)> = Vec::new();
+    for (n, (path, file)) in parsed.iter().enumerate() {
+        for (at, eval) in file.evals.iter().enumerate() {
+            // An eval with no id joins with no other eval.
+            let key = eval.id.clone().unwrap_or_else(|| format!("\0{n}/{at}"));
+            let slot = match joined.iter().position(|(k, _)| *k == key) {
+                Some(i) => i,
+                None => {
+                    let new = ArmsEval {
+                        id: eval.id.clone(),
+                        runs: eval.runs,
+                        results: Vec::new(),
+                    };
+                    joined.push((key.clone(), new));
+                    joined.len() - 1
+                }
+            };
+            let target = &mut joined[slot].1;
+            target.runs = target.runs.max(eval.runs);
+            for (run, sides) in &eval.results {
+                let row = match target.results.iter().position(|(r, _)| r == run) {
+                    Some(i) => i,
+                    None => {
+                        target.results.push((*run, vec![None; arms.len()]));
+                        target.results.len() - 1
+                    }
+                };
+                for (side, name) in sides.iter().zip(&file.arms) {
+                    let Some(side) = side else { continue };
+                    let arm = arms.iter().position(|a| a == name).unwrap_or(0);
+                    if let Some(first) = holder.insert((key.clone(), *run, arm), path) {
+                        return Err(CompareError::Joined(format!(
+                            "--compare: the run {run} of `{}` in the arm `{name}` is in 2 files: {first}, {path}",
+                            eval.id.as_deref().unwrap_or("?")
+                        )));
+                    }
+                    target.results[row].1[arm] = Some(*side);
+                }
+            }
+        }
+    }
+    let mut versions: Vec<(&str, &str)> = Vec::new();
+    for (path, file) in &parsed {
+        if let Some(v) = &file.claude_code {
+            versions.push((path.as_str(), v.as_str()));
+        }
+    }
+    let mut notes = Vec::new();
+    if versions.iter().any(|(_, v)| *v != versions[0].1) {
+        let list: Vec<String> = versions.iter().map(|(p, v)| format!("{p} {v}")).collect();
+        notes.push(format!(
+            "--compare: the files come from different versions of Claude Code: {}",
+            list.join(", ")
+        ));
+    }
+    Ok((
+        ArmsFile {
+            claude_code: None,
+            arms,
+            evals: joined.into_iter().map(|(_, e)| e).collect(),
+        },
+        notes,
+    ))
 }
 
 /// The comparison of 2 arms of a result of `--arms`.
@@ -1020,14 +1123,24 @@ pub struct Comparison {
     pub planned_waves: u32,
     /// The analysis. `with` is the treatment, and `without` is the control.
     pub analysis: Analysis,
+    /// The notes for the person: the files come from different versions of
+    /// Claude Code. The command prints them on the standard error.
+    pub notes: Vec<String>,
 }
 
-/// The verdict of 2 arms of a result of `eval run --arms`: the bootstrap and
-/// the rules of D33, with the floor of D59, on the complete waves. The pairs
-/// are the runs of the 2 arms, for the same eval and run. The rules of the
-/// model-team protocol (ADR 0029) are not here: a person reads the numbers.
-pub fn compare(bytes: &[u8], treatment: &str, control: &str) -> Result<Comparison, CompareError> {
-    let file = read_arms_file(bytes)?;
+/// The verdict of 2 arms of one or more results of `eval run --arms` (D100):
+/// the bootstrap and the rules of D33, with the floor of D59, on the complete
+/// waves. The files join by the eval and the number of the run, and the arms
+/// are the union of their arms. The pairs are the runs of the 2 arms, for the
+/// same eval and run. The rules of the model-team protocol (ADR 0029) are not
+/// here: a person reads the numbers. `files` holds the path and the bytes of
+/// each file.
+pub fn compare(
+    files: &[(String, Vec<u8>)],
+    treatment: &str,
+    control: &str,
+) -> Result<Comparison, CompareError> {
+    let (file, notes) = join_arms_files(files)?;
     if treatment == control {
         return Err(CompareError::Usage(format!(
             "--compare: `{treatment}` is named twice; give 2 different arms"
@@ -1036,7 +1149,12 @@ pub fn compare(bytes: &[u8], treatment: &str, control: &str) -> Result<Compariso
     let place = |name: &str| {
         file.arms.iter().position(|a| a == name).ok_or_else(|| {
             CompareError::Usage(format!(
-                "--compare: the file has no arm `{name}`; its arms are {}",
+                "--compare: {} no arm `{name}`; its arms are {}",
+                if files.len() == 1 {
+                    "the file has"
+                } else {
+                    "the files have"
+                },
                 file.arms.join(", ")
             ))
         })
@@ -1068,6 +1186,7 @@ pub fn compare(bytes: &[u8], treatment: &str, control: &str) -> Result<Compariso
         waves,
         planned_waves: file.planned_waves(),
         analysis: analyze(&by_eval),
+        notes,
     })
 }
 
@@ -1421,36 +1540,153 @@ mod tests {
         )
     }
 
+    /// The argument of `compare` for one file.
+    fn one(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
+        vec![("f.json".to_string(), bytes.to_vec())]
+    }
+
+    fn not_arms() -> Result<Comparison, CompareError> {
+        Err(CompareError::NotArms("f.json".to_string()))
+    }
+
     #[test]
     fn compare_refuses_a_file_with_a_repeat_or_a_negative_cost() {
         let ok = arms_file(
             r#"["a","b"]"#,
             &arms_eval("e-1", &[&arms_run(1, "1"), &arms_run(2, "1")]),
         );
-        assert!(compare(&ok, "a", "b").is_ok());
+        assert!(compare(&one(&ok), "a", "b").is_ok());
         // The same run twice in one eval.
         let twice = arms_file(
             r#"["a","b"]"#,
             &arms_eval("e-1", &[&arms_run(1, "1"), &arms_run(1, "1")]),
         );
-        assert_eq!(compare(&twice, "a", "b"), Err(CompareError::NotArms));
+        assert_eq!(compare(&one(&twice), "a", "b"), not_arms());
         // The same eval twice.
-        let one = arms_eval("e-1", &[&arms_run(1, "1")]);
-        let evals = arms_file(r#"["a","b"]"#, &format!("{one},{one}"));
-        assert_eq!(compare(&evals, "a", "b"), Err(CompareError::NotArms));
+        let first = arms_eval("e-1", &[&arms_run(1, "1")]);
+        let evals = arms_file(r#"["a","b"]"#, &format!("{first},{first}"));
+        assert_eq!(compare(&one(&evals), "a", "b"), not_arms());
         // The same arm twice in the list of arms.
-        let arms = arms_file(r#"["a","a"]"#, &one);
-        assert_eq!(compare(&arms, "a", "b"), Err(CompareError::NotArms));
+        let arms = arms_file(r#"["a","a"]"#, &first);
+        assert_eq!(compare(&one(&arms), "a", "b"), not_arms());
+        // A file with no arm, and a file with 4 arms, is no result of `--arms`.
+        assert_eq!(
+            compare(&one(&arms_file(r#"[]"#, &first)), "a", "b"),
+            not_arms()
+        );
+        let four = arms_file(r#"["a","b","c","d"]"#, &first);
+        assert_eq!(compare(&one(&four), "a", "b"), not_arms());
         // A negative cost is a fault of the file, and a null cost is the budget.
         let neg = arms_file(r#"["a","b"]"#, &arms_eval("e-1", &[&arms_run(1, "-1")]));
-        assert_eq!(compare(&neg, "a", "b"), Err(CompareError::NotArms));
+        assert_eq!(compare(&one(&neg), "a", "b"), not_arms());
         let null = arms_file(r#"["a","b"]"#, &arms_eval("e-1", &[&arms_run(1, "null")]));
-        assert!(compare(&null, "a", "b").is_ok());
+        assert!(compare(&one(&null), "a", "b").is_ok());
         // The same name twice on the command line stays a usage error.
         assert!(matches!(
-            compare(&ok, "a", "a"),
+            compare(&one(&ok), "a", "a"),
             Err(CompareError::Usage(_))
         ));
+    }
+
+    /// A result of `--arms` with one arm, and the runs `runs` of the eval `id`.
+    fn one_arm_file(arm: &str, claude: &str, id: &str, runs: &[(u32, bool, &str)]) -> Vec<u8> {
+        let results: Vec<String> = runs
+            .iter()
+            .map(|(run, passed, cost)| {
+                format!(
+                    r#"{{"run":{run},"arms":{{"{arm}":{{"passed":{passed},"cost_usd":{cost}}}}}}}"#
+                )
+            })
+            .collect();
+        format!(
+            r#"{{"claude_code":"{claude}","arms":["{arm}"],"evals":[{{"id":"{id}","runs":2,"max_budget_usd":1,"results":[{}]}}]}}"#,
+            results.join(",")
+        )
+        .into_bytes()
+    }
+
+    fn named(path: &str, bytes: Vec<u8>) -> (String, Vec<u8>) {
+        (path.to_string(), bytes)
+    }
+
+    #[test]
+    fn files_of_one_arm_join_by_the_eval_and_the_run() {
+        let runs_a = [(1, true, "1"), (2, true, "1")];
+        let runs_b = [(1, false, "2"), (2, true, "2")];
+        let a = one_arm_file("a", "2.1.1", "e-1", &runs_a);
+        let b = one_arm_file("b", "2.1.1", "e-1", &runs_b);
+        let both = arms_file(
+            r#"["a","b"]"#,
+            &arms_eval(
+                "e-1",
+                &[
+                    r#"{"run":1,"arms":{"a":{"passed":true,"cost_usd":1},"b":{"passed":false,"cost_usd":2}}}"#,
+                    r#"{"run":2,"arms":{"a":{"passed":true,"cost_usd":1},"b":{"passed":true,"cost_usd":2}}}"#,
+                ],
+            ),
+        );
+        let want = compare(&one(&both), "a", "b").unwrap();
+        assert_eq!((want.waves, want.analysis.pairs), (2, 2));
+        // The order of the files does not change the result.
+        let forward = [named("a.json", a.clone()), named("b.json", b.clone())];
+        let reverse = [named("b.json", b), named("a.json", a)];
+        assert_eq!(compare(&forward, "a", "b").unwrap(), want);
+        assert_eq!(compare(&reverse, "a", "b").unwrap(), want);
+        // The arms are the union, and a name that no file has is a usage error.
+        let Err(CompareError::Usage(m)) = compare(&forward, "a", "c") else {
+            panic!("no usage error");
+        };
+        assert!(
+            m.contains("the files have no arm `c`; its arms are a, b"),
+            "{m}"
+        );
+    }
+
+    #[test]
+    fn a_side_in_2_files_is_a_conflict_and_a_partial_side_is_not() {
+        let a = one_arm_file("a", "2.1.1", "e-1", &[(1, true, "1")]);
+        let again = one_arm_file("a", "2.1.1", "e-1", &[(1, true, "1")]);
+        let files = [named("x.json", a.clone()), named("y.json", again)];
+        assert_eq!(
+            compare(&files, "a", "b"),
+            Err(CompareError::Joined(
+                "--compare: the run 1 of `e-1` in the arm `a` is in 2 files: x.json, y.json"
+                    .to_string()
+            ))
+        );
+        // Another run of the same arm joins: the file y.json has run 2 only.
+        let next = one_arm_file("a", "2.1.1", "e-1", &[(2, true, "1")]);
+        let b = one_arm_file("b", "2.1.1", "e-1", &[(1, true, "1"), (2, true, "1")]);
+        let files = [
+            named("x.json", a),
+            named("y.json", next),
+            named("z.json", b),
+        ];
+        let c = compare(&files, "a", "b").unwrap();
+        assert_eq!((c.waves, c.analysis.pairs), (2, 2));
+        // A file that is no result is named.
+        let files = [named("x.json", b"{}".to_vec())];
+        assert_eq!(
+            compare(&files, "a", "b"),
+            Err(CompareError::NotArms("x.json".to_string()))
+        );
+    }
+
+    #[test]
+    fn two_versions_of_claude_code_give_a_note_and_the_same_version_gives_none() {
+        let runs = [(1, true, "1")];
+        let a = one_arm_file("a", "2.1.1", "e-1", &runs);
+        let b = one_arm_file("b", "2.1.1", "e-1", &runs);
+        let files = [named("a.json", a.clone()), named("b.json", b)];
+        assert!(compare(&files, "a", "b").unwrap().notes.is_empty());
+        let b = one_arm_file("b", "2.1.2", "e-1", &runs);
+        let files = [named("a.json", a), named("b.json", b)];
+        assert_eq!(
+            compare(&files, "a", "b").unwrap().notes,
+            [
+                "--compare: the files come from different versions of Claude Code: a.json 2.1.1, b.json 2.1.2"
+            ]
+        );
     }
 
     #[test]

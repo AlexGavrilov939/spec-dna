@@ -475,7 +475,7 @@ fn self_check(name: &str, item: &Value, built: &Built) -> Result<(), Fatal> {
 /// result has no summary to compare, so the command only checks each value
 /// against its form.
 fn arms_records(value: &Value) -> Result<(Vec<String>, Vec<String>), Fatal> {
-    let form = "2 or 3 different names of harness arms";
+    let form = "1 to 3 different names of harness arms";
     let mut arms: Vec<String> = Vec::new();
     for a in value.get("arms").as_arr() {
         let name = harness_of(a).map_err(|_| bad("arms", form))?;
@@ -484,7 +484,7 @@ fn arms_records(value: &Value) -> Result<(Vec<String>, Vec<String>), Fatal> {
         }
         arms.push(name);
     }
-    if !(2..=3).contains(&arms.len()) {
+    if !(1..=3).contains(&arms.len()) {
         return Err(bad("arms", form));
     }
     let claude_code = match value.get("claude_code") {

@@ -28,6 +28,7 @@ dir = "evals"         # the eval files, check.sh and the fixtures
 min-pass-rate = 0.8   # the share of evals that must pass, from 0 to 1
 runs = 3              # the runs of each eval, unless the eval sets its own
 max-total-usd = 20    # the cost cap of one eval run command
+min-free-mib = 2048   # the free space that each run needs, in MiB
 ```
 
 The table is optional. A project with no table has no evals. [config.md](config.md#the-table-evals) gives the rules of each key. These rules apply:
@@ -35,7 +36,7 @@ The table is optional. A project with no table has no evals. [config.md](config.
 - `dir` is a path relative to the repository root. An absolute path, a `..` or `.` segment, a `\` and a `:` are errors (exit code 3).
 - `dir` and `templates.dir` must not overlap.
 - The folder is never part of a root, also for a root `.`. `check` does not read a file there as a document, so a fixture can hold Markdown files.
-- `runs` is an integer from 1 to 100. `max-total-usd` is a number above 0.
+- `runs` is an integer from 1 to 100. `max-total-usd` is a number above 0. `min-free-mib` is an integer of 0 or more. `0` turns off [the check of the free space](#free-space).
 - `pass-at` is a key of an eval file only. In `[evals]` it is an unknown key.
 - `--runs`, `--min-pass-rate` and `--max-total-usd` of `eval run` replace these values for one command.
 
@@ -117,27 +118,45 @@ The command needs the table `[evals]`. A pin that differs from the version of th
 1. The runner reads the configuration and checks each eval file. An invalid file gives exit code 3, and the message names the path and the rule.
 2. It computes the estimate: the sum of `runs x max-budget-usd` of the selected evals. If the estimate is above `max-total-usd`, it stops with exit code 3 and starts no process.
 3. It runs `claude --version` once. If `claude` is absent or cannot start, it stops with exit code 3.
-4. For each eval and each run, it does steps 5 to 11. The loop has no early stop.
+4. For each eval and each run, it checks [the free space](#free-space), and then it does steps 5 to 11. It does not stop early when the result of an eval is already certain. The cap and the floor of free space can stop it.
 5. It makes a temporary folder, `spec-dna-eval-<pid>-<n>`, in the temporary directory of the system (mode 700 on Unix).
 6. It copies the files of the fixture into the root of the folder. Then it copies `CLAUDE.md`, `AGENTS.md`, `REVIEW.md` and the files of `.claude/`, except `.claude/settings.local.json`, from the working tree. A file of the project replaces a fixture file at the same path. With `--arms` or `--harness`, this copy applies only to the arm `project`: a built-in arm gets the files that its table writes (see [Harness arms](#harness-arms)).
 7. The copy uses the list of git, so it does not copy a file that git ignores. It copies no symbolic link, and a warning names it.
 8. It starts a git repository in the folder. The base commit has the author `spec-dna <eval@spec-dna.invalid>`, the date `2000-01-01T00:00:00Z`, no signature and no hook. If `branch` is set and is not `main`, it switches to a new branch of that name. If `change` is set, it copies the files of that folder over the copy. It makes one commit "spec-dna eval change" on that branch (the same author and date as the base commit, no signature, no hook).
-9. It starts `claude` in the folder, and then it reads `total_cost_usd`, `subtype`, `num_turns` and `modelUsage` from the output. It measures the wall time of the process of `claude`. If the cost is absent, the spend counts `max-budget-usd` for the run.
+9. It starts `claude` in the folder, and it reads the `result` events of the output. It takes `total_cost_usd`, `subtype` and `modelUsage` from the last event, and `num_turns` from each event. It measures the wall time of the process of `claude`. If the cost is absent, the spend counts `max-budget-usd` for the run. [A run that is not whole](#a-run-that-is-not-whole) has its own rule for the cost.
 10. It runs each check with `sh -c` in the folder. The checks also run when `claude` failed. A run passes when `claude` exits with code 0 and each check passes.
 11. It deletes the folder, also after an error. It adds the cost to the spend. If the spend is above `max-total-usd` and a run remains, it stops.
 12. An eval passes when its passed runs are at least `min(pass-at, runs)`. The pass rate is the share of the evals that pass, not of the runs. The suite passes when the pass rate is at least `min-pass-rate`.
 
 Details of the steps 9 and 10:
 
-- The arguments of `claude` are, in this order: `-p`, the task, `--allowedTools` and then `--output-format json --max-turns <n> --max-budget-usd <usd> --permission-mode dontAsk`.
+- The arguments of `claude` are, in this order: `-p`, the task, `--allowedTools`, `--disallowedTools` (only in [the arm `without`](#run-the-arms) of `--ab`) and then `--output-format stream-json --verbose --max-turns <n> --max-budget-usd <usd> --permission-mode dontAsk`.
 - `--allowedTools` has the tools joined by commas in one argument. The runner passes it only for a list that is not empty.
 - With `--isolate`, the arguments end with `--setting-sources project --strict-mcp-config`.
 - The runner never passes `--bare`, because an eval must load `CLAUDE.md`, the skills and the hooks.
 - The environment is the environment of `eval run`, without `CLAUDE_PROJECT_DIR`, `GIT_DIR`, `GIT_WORK_TREE` and `GIT_INDEX_FILE`. A session that starts `eval run` keeps its `CLAUDECODE`, and `claude -p` starts under it (Claude Code 2.1.325).
-- The runner keeps at most 16 MiB of the output of `claude` in memory. The output is one JSON object, or a list of events that ends with the object of type `result`.
+- With `--output-format stream-json --verbose`, `claude` writes one JSON event on each line. The runner reads the lines one by one.
+- A `result` event is a line that has the bytes `"result"` and whose top-level `type` is `result`. A tool result that holds these bytes does not count. A JSON object with no `type` is no event, so the runner reads no cost and no subtype from it.
+- A background task can wake the agent after it stopped. Each wake-up ends with a new `result` event, and its `num_turns` counts only that segment.
+- The runner keeps at most 16 MiB of `result` events. An event is a line with a JSON object that has a `type`. The runner drops each other event. It keeps the first 64 KiB of the lines that are no event, as the text of [a refusal](#runs-that-the-api-refuses). It discards a line of more than 16 MiB. Thus the memory does not grow with the stream.
 - The agent and the checks run with a neutral git setup: `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME` and `GIT_COMMITTER_EMAIL` (`eval@example.invalid`), `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1`, and `commit.gpgsign` and `tag.gpgsign` set to `false` through `GIT_CONFIG_COUNT`. Thus a `git commit` of the agent or of a check never depends on the identity or the signing of the machine. The copy is always a git repository with one base commit.
 - The script of a check sources `check.sh` of the project, never the copy. Then it runs the `run` text of the check.
 - The environment of a check has `SPEC_DNA_CHECK_SH`, the absolute path of `check.sh`, and `SPEC_DNA_EVAL_BASE`, the id of the commit that `HEAD` has when the agent starts. If the eval has the key `change`, it is the commit of the change. Thus a check that compares a file with the base (`tests_unchanged`) does not see the change as an edit of the agent. The diff of the change against the branch `main` stays. The agent sees it, and so does an acceptor.
+
+### A run that is not whole
+
+A run is not whole in these cases:
+
+- A time limit or a signal ended `claude`.
+- The stream is cut. After the last `result` event, it has an `assistant` or `user` event (a segment in flight), a JSON object with no end (a cut line) or a line of more than 16 MiB. Another event, such as a `system` event of a hook, does not cut the stream.
+
+This changes the cost and the turns only. The subtype, the pass and [a refusal](#runs-that-the-api-refuses) follow the rules of each run: the last `result` event, the exit code and the checks decide. Thus a cut run can pass when `claude` exits with code 0.
+
+In such a run, `turns` is `null`, and `cost_usd` is the last cost that `claude` reported if it is above `max-budget-usd`, else `null`. The spend and [the verdict](#the-verdict) count `cost_usd`, or `max-budget-usd` when it is `null`, so they drop no known spend.
+
+`segments` is the number of `result` events that the runner read. `tokens` and `models` come from the last of them, so they can be lower than the totals of the run. A run that a time limit killed has the subtype `timeout`.
+
+A [refused attempt](#runs-that-the-api-refuses) counts the last cost that `claude` reports, or 0, also when it is not whole. A run of `--ab` or `--arms` that a signal stops during a check is in the spend. It counts its `cost_usd`, and a run that is not whole and has none counts its budget.
 
 ### Output
 
@@ -149,7 +168,7 @@ pass rate 50.0 percent (1 of 2 evals), min-pass-rate 80.0 percent: fail
 spend 1.92 USD
 ```
 
-The progress of each run goes to stderr. A stop by the cap adds the line `stopped: the spend <s> USD is above max-total-usd <c> USD; <n> runs did not start`. The line of the pass rate is then absent. An eval that did not run all its runs does not pass.
+The progress of each run goes to stderr. A stop by the cap adds the line `stopped: the spend <s> USD is above max-total-usd <c> USD; <n> runs did not start`. A stop by [the floor of free space](#free-space) adds the line `stopped: disk-space; <n> runs did not start`. After a stop, the line of the pass rate is absent. An eval that did not run all its runs does not pass.
 
 ### Exit codes
 
@@ -158,7 +177,7 @@ The progress of each run goes to stderr. A stop by the cap adds the line `stoppe
 | 0 | The pass rate is at least `min-pass-rate`. Also `--dry-run` |
 | 1 | The pass rate is lower |
 | 2 | Usage error: a bad option value, an unknown id, `--out` that is `[evals] dir`, or no `run` subcommand |
-| 3 | No `[evals]` table, an invalid eval file, no eval, an absent `check.sh`, a different version pin, an estimate above the cap, a stop by the cap, or a `claude` that is absent or cannot start |
+| 3 | No `[evals]` table, an invalid eval file, no eval, an absent `check.sh`, a different version pin, an estimate above the cap, a stop by the cap or by the floor of free space, or a `claude` that is absent or cannot start |
 | 4 | A git or file error of `eval run` itself: the temporary folder, the copy, the base commit or the result file |
 
 ## Cost
@@ -170,6 +189,34 @@ spec-dna makes no network call, but `claude` does, and each run costs money. The
 
 Claude Code checks `--max-budget-usd` against an estimate of the client, so the real cost can be higher than the budget. Thus the second check uses the sum of the costs that the runs report.
 
+## Free space
+
+A full disk can lose the transcript and the checks of a paid run. Thus the runner checks the free space before each run. This applies to each attempt of `eval run`, `--ab` and `--arms`, also to a new attempt after a refusal of the API. The runner reads 2 folders:
+
+- the temporary folder of the system, where the copy goes;
+- the folder of the result file. This is the folder of `--out`. With no `--out`, it is `<[evals] dir>/results` for `--ab` and `--arms`, and a plain `eval run` writes no file. With `--resume`, it is the folder of that file.
+
+If a folder has less than `[evals] min-free-mib` MiB free, the command starts no run. The default is 2,048 MiB, and `0` turns the check off. The default is a chosen floor and not a measurement. A project with large builds needs a larger value.
+
+The command writes the result as for a stop by the cap. `--ab` and `--arms` keep the complete pairs and waves. `stopped` is `"disk-space"`, and the exit code is 3. The message on stderr names the folder, its free space and the key:
+
+```text
+spec-dna eval run: stopped before a run: `<folder>` has <n> MiB free, below `[evals] min-free-mib` (<m>); free space, then run the command again with `--resume <result file>`
+```
+
+A plain `eval run` has no `--resume`, so its message ends with `then run the command again`. After you free space, run `--ab` or `--arms` with `--resume`.
+
+The runner reads the free space with `df -Pk <folder>`. If `df` is absent or the runner cannot read its output, the command prints one warning and runs with no check:
+
+```text
+spec-dna: warning: cannot read the free space of `<folder>` (`df -Pk`); the check of `[evals] min-free-mib` is off for this command
+```
+
+The check has these limits:
+
+- The disk can fill during a run. A build in the copy writes files, and Claude Code writes its transcript, which can be on another disk. The check limits the loss to the run in progress.
+- The floor is one number. It is not the need of a run.
+
 ## Results
 
 `--json` prints the result, and `--out <dir>` writes the same object to a file. The file is indented. `eval run` makes `<dir>` before the first run, so a bad value stops the command before any cost. `<dir>` is relative to the repository root.
@@ -177,19 +224,32 @@ Claude Code checks `--max-budget-usd` against an estimate of the client, so the 
 `<dir>` cannot be `[evals] dir`, because SD506 reads each `*.json` file there. Use `<[evals] dir>/results`.
 
 ```json
-{"spec_dna":"0.8.0","claude_code":"2.1.330","started":"2026-11-15T10:15:00Z","evals_dir":"evals","harness":"project","min_pass_rate":0.8,"max_total_usd":20,"estimate_usd":1,"spend_usd":0.12,"stopped":null,"pass_rate":1,"passed":true,"evals":[{"id":"example","runs":1,"pass_at":1,"max_budget_usd":1,"passed_runs":1,"passed":true,"spend_usd":0.12,"results":[{"claude_exit":0,"subtype":"success","cost_usd":0.12,"checks":[{"name":"notes-done","passed":true}],"tokens":{"in":10,"out":20,"cache_read":30,"cache_write":40},"models":["claude-opus-5-5"],"turns":7,"seconds":41.3}]}]}
+{"spec_dna":"0.8.0","claude_code":"2.1.330","started":"2026-11-15T10:15:00Z","evals_dir":"evals","harness":"project","min_pass_rate":0.8,"max_total_usd":20,"estimate_usd":1,"spend_usd":0.12,"stopped":null,"pass_rate":1,"passed":true,"evals":[{"id":"example","runs":1,"pass_at":1,"max_budget_usd":1,"passed_runs":1,"passed":true,"spend_usd":0.12,"results":[{"claude_exit":0,"subtype":"success","cost_usd":0.12,"checks":[{"name":"notes-done","passed":true}],"tokens":{"in":10,"out":20,"cache_read":30,"cache_write":40},"models":["claude-opus-5-5"],"turns":7,"segments":1,"seconds":41.3}]}]}
 ```
 
-- `claude_code` is the first word of `claude --version`, or `null`. `stopped` is `null` or `"max-total-usd"`.
+- `claude_code` is the first word of `claude --version`, or `null`. `stopped` is `null`, `"max-total-usd"` or `"disk-space"`.
 - After a stop, `pass_rate` is `null`, `passed` is `false`, and an eval that did not start has `"results":[]`.
-- `claude_exit` is the exit code of `claude`, or -1 if a signal ended it. `cost_usd` is `null` when `claude` gave no cost. `spend_usd` is the sum that the cap uses.
+- `claude_exit` is the exit code of `claude`, or -1 if a signal ended it. `cost_usd` is `null` when `claude` gave no cost, and for [a run that is not whole](#a-run-that-is-not-whole) with no reported cost above its budget. `spend_usd` is the sum that the cap uses.
 - `harness` is the harness arm of the copies: `project`, or the value of `--harness`.
-- Each result has, after `checks`, the keys `tokens`, `models`, `turns` and `seconds`. `tokens` and `models` are the same sums and names as in the result of `--ab` (`null` and `[]` when `claude` gave no `modelUsage`). `turns` is the `num_turns` of the result of `claude`, or `null`. `seconds` is the wall time of the process of `claude` with 1 decimal. A result of 0.7.x has none of these 4 keys.
+- Each result has, after `checks`, the keys `tokens`, `models`, `turns`, `segments` and `seconds`. `tokens` and `models` are the same sums and names as in the result of `--ab` (`null` and `[]` when `claude` gave no `modelUsage`). `seconds` is the wall time of the process of `claude` with 1 decimal. A result of 0.7.x has none of these 5 keys, and a result of 0.8.0 has no `segments`.
+- [Turns and segments](#turns-and-segments) gives the meaning of `turns` and `segments`.
 - With `--dry-run`, `--json` prints one object: `spec_dna`, `dry_run` (`true`), `evals_dir`, `max_total_usd`, `estimate_usd`, and `evals`. Each item of `evals` has `id`, `runs`, `pass_at`, `max_budget_usd` and `estimate_usd`.
 
 The result has no task text, no check command, no output text of `claude`, no path of the machine and no value of the environment. Claude Code can keep its own session files on the machine. spec-dna does not read or copy them.
 
 A project can keep the result files in `<[evals] dir>/results`. `spec-dna stats --sdlc` reads them for the indicator "eval pass rate". It uses the newest complete file by `started`. A file is complete when it has a string `started`, a number `pass_rate` from 0 to 1, and `"stopped": null`.
+
+### Turns and segments
+
+A segment is the part of a run that ends with one `result` event of `claude`. A background task that ends after the agent stopped wakes the agent, so a run can have more than one segment.
+
+- `segments` is the number of `result` events of the run. It is 0 when the output has no such event, and the run then has `turns` `null`.
+- `turns` is the sum of `num_turns` over these events. It is `null` when there is no event, when one event has no integer `num_turns` of 0 or more, and for [a run that is not whole](#a-run-that-is-not-whole).
+- `--max-turns` probably limits each segment, and not the whole run. Thus `turns` can be more than `max-turns` when `segments` is more than 1.
+
+The cost, the subtype, the models and the tokens come from the last event. The cost, the models and the tokens are totals of the session. Known limit: a turn-limit stop in an earlier segment does not show when a later segment succeeds ([ADR 0033](adr/0033-protocol-2-of-the-model-team-measurement.md) would score it 0).
+
+In a result of 0.8.0, `turns` holds the `num_turns` of the last segment only. It can be much lower than the count of the whole run.
 
 ## Harness arms
 
@@ -216,10 +276,10 @@ In `--arms` and `--harness`, the runner passes `--model` and `--effort` with the
 ### `--arms`
 
 ```text
-spec-dna eval run --arms <arm>,<arm>[,<arm>] [<id>...] [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--resume <result file>] [--json]
+spec-dna eval run --arms <arm>[,<arm>[,<arm>]] [<id>...] [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--resume <result file>] [--json]
 ```
 
-The command runs the plain evals of `<dir>` (all, or the ids) in 2 or 3 arms. It runs in waves: wave `r` runs each eval once in each arm. In one eval, the order of the arms rotates left by `(eval index + r) mod arms`. The index counts from 0 in the order of the ids, and `r` counts from 1. A stop by the cap keeps the complete waves, and the analysis drops a partial wave. The command checks the cap before each run, as for `--ab`, and an API refusal follows the same back-off. The command gives no pass rate, so it never exits with 1. `--min-pass-rate` and `--harness` with `--arms` are usage errors, and so is `--arms` with `--ab`.
+The command runs the plain evals of `<dir>` (all, or the ids) in 1 to 3 arms. It runs in waves: wave `r` runs each eval once in each arm. With 1 arm, wave `r` runs each eval once in that arm, and the result file has that arm only. In one eval, the order of the arms rotates left by `(eval index + r) mod arms`. The index counts from 0 in the order of the ids, and `r` counts from 1. A stop by the cap or by [the floor of free space](#free-space) keeps the complete waves, and the analysis drops a partial wave. The command checks the cap before each run, as for `--ab`, and an API refusal follows the same back-off. The command gives no pass rate, so it never exits with 1. `--min-pass-rate` and `--harness` with `--arms` are usage errors, and so is `--arms` with `--ab`.
 
 The result is `<dir>/results/arms-<YYYYMMDD>T<HHMMSS>Z.json`. It has the keys of the result of `--ab` that do not name a target, and these keys:
 
@@ -232,11 +292,30 @@ The result is `<dir>/results/arms-<YYYYMMDD>T<HHMMSS>Z.json`. It has the keys of
 
 `--resume <result file>` continues the run of the file. It needs the same arms in the same order, and it runs the sides that the file lacks. It takes the evals from the file. With no id, it continues each eval of the file. An id names the evals to continue, and it must be in the file (else exit code 2). An eval that the run leaves keeps its results in the file, and the spend of the file stays in the total. The message of a stop by `api-error` or by a signal gives the full command that continues the run, with the arms and the path of the file. It takes no `--out` and no `--dry-run`. An arms file is no input of `eval verdict`, so a batch of `--arms` never enters the table of the skills.
 
+You can run the arms of one eval as separate commands of 1 arm each, at the same time. Then `eval verdict --compare` joins their result files. These arms share one machine and one account, so their `seconds` are not those of a run alone on the machine.
+
 ```text
-spec-dna eval verdict --compare <treatment>,<control> <result file> [--json]
+spec-dna eval verdict --compare <treatment>,<control> <result file>... [--json]
 ```
 
-`eval verdict --compare` gives the verdict of 2 arms of a result of `--arms`, with the bootstrap and the rules of [the verdict](#the-verdict). It uses the complete waves only, and the pairs are the runs of the 2 arms for the same eval and run. It prints the difference and the cost ratio with their 90% intervals, the verdict, and the number of waves. With `--json` it prints `treatment`, `control`, `waves`, `planned_waves`, `evals`, `pairs`, `with` (the treatment), `without` (the control), `difference`, `cost_ratio`, `verdict`, `rule` and `below_floor`. The command reads one file and needs no project. Exit codes: 0, 2 for names that are not 2 different arms of the file, 3 for a file that is not a result of `--arms`. The command holds no rule of a protocol: [ADR 0029](adr/0029-protocol-of-the-model-team-measurement.md) gives the rules of the model team, and a person reads the numbers.
+`eval verdict --compare` gives the verdict of 2 arms of 1 or more results of `--arms`, with the bootstrap and the rules of [the verdict](#the-verdict). It joins the files by the id of the eval and the number of the run. The arms are the union of the arms of the files, and an eval plans the highest `runs` of the files. The command counts the complete waves on the joined result. A wave is complete when each eval of the joined result has that run in each arm of the union. Thus a missing run of a third arm also ends the count. It uses the complete waves only, and the pairs are the runs of the 2 arms for the same eval and run.
+
+It prints the difference and the cost ratio with their 90% intervals, the verdict, and the number of waves. With `--json` it prints `treatment`, `control`, `waves`, `planned_waves`, `evals`, `pairs`, `with` (the treatment), `without` (the control), `difference`, `cost_ratio`, `verdict`, `rule` and `below_floor`. Files with different versions of Claude Code give a note on stderr. The command needs no project.
+
+Exit codes:
+
+- 0: the command gives the verdict.
+- 2: the names are not 2 different arms of the files.
+- 3: a file is not a result of `--arms`, or the command cannot read it.
+- 3: 2 files hold the same run of one eval in one arm.
+
+The message of the last case is:
+
+```text
+--compare: the run <n> of `<eval>` in the arm `<arm>` is in 2 files: <file>, <file>
+```
+
+The command holds no rule of a protocol: [ADR 0029](adr/0029-protocol-of-the-model-team-measurement.md) gives the rules of the model team, and a person reads the numbers.
 
 ## The pack and the measure of a skill
 
@@ -390,18 +469,18 @@ These rules apply to both arms:
 - In the copy of a fixture, the runner writes the version of the binary into the pin line of `spec-dna.toml`, so a fixture does not give exit code 3 in each run.
 - The line of the adapter that the copy adds is the line of this binary, not the line of the project. The pin of the copy is the version of this binary, so a line of another version or build would give SD502 in the copy. The runner also sets `SD501 = "off"` and `SD502 = "off"` under `[rules]` in `spec-dna.toml` of the copy, in both arms. The arm `without` edits the generated lines and the adapter skill by design, and the adapter skill of the project lists the types of the project, not of the fixture. A table `[rules]` that the fixture has keeps its other keys. A plain `eval run` changes none of these files.
 - The `PATH` of the agent and of each check has the folder of the running binary first, so `spec-dna` in a copy is the binary under test.
-- An agent that runs more than 25 minutes, and a check that runs more than 5 minutes, are killed with their process group. The run counts as failed, with the subtype `timeout`, and it is no refusal. `SPEC_DNA_EVAL_TIMEOUT` (the agent) and `SPEC_DNA_EVAL_CHECK_TIMEOUT` (a check) set the limits in seconds, from 1 to 86,400. Another value is a usage error.
+- An agent that runs more than 25 minutes, and a check that runs more than 5 minutes, are killed with their process group. The run counts as failed, with the subtype `timeout`, and it is no refusal. A run whose agent the limit killed is [not whole](#a-run-that-is-not-whole). `SPEC_DNA_EVAL_TIMEOUT` (the agent) and `SPEC_DNA_EVAL_CHECK_TIMEOUT` (a check) set the limits in seconds, from 1 to 86,400. Another value is a usage error.
 - The working tree never changes.
 
 A pair is the same eval and the same run number in both arms. For each eval and run number, `with` runs first for an odd number, and `without` runs first for an even number. The runner runs one run at a time.
 
-The cap is checked before each run: if the spend and the `max-budget-usd` of the next run could pass `max-total-usd`, the run does not start. The command stops with `"stopped": "max-total-usd"` and exit code 3. The estimate is not a limit. If the estimate is above `max-total-usd`, the command prints a note on stderr (`note: the estimate <e> USD is above max-total-usd <c> USD; the run stops before a run that could pass the cap, and --resume goes on`) and starts. Thus a hard total can cover a plan of many targets, and `--resume` goes on from the partial result with more money. `eval run` without `--ab` keeps the refusal of [ADR 0008](adr/0008-harness-and-evals.md).
+The cap is checked before each run: if the spend and the `max-budget-usd` of the next run could pass `max-total-usd`, the run does not start. The command stops with `"stopped": "max-total-usd"` and exit code 3. The runner also checks [the free space](#free-space) before each run, and a stop by its floor keeps the complete pairs (`"stopped": "disk-space"`, exit code 3). The estimate is not a limit. If the estimate is above `max-total-usd`, the command prints a note on stderr (`note: the estimate <e> USD is above max-total-usd <c> USD; the run stops before a run that could pass the cap, and --resume goes on`) and starts. Thus a hard total can cover a plan of many targets, and `--resume` goes on from the partial result with more money. `eval run` without `--ab` keeps the refusal of [ADR 0008](adr/0008-harness-and-evals.md).
 
 `--dry-run` prints the number of runs, the estimate and the cap, also when the estimate is above the cap. It then says that a real run starts and stops before a run that could pass the cap, and the exit code is 0. With `--json`, the key `above_cap` is `true`.
 
 #### Stop and resume
 
-The runner writes the result file after each arm of a pair, with a hidden temporary file and a rename, so a kill loses no paid run. Until the end, the file says `"stopped": "interrupted"`. SIGHUP, SIGINT and SIGTERM stop the command: it kills the agent and its process group, removes the copy, writes the result with `"stopped": "interrupted"`, and exits with 129 (SIGHUP), 130 (SIGINT) or 143 (SIGTERM). A run of the agent that ended before the signal is in `spend_usd`. A Ctrl-C does not reach the git helpers of the runner, so an interrupt is never an error of git.
+The runner writes the result file after each arm of a pair, with a hidden temporary file and a rename, so a kill loses no paid run. Until the end, the file says `"stopped": "interrupted"`. SIGHUP, SIGINT and SIGTERM stop the command: it kills the agent and its process group, removes the copy, writes the result with `"stopped": "interrupted"`, and exits with 129 (SIGHUP), 130 (SIGINT) or 143 (SIGTERM). A run of the agent that ended before the signal is in `spend_usd`, with its cost, or with its budget when it is [not whole](#a-run-that-is-not-whole) and has no cost. A Ctrl-C does not reach the git helpers of the runner, so an interrupt is never an error of git.
 
 ```text
 spec-dna eval run --ab <target> --resume evals/results/skills-<time>.json --max-total-usd <n>
@@ -411,13 +490,15 @@ spec-dna eval run --ab <target> --resume evals/results/skills-<time>.json --max-
 
 ### Runs that the API refuses
 
-The runner treats a refused attempt as no run. A refused attempt is an account limit, a credit or a login problem, 401, 403, 429, a 5xx status, a page of Cloudflare or a lost connection. A result of `claude` with a `subtype` that starts with `error_max_` (the agent ran out of turns or budget) is never a refusal. A run that exits with code 0 and has no `"is_error": true` is never a refusal. Else an attempt is refused in these cases:
+The runner treats a refused attempt as no run. A refused attempt is an account limit, a credit or a login problem, 401, 403, 429, a 5xx status, a page of Cloudflare or a lost connection. A result of `claude` with a `subtype` that starts with `error_max_` (the agent ran out of turns or budget) is never a refusal. A run that exits with code 0 and has no `"is_error": true` is never a refusal. Else an attempt is refused in these cases, by its last `result` event:
 
 1. The result object has `"is_error": true` and an `api_error_status` of 401, 403, 429 or 500 to 599. The text does not matter, and it can be long.
 2. The result object has a `result` text with fewer than 600 bytes and a marker.
 3. There is no result object, and the stdout is empty. The exit code is not 0. The stderr gives the class. This is a decision of the design: an empty output is a failed connection more often than a failed run.
 4. There is no result object, the exit code is not 0, and the stdout is a text. A text with fewer than 600 bytes and a marker gives the class. Without a marker, the attempt is a silent error (see below): an agent never ends with a plain text.
 5. The result object has `"is_error": true`, no marker, and a cost of 0 or no cost: a silent error. A real agent run never costs 0.
+
+In the cases 3 and 4, an event of the stream is no part of the stdout. Thus an output with only an `init` event is empty, and the stderr gives the class.
 
 A marker is `API Error:` with the status 401, 403, 429 or 500 to 599, the word `429`, `hit your ... limit` (at most 40 characters between), `limit reached` together with `reset` (for example `5-hour limit reached ∙ resets 3pm`), a window of the account (`5-hour limit`, `weekly limit`, `session limit`, `opus limit`), or one of these phrases, in any case:
 
@@ -446,7 +527,7 @@ A 5-hour session window ends before the last retry of an account limit. `SPEC_DN
 
 ### The result file of `--ab`
 
-The runner writes `<dir>/skills-<YYYYMMDD>T<HHMMSS>Z.json` (the UTC time of the start), where `<dir>` is `<[evals] dir>/results` or the value of `--out`. A second file in the same second gets the suffix `-2`. The runner writes the text to a hidden temporary file in the folder and then gives it its final name, so a reader never sees a half file. The file is indented JSON. A stop by the cap, by `api-error` or by a git or file error (exit code 4) writes the partial result before the command exits, so the paid runs are not lost. It has no `pass_rate` at the top level, so `spec-dna stats --sdlc` does not count it as a result of `eval run`.
+The runner writes `<dir>/skills-<YYYYMMDD>T<HHMMSS>Z.json` (the UTC time of the start), where `<dir>` is `<[evals] dir>/results` or the value of `--out`. A second file in the same second gets the suffix `-2`. The runner writes the text to a hidden temporary file in the folder and then gives it its final name, so a reader never sees a half file. The file is indented JSON. A stop by the cap, by the floor of free space, by `api-error` or by a git or file error (exit code 4) writes the partial result before the command exits, so the paid runs are not lost. It has no `pass_rate` at the top level, so `spec-dna stats --sdlc` does not count it as a result of `eval run`.
 
 | Key | Content |
 | --- | --- |
@@ -455,11 +536,11 @@ The runner writes `<dir>/skills-<YYYYMMDD>T<HHMMSS>Z.json` (the UTC time of the 
 | `target`, `harness`, `runs`, `seed`, `resamples` | The target, the harness arm of the copies (`project` without `--harness`; a file of 0.7.1 has no key and reads as `project`), the value of `--runs` (`null` if each eval kept its own runs), 24 and 2,000 |
 | `max_total_usd`, `estimate_usd`, `spend_usd` | The cap, the estimate and the spend. The spend includes the excluded attempts |
 | `excluded` | `{"with": n, "without": n}`, the excluded attempts of each arm |
-| `stopped` | `null`, `"max-total-usd"`, `"api-error"`, `"error"` (a git or file error) or `"interrupted"` (SIGINT, SIGTERM, or a file that the runner writes during the run) |
+| `stopped` | `null`, `"max-total-usd"`, `"disk-space"` ([the floor of free space](#free-space)), `"api-error"`, `"error"` (a git or file error) or `"interrupted"` (SIGINT, SIGTERM, or a file that the runner writes during the run) |
 | `error` | Only when `stopped` is `"error"`: the first line of the message of the git or file error, with no path of the machine |
 | `skills` | One item for each skill, or one item `agents-line` |
 
-An item of `skills` has `name`, `evals`, `with`, `without`, `difference`, `cost_ratio`, `verdict`, `rule`, `below_floor` and `pairs`. An arm has `runs`, `passes`, `pass_rate`, `cost_usd` and `cost_per_correct_usd` (`null` with no pass). `difference` and `cost_ratio` have `value`, `low` and `high`, the 90% interval. `cost_ratio` is `null` when it is undefined. A pair has `eval`, `run`, `with` and `without`. Each side has `claude_exit`, `subtype` (`timeout` for a run that a time limit killed), `cost_usd`, `excluded`, `permission_denials`, `passed`, `tokens`, `models`, `checks`, `turns` and `seconds`. `tokens` is `{"in","out","cache_read","cache_write"}`, the sums over the entries of `modelUsage` of `inputTokens`, `outputTokens`, `cacheReadInputTokens` and `cacheCreationInputTokens` (a field that is absent counts 0), or `null` if `modelUsage` is absent or a count is not an integer of 0 or more. `models` is the sorted list of the names in `modelUsage` of that run. `checks` is a list of `{"name","passed"}`, one for each check of the eval: the names and the results, with no command and no output. `turns` is the `num_turns` of the result of `claude`, or `null`, and `seconds` is the wall time of the process with 1 decimal. A result file that an older binary wrote has none of these 5 keys. `--resume` reads such a side as `null`, an empty list, an empty list, `null` and `null`. A side is `null` when its arm did not run, because the run stopped after the other arm. The analysis counts complete pairs only. After a stop, the item of a skill that has not all its pairs has `"verdict": null`. The file has no task text, no check command, no output text of `claude` and no path of the machine.
+An item of `skills` has `name`, `evals`, `with`, `without`, `difference`, `cost_ratio`, `verdict`, `rule`, `below_floor` and `pairs`. An arm has `runs`, `passes`, `pass_rate`, `cost_usd` and `cost_per_correct_usd` (`null` with no pass). `difference` and `cost_ratio` have `value`, `low` and `high`, the 90% interval. `cost_ratio` is `null` when it is undefined. A pair has `eval`, `run`, `with` and `without`. Each side has `claude_exit`, `subtype` (`timeout` for a run that a time limit killed), `cost_usd`, `excluded`, `permission_denials`, `passed`, `tokens`, `models`, `checks`, `turns`, `segments` and `seconds`. `tokens` is `{"in","out","cache_read","cache_write"}`, the sums over the entries of `modelUsage` of `inputTokens`, `outputTokens`, `cacheReadInputTokens` and `cacheCreationInputTokens` (a field that is absent counts 0), or `null` if `modelUsage` is absent or a count is not an integer of 0 or more. `models` is the sorted list of the names in `modelUsage` of that run. `checks` is a list of `{"name","passed"}`, one for each check of the eval: the names and the results, with no command and no output. `seconds` is the wall time of the process with 1 decimal. [Turns and segments](#turns-and-segments) gives `turns` and `segments`. A result file of 0.7.1 or earlier can lack `tokens`, `models`, `checks`, `turns`, `segments` and `seconds`, and a file of 0.8.0 lacks `segments`. `--resume` reads an absent `models` or `checks` as an empty list, and each other absent key as `null`. A side is `null` when its arm did not run, because the run stopped after the other arm. The analysis counts complete pairs only. After a stop, the item of a skill that has not all its pairs has `"verdict": null`. The file has no task text, no check command, no output text of `claude` and no path of the machine.
 
 ### The verdict
 
@@ -500,7 +581,7 @@ The estimate of a target is the sum of `runs x 2 arms x max-budget-usd` of its e
 
 ### The records of a release
 
-A release keeps the result of its runs as records in `bench/results/evals/`. A record is one line of compact JSON for each run of each arm. It has 9 keys, in this order, and a record of a result of 0.8.0 has 3 more keys after them (see the end of this section). It has no other key:
+A release keeps the result of its runs as records in `bench/results/evals/`. A record is one line of compact JSON for each run of each arm. It has 9 keys, in this order, and a record of a result of 0.8.0 or later has 3 more keys after them (see the end of this section). It has no other key:
 
 | Key | Value |
 | --- | --- |
@@ -516,9 +597,9 @@ A release keeps the result of its runs as records in `bench/results/evals/`. A r
 
 A record has no path, no text, no check name and no clock time. The pair is `eval` and `run`.
 
-A result of 0.8.0 gives records of 12 keys: the 9 keys, and then `harness`, `turns` and `seconds`, in this order. `harness` is the harness arm of the copy (`project` or a built-in name), `turns` is an integer or `null`, and `seconds` is a duration in seconds (a number from 0 to 10,000,000, or `null`). A duration is allowed in a record: [ADR 0021](adr/0021-eval-records-and-the-cap.md) means no clock time and no date. A result of 0.7.x has no such keys, so its records keep 9 keys, and a reader of the records reads a record of 9 keys as `project`, `null`, `null`. A negative `seconds`, a `turns` that is not an integer of 0 or more, and a `harness` that is not the name of an arm stop the import. The test of the table of the release reads both forms.
+A result of 0.8.0 or later gives records of 12 keys: the 9 keys, and then `harness`, `turns` and `seconds`, in this order. A record has no `segments`. A record of a result of 0.8.0 holds [the turns](#turns-and-segments) of the last segment only. The records of the batch of protocol 2 hold the count of the transcript ([the results](team-measurement-2.md#limits)). `harness` is the harness arm of the copy (`project` or a built-in name), `turns` is an integer or `null`, and `seconds` is a duration in seconds (a number from 0 to 10,000,000, or `null`). A duration is allowed in a record: [ADR 0021](adr/0021-eval-records-and-the-cap.md) means no clock time and no date. A result of 0.7.x has no such keys, so its records keep 9 keys, and a reader of the records reads a record of 9 keys as `project`, `null`, `null`. A negative `seconds`, a `turns` that is not an integer of 0 or more, and a `harness` that is not the name of an arm stop the import. The test of the table of the release reads both forms.
 
-A result of `eval run --arms` gives one record for each run of each arm, with the 12 keys. The `skill` is `harness`, the `arm` is the name of the arm, and `harness` is the same name. A side that did not run has no record, and a record of a partial wave stays in the file: the analysis drops it (`eval verdict --compare`). The test of the table of the release skips the skill `harness`, so a batch of `--arms` never enters the table of the skills. A batch of `--arms` goes to `bench/results/evals/<stamp>-harness.jsonl`.
+A result of `eval run --arms` gives one record for each run of each arm, with the 12 keys. The `skill` is `harness`, the `arm` is the name of the arm, and `harness` is the same name. A side that did not run has no record, and a record of a partial wave stays in the file: the analysis drops it (`eval verdict --compare`). The test of the table of the release skips the skill `harness`, so a batch of `--arms` never enters the table of the skills. A batch of `--arms` goes to `bench/results/evals/<stamp>-harness.jsonl`. `eval records` reads a result of `--arms` with 1 to 3 arms.
 
 The result files of the pilot (0.7.0) had no token counts, because the runner of the pilot kept one list of models for each file and no `tokens`. In 0.7.1 the records of the 200 runs of the pilot got their `tokens` from the transcripts of the pilot runs. The entry `cost-state` of a transcript holds the `modelUsage` and the total cost of the run, so the sums are those that the runner of this release writes (`in`, `out`, `cache_read`, `cache_write`). Each record matches one transcript of its own batch by its cost, and the same match gives the same counts for the 330 records of the later batches that have tokens. The models of a pilot record stay the list of its result file. A record can still have `"tokens": null` (a result file with no `modelUsage`), and `eval records` and the verdict read the field with a check for `null`.
 
@@ -528,7 +609,7 @@ spec-dna eval records <result file>
 
 `eval records` reads one result file of `--ab` or of `--arms` and prints its records on stdout. It prints `eval records: <n> records of <k> names (<names>)` on stderr. A person writes the output to `bench/results/evals/<stamp>-<target>.jsonl`, where `<stamp>` is the stamp of the name of the result file. A file of the records is a batch.
 
-The command builds each record from 9 values (12 for a result of 0.8.0), and it never copies an object of the input. A value outside its form stops the command, and the message names the key and never the value. A string that has the shape of a secret or of a path of a machine (`sk-`, `ghp_`, `AKIA`, `-----BEGIN`, `Users/`, `/private/`, `/home/` or `@`) is outside its form too. The command refuses a file over 16 MiB before it reads it. After the command builds the records, it computes each item again from them. It compares the result with the item of the file: the runs, the passes, the sums of the costs, the interval of the difference, the interval of the cost ratio, the verdict and the rule. A run with `cost` `null` counts the `max-budget-usd` of its eval in the pack of the binary. A mismatch stops the command, and it prints no record. A summary of 0.8.0 has `below_floor`, and the comparison applies the floor of the verdict. A summary of 0.7.x has no such key and follows the rules of D33 only. A result of `--arms` has no summary, so the command checks each value against its form only. The command takes one file and no option. Exit codes: 0, 2 for a usage error, and 3 for a file that is not a result of `--ab` or `--arms`, an item with no verdict (the run is not complete; finish it with `--resume`), a value outside its form or a failed comparison.
+The command builds each record from 9 values (12 for a result of 0.8.0 or later), and it never copies an object of the input. A value outside its form stops the command, and the message names the key and never the value. A string that has the shape of a secret or of a path of a machine (`sk-`, `ghp_`, `AKIA`, `-----BEGIN`, `Users/`, `/private/`, `/home/` or `@`) is outside its form too. The command refuses a file over 16 MiB before it reads it. After the command builds the records, it computes each item again from them. It compares the result with the item of the file: the runs, the passes, the sums of the costs, the interval of the difference, the interval of the cost ratio, the verdict and the rule. A run with `cost` `null` counts the `max-budget-usd` of its eval in the pack of the binary. A mismatch stops the command, and it prints no record. A summary of 0.8.0 has `below_floor`, and the comparison applies the floor of the verdict. A summary of 0.7.x has no such key and follows the rules of D33 only. A result of `--arms` has no summary, so the command checks each value against its form only. The command takes one file and no option. Exit codes: 0, 2 for a usage error, and 3 for a file that is not a result of `--ab` or `--arms`, an item with no verdict (the run is not complete; finish it with `--resume`), a value outside its form or a failed comparison.
 
 The binary holds the table of the release as the constant `verdict::RELEASE`, and not the records. For each name, the newest batch that has records of the name gives the row. Thus a confirmation batch must give a verdict alone: the batch of an earlier run does not add to it. A test reads the records on the disk, computes the table with the same functions, and compares it with the constant. If they differ, the test prints the text of the constant. `eval verdict --release` prints the table.
 

@@ -1,0 +1,97 @@
+format = 2
+change = "eval-runner"
+scope = ["CHANGELOG.md", "docs/adr/0030-harness-arms-time-record-and-verdict-floor.md", "docs/commands.md", "docs/config.md", "docs/design/0.8.1-a-lifecycle-and-harness.md", "docs/evals.md", "schema/spec-dna.schema.json", "src/config.rs", "src/eval_ab.rs", "src/eval_pack.rs", "src/eval_records.rs", "src/eval_run.rs", "src/evals.rs", "src/init.rs", "src/main.rs", "src/verdict.rs", "tests/eval_ab.rs", "tests/eval_records.rs", "tests/eval_run.rs", "tests/init_profiles.rs"]
+paths = ["src/config.rs", "src/eval_ab.rs", "src/eval_pack.rs", "src/eval_records.rs", "src/eval_run.rs", "src/evals.rs", "src/init.rs", "src/main.rs", "src/verdict.rs", "tests/eval_ab.rs", "tests/eval_records.rs", "tests/eval_run.rs", "tests/init_profiles.rs"]
+tree = "ba7d1ec64a7b3778"
+result = "accepted"
+acknowledged-by = []
+
+[[acceptor]]
+roles = ["acceptor"]
+brief = "6e930b6758d0eff3"
+session = "c51acbf1-5aed-497f-8ed7-0e87fb4f43ac"
+agent = "acceptor"
+model = "claude-opus-5-5"
+result = "accepted"
+
+[[attempt]]
+acceptor = 1
+text = "New pass after the rebase. An earlier record (commit 41c0b4b) had the result accepted, but the rebase onto master, which merged the change advisor-default (b792a9c), made it stale: finish gave SD929, and d09b108 reverted the finish. The code delta from 41c0b4b to HEAD (src, tests) has the same patch id as the code of b792a9c, so the rebase changed no line of eval-runner and solved no conflict in code. Proof: cargo test --test eval_run (77 passed, with the guard of advisor-default the_copy_of_the_arm_lean_has_the_advisor), --test eval_ab (116), --test eval_records (25), --test init_profiles (38, with reconfigure_keeps_min_free_mib_when_it_is_not_the_default and the 17 other reconfigure tests), the unit tests eval_run:: (28), verdict:: (35, 2 ignored simulations), config:: (129), init:: (19), evals:: (16), eval_pack:: (5), eval_ab:: (7) and harness:: (59), one at a time. cargo fmt --check, cargo clippy --all-targets -- -D warnings, pre-commit run --all-files and check --all (0 errors, no SD102, no SD602) pass. The binaries of advisor-default also pass: cli (132), upgrade_cli (90), harness_roles (34), harness (45), generated_lint (2). No full cargo test (rule of the session)."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Reconfigure moves the advisor (D97) and keeps the floor (D100), in scratch repositories: standard (advisor none) with min-free-mib 512 and the answer profile strict gives advisor fable, fallback-advisor.md, advisorModel in settings.json, and min-free-mib 512 once with its comment. strict (fable) with 0 to standard gives advisor none, no fallback-advisor.md, and 0 kept. strict with 20000 to lite keeps 20000. check exits 0 in each."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Other answers with a floor: harness-models [\"advisor=fable\"] and profile lite in a standard project with 512 give advisor fable (the answer to question 13 wins) and keep 512. harness none keeps the floor (question 14 keeps the current state). evals none with profile strict removes the table with its note and moves the advisor. evals skeleton alone keeps 3000. The preview of --dry-run and the --json output show the line. A later upgrade (nothing to change) and a plain init keep each byte of spec-dna.toml."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "A file with min-free-mib = 2048 (the default) and the answer profile strict: the advisor moves to fable and the line goes away with no note. The value in force stays 2048, and docs/config.md says that init --reconfigure keeps a value that is not the default. See the note on src/init.rs."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Eval arms and the advisor default: in a new standard project (advisor none, floor 3000 kept by reconfigure), eval run --arms lean alone writes a copy with advisorModel fable, fallback-advisor.md and the advisor sentence in CLAUDE.md. --arms lean-no-advisor alone writes no advisorModel, no fallback-advisor.md and no sentence. The role of the project does not reach a built-in arm. A stub with 2 result events (3 and 2 turns) gives turns 5 and segments 2 in each arm."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Join of the 2 one-arm files: eval verdict --compare lean,lean-no-advisor gives 1 pair, inconclusive and below the floor, and the reverse order works. The same file twice gives exit code 3 and names the run in 2 files. An arm full that no file has gives exit code 2. eval records of the file of lean-no-advisor gives 1 record with 12 keys, turns 5 and harness lean-no-advisor."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "The floor that reconfigure kept reaches the runner: a stub df with 2,500,000 KiB free (2441 MiB, above the default 2048 and below the kept 3000) stops --arms lean,lean-no-advisor before a run: exit code 3, stopped disk-space, spend 0, no call of the stub claude, and the message names the folder, the key and 3000. --resume with space runs both arms, and df reads the temporary folder and the folder of the result before each attempt."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Docs of the 2 changes together: docs/evals.md keeps the arm table of advisor-default (lean is not the team of a new project) beside the text of 1 arm and of --compare. No page of docs/ outside the design and the ADR history says that --arms takes 2 or 3 arms, and ADR 0030 has the dated amendment. CHANGELOG.md has the entries of both changes. The df call passes the folder as an argument, with no shell."
+outcome = "held"
+
+[[finding]]
+acceptor = 1
+severity = "note"
+path = "src/init.rs"
+line = 578
+text = "init --reconfigure removes a line min-free-mib = 2048 that a person wrote, with no note, also in a reconfigure that moves the advisor. The value in force does not change today, and docs/config.md states the rule. But if a later release changes the default, the project gets the new floor although the person had written one. The key acceptance-for keeps a value equal to the default for this reason (D70)."
+
+[[finding]]
+acceptor = 1
+severity = "note"
+path = "tests/init_profiles.rs"
+line = 754
+text = "The test of the floor runs reconfigure with the same profile (standard to standard), so the advisor does not move. No test combines a move of the advisor by question 1 with a floor that is not the default. The manual tries of this record show that both hold, but a later change of apply_preset or of the evals table can break one with no failing test."
+
+[[finding]]
+acceptor = 1
+severity = "note"
+path = "src/eval_run.rs"
+line = 973
+text = "Still open from the earlier pass (the code did not change): a signal to the runner while the agent runs gives charged 0 and drops the stream, so a result event that reported 1.5 USD before a SIGINT is not in spend_usd. 0.8.0 does the same, and docs/evals.md states that only a run that ended before the signal is in the spend. The owner can confirm the scope of the cost rule of the Concerns of the spec."
+
+[[finding]]
+acceptor = 1
+severity = "note"
+path = "src/eval_ab.rs"
+line = 2407
+text = "Still open from the earlier pass: the text output of --arms counts a side with cost_usd null as 0 USD, but the spend and the verdict count its budget (repro: 0.10 USD for the arm, spend 1.10). The formula is that of 0.8.0, but more runs now have cost_usd null."
+
+[[finding]]
+acceptor = 1
+severity = "note"
+path = "src/eval_ab.rs"
+line = 872
+text = "Still open from the earlier pass: an agent that ran (assistant events) and that a signal or a lost connection ends with no result event is a refusal, so --ab and --arms count 0 USD and run again. 0.8.0 does the same, and docs/evals.md states the rule for a refused attempt."
+
+[[finding]]
+acceptor = 1
+severity = "note"
+path = "src/eval_run.rs"
+line = 1537
+text = "Still open from the earlier pass: the cut rule depends on the shape of the real stream, which no run kept (Q6). If a whole run ends with an assistant or user event after its last result event, each such run gets cost_usd null and counts its budget, so the cost of an arm rises. The repro run of part B can check this."

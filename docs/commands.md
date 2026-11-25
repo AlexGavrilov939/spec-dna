@@ -1123,10 +1123,10 @@ spec-dna index <dir or file> [--replace]
 ```text
 spec-dna eval run [<id>...] [--runs <n>] [--min-pass-rate <r>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate] [--harness <arm>]
 spec-dna eval run --ab <skill|all|agents-line|accept> [--harness <arm>] [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--isolate | --no-isolate] [--resume <result file>] [--json]
-spec-dna eval run --arms <arm>,<arm>[,<arm>] [<id>...] [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--resume <result file>] [--json]
+spec-dna eval run --arms <arm>[,<arm>[,<arm>]] [<id>...] [--runs <n>] [--max-total-usd <n>] [--out <dir>] [--dry-run] [--resume <result file>] [--json]
 spec-dna eval pack
 spec-dna eval verdict [--release] [--json]
-spec-dna eval verdict --compare <treatment>,<control> <result file> [--json]
+spec-dna eval verdict --compare <treatment>,<control> <result file>... [--json]
 spec-dna eval records <result file>
 ```
 
@@ -1150,7 +1150,7 @@ spec-dna itself makes no network call. `claude` makes network calls, and each ru
 | `--json` | Prints the result as one JSON object, and no text |
 | `--ab <target>` | Runs the evals of the pack in 2 arms, with the skill and without it. See [eval run --ab](#eval-run---ab) |
 | `--harness <arm>` | Gives the copy of each run a harness arm (`none`, `lean`, `lean-no-advisor`, `full` or `project`) in place of the harness files of the project. It isolates the runs, so `--no-isolate` with it is a usage error. See [eval run --arms](#eval-run---arms) |
-| `--arms <arm>,<arm>[,<arm>]` | Runs the plain evals in 2 or 3 harness arms, in waves. See [eval run --arms](#eval-run---arms) |
+| `--arms <arm>[,<arm>[,<arm>]]` | Runs the plain evals in 1 to 3 harness arms, in waves. See [eval run --arms](#eval-run---arms) |
 
 ### Exit codes
 
@@ -1158,8 +1158,8 @@ spec-dna itself makes no network call. `claude` makes network calls, and each ru
 | --- | --- |
 | 0 | The pass rate is at least `min-pass-rate`. Also `--dry-run` |
 | 1 | The pass rate is lower |
-| 2 | Usage error: a bad option value, an unknown id, `--out` that is `[evals] dir`, or no `run` subcommand. Also an unknown harness arm, 1 arm or more than 3 with `--arms`, `--arms` with `--ab`, `--no-isolate` with `--arms` or `--harness`, the target `accept` with no harness arm (`--harness lean`, `lean-no-advisor` or `full`), and the target `accept` when `python3` has no module `tomllib` |
-| 3 | No `[evals]` table, an invalid eval file (also `change` with no `branch`), no eval, an absent `check.sh`, a different version pin, an estimate above the cap, a stop by the cap, or a `claude` that is absent or cannot start |
+| 2 | Usage error: a bad option value, an unknown id, `--out` that is `[evals] dir`, or no `run` subcommand. Also an unknown harness arm, no arm or more than 3 with `--arms`, `--arms` with `--ab`, `--no-isolate` with `--arms` or `--harness`, the target `accept` with no harness arm (`--harness lean`, `lean-no-advisor` or `full`), and the target `accept` when `python3` has no module `tomllib` |
+| 3 | No `[evals]` table, an invalid eval file (also `change` with no `branch`), no eval, an absent `check.sh`, a different version pin, an estimate above the cap, a stop by the cap or by the floor of free space ([evals.md](evals.md#free-space)), or a `claude` that is absent or cannot start |
 | 4 | A git or file error of `eval run` itself: the temporary folder, the copy, the base commit, the commit of the change or the result file |
 
 A plain `eval run` with `--harness` keeps the meaning of exit code 1: the pass rate is below `min-pass-rate`. A run of `--arms` gives no pass rate, so it never exits with 1.
@@ -1174,21 +1174,21 @@ A plain `eval run` with `--harness` keeps the meaning of exit code 1: the pass r
 | --- | --- |
 | 0 | The target is complete, with any verdict. Also `--dry-run`, also with an estimate above the cap |
 | 2 | Usage error: no target, more than one target, an unknown target, `--min-pass-rate`, a bad value of `SPEC_DNA_EVAL_BACKOFF`, an unknown harness arm, `--no-isolate` with `--harness`, or a `--resume` file that has another harness |
-| 3 | No `[evals]` table, an invalid file of the pack, no eval for the target, an absent `check.sh`, a different version pin, a stop by the cap, a stop by `api-error`, or a `claude` that is absent or cannot start |
+| 3 | No `[evals]` table, an invalid file of the pack, no eval for the target, an absent `check.sh`, a different version pin, a stop by the cap, a stop by the floor of free space, a stop by `api-error`, or a `claude` that is absent or cannot start |
 | 4 | A git or file error: the temporary folder, the copy, the base commit or the result file. After the first run, the command writes the partial result (`"stopped": "error"`) before it exits |
 | 129, 130, 143 | SIGHUP, SIGINT or SIGTERM. The partial result is written first |
 
 ### eval run --arms
 
-`eval run --arms <arm>,<arm>[,<arm>] [<id>...]` runs the plain evals of `[evals] dir` in 2 or 3 harness arms ([ADR 0030](adr/0030-harness-arms-time-record-and-verdict-floor.md)). An arm is `none`, `lean`, `lean-no-advisor`, `full` or `project`. The runner writes the harness of the arm into the copy of each run, and passes `--model` and `--effort` of the orchestrator of `lean` to each arm, also `project`. It runs in waves: wave `r` runs each eval once in each arm, and the order of the arms rotates by `(eval index + r) mod arms`. It writes `<[evals] dir>/results/arms-<time>.json`, with one side for each arm of each eval and run.
+`eval run --arms <arm>[,<arm>[,<arm>]] [<id>...]` runs the plain evals of `[evals] dir` in 1 to 3 harness arms ([ADR 0030](adr/0030-harness-arms-time-record-and-verdict-floor.md)). With 1 arm, each wave runs each eval once in that arm, so the arms of one eval can run as separate commands. An arm is `none`, `lean`, `lean-no-advisor`, `full` or `project`. The runner writes the harness of the arm into the copy of each run, and passes `--model` and `--effort` of the orchestrator of `lean` to each arm, also `project`. It runs in waves: wave `r` runs each eval once in each arm, and the order of the arms rotates by `(eval index + r) mod arms`. It writes `<[evals] dir>/results/arms-<time>.json`, with one side for each arm of each eval and run.
 
-A stop by the cap keeps the complete waves. The command accepts `--runs`, `--max-total-usd`, `--out`, `--dry-run`, `--json` and `--resume <result file>` (the same arms in the same order, and the evals of the file). It always isolates the runs. [evals.md](evals.md#harness-arms) gives the arms, the result file and the records.
+A stop by the cap or by the floor of free space keeps the complete waves. The command accepts `--runs`, `--max-total-usd`, `--out`, `--dry-run`, `--json` and `--resume <result file>` (the same arms in the same order, and the evals of the file). It always isolates the runs. [evals.md](evals.md#harness-arms) gives the arms, the result file and the records.
 
 | Code | Meaning of `eval run --arms` |
 | --- | --- |
 | 0 | Each planned run is done. Also `--dry-run`. The command never exits with 1, because it gives no pass rate |
-| 2 | Usage error: an unknown arm, 1 arm or more than 3, an arm twice, `--arms` with `--ab` or `--harness`, `--min-pass-rate`, `--no-isolate`, an unknown id, an id that the `--resume` file does not have, or a `--resume` file with other arms |
-| 3 | No `[evals]` table, an invalid eval file, no eval, an absent `check.sh`, a different version pin, a stop by the cap or by `api-error`, or a `claude` that is absent or cannot start |
+| 2 | Usage error: an unknown arm, no arm or more than 3, an arm twice, `--arms` with `--ab` or `--harness`, `--min-pass-rate`, `--no-isolate`, an unknown id, an id that the `--resume` file does not have, or a `--resume` file with other arms |
+| 3 | No `[evals]` table, an invalid eval file, no eval, an absent `check.sh`, a different version pin, a stop by the cap, by the floor of free space or by `api-error`, or a `claude` that is absent or cannot start |
 | 4 | A git or file error. The command writes the partial result before it exits |
 | 129, 130, 143 | SIGHUP, SIGINT or SIGTERM. The partial result is written first |
 
@@ -1202,7 +1202,7 @@ A stop by the cap keeps the complete waves. The command accepts `--runs`, `--max
 
 `eval verdict --release` prints the table of the release instead: one line for each name that has a row, with the verdict, the rule, the runs and passes of each arm, the costs, the 2 intervals, the batch and the version of Claude Code. With `--json`, it prints `{"release":[...]}`. It reads the binary only, and it needs no project. [evals.md](evals.md#the-records-of-a-release) gives the form.
 
-`eval verdict --compare <treatment>,<control> <result file>` gives the verdict of 2 arms of a result of `eval run --arms`, with the bootstrap, the rules and the floor of the verdict of a skill, on the complete waves. It prints both intervals and the number of waves, and with `--json` the item `{"treatment","control","waves","planned_waves","evals","pairs","with","without","difference","cost_ratio","verdict","rule","below_floor"}`. Exit code 0; 2 for names that are not 2 different arms of the file, a missing file argument, or `--release`; 3 for a file that cannot be read or that is no result of `--arms` (a file that names an arm, an eval or a run twice, or has a negative cost, is none). It needs no project. A verdict needs 5 evals and 15 complete pairs. Below that, it is `inconclusive` with `"below_floor": true`, and the item of `eval verdict --json` and of `--ab` has the same key.
+`eval verdict --compare <treatment>,<control> <result file>...` gives the verdict of 2 arms of 1 or more results of `eval run --arms`, with the bootstrap, the rules and the floor of the verdict of a skill, on the complete waves. It joins the files by the eval and the number of the run ([evals.md](evals.md#--arms)). It prints both intervals and the number of waves, and with `--json` the item `{"treatment","control","waves","planned_waves","evals","pairs","with","without","difference","cost_ratio","verdict","rule","below_floor"}`. Exit code 0; 2 for names that are not 2 different arms of the files, a missing file argument, or `--release`; 3 for a file that cannot be read or that is no result of `--arms` (a file that names an arm, an eval or a run twice, or has a negative cost, is none), and for a run of one eval in one arm that 2 files hold. It needs no project. A verdict needs 5 evals and 15 complete pairs. Below that, it is `inconclusive` with `"below_floor": true`, and the item of `eval verdict --json` and of `--ab` has the same key.
 
 ### eval records
 
@@ -1518,8 +1518,8 @@ An unknown layout stops with exit code 3 and writes nothing: `.specify/` or `spe
 | --- | --- |
 | 0 | Success. For `check`: no new error (with `--all`: no error). For `eval run`: the pass rate is at least `min-pass-rate`. `hook` always exits with 0 |
 | 1 | `check` found a new error (with `--all`: any error), `evidence stamp` found an unreadable report or no report, the preservation check of `mv`, `history` or `index` refused the change, the guard of `refresh` refused a document, a step of `finish` stopped, `approve` refused (steps 3 to 7), `accept` refused (an edit that `HEAD` does not have, a change with no plan or no intent, or a changed code), `upgrade` or `import` refused or its proof failed, or the pass rate of `eval run` is below `min-pass-rate` |
-| 2 | Usage error. Also a refusal of `layer add` (it changes nothing), an unknown `--group` of `status`, `stats` or `context`, `stats` without `--sdlc`, an unknown id or an unknown harness arm of `eval run`, `--arms` with 1 arm or more than 3, `--arms` with `--ab`, `--no-isolate` with `--arms` or `--harness`, a `--compare` that is not 2 arms of its file, an `index` of a place that gives no type, a `refresh` with `--all` and `--holds`, with no id, or with an id that is not a roll-up document, a `finish` with a `--holds` id that is no due roll-up document, a `new summary` of an area that has no folder, a `new` or `mv` into an area that differs from a name of `areas` only in case, and an `import` with a missing layer for a type that it writes or for `--keep research` |
-| 3 | Configuration error: no valid `spec-dna.toml` (also 2 names in `areas` that differ only in case, `evidence stamp` with no `[evidence] reports`, a glob of `[evidence] reports` that is absolute or has `..`, or `[evidence] reliable-for` other than `none` with no `reports`), a different version pin, an unknown base revision (for `log`: an unknown `--since`), or no git repository. For `check`: also a base that pins a version before 0.4.0, or that `upgrade` cannot plan. For `upgrade`: also a form that it cannot edit, or a bad `--pin-file`. For `finish`: also an `accepted` change with no base. For `import`: no project, an unknown layout or a bad file of `--areas`. For `eval run`: also an invalid eval, an estimate above the cap, a stop by the cap, or a `claude` that is absent. For `eval verdict --compare`: a file that is no result of `eval run --arms` |
+| 2 | Usage error. Also a refusal of `layer add` (it changes nothing), an unknown `--group` of `status`, `stats` or `context`, `stats` without `--sdlc`, an unknown id or an unknown harness arm of `eval run`, `--arms` with no arm or more than 3, `--arms` with `--ab`, `--no-isolate` with `--arms` or `--harness`, a `--compare` that is not 2 arms of its files, an `index` of a place that gives no type, a `refresh` with `--all` and `--holds`, with no id, or with an id that is not a roll-up document, a `finish` with a `--holds` id that is no due roll-up document, a `new summary` of an area that has no folder, a `new` or `mv` into an area that differs from a name of `areas` only in case, and an `import` with a missing layer for a type that it writes or for `--keep research` |
+| 3 | Configuration error: no valid `spec-dna.toml` (also 2 names in `areas` that differ only in case, `evidence stamp` with no `[evidence] reports`, a glob of `[evidence] reports` that is absolute or has `..`, or `[evidence] reliable-for` other than `none` with no `reports`), a different version pin, an unknown base revision (for `log`: an unknown `--since`), or no git repository. For `check`: also a base that pins a version before 0.4.0, or that `upgrade` cannot plan. For `upgrade`: also a form that it cannot edit, or a bad `--pin-file`. For `finish`: also an `accepted` change with no base. For `import`: no project, an unknown layout or a bad file of `--areas`. For `eval run`, `--ab` and `--arms`: also an invalid eval, an estimate above the cap, a stop by the cap or by the floor of free space, or a `claude` that is absent. For `eval verdict --compare`: a file that is no result of `eval run --arms`, or a run of one eval in one arm that 2 files hold |
 | 4 | Git or file system error. For `finish`: a write failed, and the message lists the files. For `approve`: the commit failed, and the file has its old text. For `import`: a failed `git mv` or write, and the message gives the commands that restore the tree. For `eval run`: the temporary folder, the copy, the base commit or the result file. For `evidence stamp` and `check --reports`: a folder of reports that exists and cannot be read |
 | 5 | A target names no document, section or requirement. For `refresh`: an id names no document. For `finish`, `next`, `approve` and `accept`: no folder for the slug, and for `approve` also no file of the artifact |
 

@@ -23,10 +23,10 @@ use crate::adapters::{self, VERSION};
 use crate::config::{Config, Evals, Profile};
 use crate::config_text::{insert_keys, k, set_value};
 use crate::eval_run::{
-    Ctx, EPS, HarnessArm, Limits, Planned, Refusal, RunResult, Tokens, catch_interrupts,
-    claude_version, first_wait, harness_list, interrupt_signal, load_evals, load_evals_in,
-    make_out_dir, normalize_out, now_secs, one_attempt, plan_eval, r6, replace_result, retry_waits,
-    select as select_ids, tokens_json, utc_time,
+    Ctx, EPS, Floor, HarnessArm, Limits, Low, Planned, Refusal, RunResult, Tokens,
+    catch_interrupts, claude_version, first_wait, harness_list, interrupt_signal, load_evals,
+    load_evals_in, make_out_dir, normalize_out, now_secs, one_attempt, plan_eval, r6,
+    replace_result, retry_waits, select as select_ids, shell_word, tokens_json, utc_time,
 };
 use crate::evals::{self, Eval};
 use crate::harness::{self, Level, Skill};
@@ -136,6 +136,9 @@ struct Side {
     checks: Vec<(String, bool)>,
     /// The `num_turns` of the run, if `claude` gave it (D58).
     turns: Option<u32>,
+    /// The number of result events of the run, its segments (D95). A side of
+    /// a result of 0.8.0 has none.
+    segments: Option<u32>,
     /// The wall time of the agent process. A side of a result of 0.7.1 has
     /// none.
     seconds: Option<f64>,
@@ -180,11 +183,14 @@ enum Stop {
     Error,
     /// SIGINT or SIGTERM ended the run.
     Interrupted,
+    /// A folder is below `[evals] min-free-mib` (D100).
+    DiskSpace,
 }
 
 impl Stop {
     fn name(self) -> &'static str {
         match self {
+            Stop::DiskSpace => "disk-space",
             Stop::MaxTotal => "max-total-usd",
             Stop::ApiError => "api-error",
             Stop::Error => "error",
@@ -368,6 +374,8 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
         excluded: vec![0, 0],
         models: BTreeSet::new(),
         streak: 0,
+        floor: result_floor(repo, table.min_free_mib, &out_dir, o.resume.as_deref()),
+        low: None,
     };
     let mut started = utc_time(now_secs());
     let mut written: Option<String> = None;
@@ -565,6 +573,8 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
     }
     let path = path?;
     eprintln!("eval run: the result is in {path}");
+    // The path in a command that a message prints is one word of a shell.
+    let hint = shell_word(&path);
     match stopped {
         None => Ok(0),
         Some(Stop::MaxTotal) => {
@@ -575,16 +585,22 @@ pub fn run(repo: &Repo, cfg: &Config, o: &Opts) -> Result<u8, Fatal> {
             Ok(3)
         }
         Some(Stop::Error) => unreachable!("an error returns above"),
+        Some(Stop::DiskSpace) => {
+            if let Some(low) = &state.low {
+                eprintln!("{}", low.message(Some(&path)));
+            }
+            Ok(3)
+        }
         Some(Stop::ApiError) => {
             eprintln!(
-                "eval run: stopped (api-error): the API refused the attempts and the waits are over, or 5 attempts in a row failed with an error and no cost; the partial result is written. Run the target again later with --resume {path}"
+                "eval run: stopped (api-error): the API refused the attempts and the waits are over, or 5 attempts in a row failed with an error and no cost; the partial result is written. Run the target again later with --resume {hint}"
             );
             Ok(3)
         }
         Some(Stop::Interrupted) => {
             let sig = interrupt_signal().unwrap_or(2);
             eprintln!(
-                "eval run: interrupted; the partial result is written. Go on with --resume {path}"
+                "eval run: interrupted; the partial result is written. Go on with --resume {hint}"
             );
             Ok((128 + sig) as u8)
         }
@@ -618,6 +634,10 @@ struct State {
     /// The excluded attempts in a row that are errors with no cost and no
     /// marker (`Refusal::Silent`). A real run resets it.
     streak: u32,
+    /// The check of the free space before each attempt (D100).
+    floor: Floor,
+    /// The folder that stopped the command with `Stop::DiskSpace`.
+    low: Option<Low>,
 }
 
 /// The excluded errors with no cost in a row that stop the command.
@@ -626,6 +646,20 @@ const STREAK_STOP: u32 = 5;
 enum Done {
     Counted(Side),
     Stop(Stop),
+}
+
+/// The check of the free space of a run of `--ab` or `--arms` (D100). The
+/// folder of the result is the folder of the file of `--resume`, which the
+/// command writes again, and else `out_dir`.
+fn result_floor(repo: &Repo, min_mib: u64, out_dir: &str, resume: Option<&str>) -> Floor {
+    let dir = match resume {
+        Some(file) => match Path::new(file).parent() {
+            Some(p) if !p.as_os_str().is_empty() => p.display().to_string(),
+            _ => ".".to_string(),
+        },
+        None => out_dir.to_string(),
+    };
+    Floor::new(min_mib, Some((repo.root.join(&dir), dir)))
 }
 
 /// Builds the result from the state.
@@ -800,6 +834,11 @@ fn run_side(ctx: &mut Ctx, state: &mut State, job: &Job) -> Result<Done, Fatal> 
         if state.spend + p.eval.max_budget_usd > state.cap + EPS {
             return Ok(Done::Stop(Stop::MaxTotal));
         }
+        // Before each attempt, also the new attempt after a refusal (D100).
+        if let Some(low) = state.floor.low() {
+            state.low = Some(low);
+            return Ok(Done::Stop(Stop::DiskSpace));
+        }
         eprintln!(
             "eval run: {} {} run {n} of {} ({})",
             job.label, p.eval.id, p.runs, job.arm_name
@@ -807,7 +846,7 @@ fn run_side(ctx: &mut Ctx, state: &mut State, job: &Job) -> Result<Done, Fatal> 
         let r: RunResult = one_attempt(ctx, p, job.edit, job.deny)?;
         if r.interrupted {
             // An agent run that ended before a check was interrupted is paid.
-            state.spend += r.cost.unwrap_or(0.0);
+            state.spend += r.charged;
             return Ok(Done::Stop(Stop::Interrupted));
         }
         state.models.extend(r.models.iter().cloned());
@@ -825,10 +864,12 @@ fn run_side(ctx: &mut Ctx, state: &mut State, job: &Job) -> Result<Done, Fatal> 
                 models: r.models,
                 checks: r.checks,
                 turns: r.turns,
+                segments: r.segments,
                 seconds: Some(r.seconds),
             }));
         };
-        state.spend += r.cost.unwrap_or(0.0);
+        // A refused attempt counts the cost that `claude` reports, or 0.
+        state.spend += r.reported.unwrap_or(0.0);
         state.excluded[job.arm_index] += 1;
         excluded += 1;
         account |= class == Refusal::Account;
@@ -957,6 +998,7 @@ fn read_side(v: &json::Value) -> Option<Side> {
             })
             .collect(),
         turns: num(v.get("turns")).map(|n| n as u32),
+        segments: num(v.get("segments")).map(|n| n as u32),
         seconds: num(v.get("seconds")),
     })
 }
@@ -1533,6 +1575,10 @@ fn side_json(s: &Option<Side>) -> String {
         Some(n) => obj.num("turns", n),
         None => obj.raw("turns", "null"),
     };
+    let obj = match s.segments {
+        Some(n) => obj.num("segments", n),
+        None => obj.raw("segments", "null"),
+    };
     match s.seconds {
         Some(x) => obj.num("seconds", x),
         None => obj.raw("seconds", "null"),
@@ -1735,16 +1781,16 @@ pub struct ArmsOpts {
     pub resume: Option<String>,
 }
 
-/// Reads the value of `--arms`: 2 or 3 different arm names. Another count, a
-/// name twice or an unknown name is a usage error.
+/// Reads the value of `--arms`: 1 to 3 different arm names (D100). Another
+/// count, a name twice or an unknown name is a usage error.
 pub fn parse_arms(list: &str) -> Result<Vec<HarnessArm>, Fatal> {
     let arms: Vec<HarnessArm> = list
         .split(',')
         .map(HarnessArm::parse)
         .collect::<Result<_, _>>()?;
-    if !(2..=3).contains(&arms.len()) {
+    if !(1..=3).contains(&arms.len()) {
         return Err(Fatal::Usage(format!(
-            "--arms takes 2 or 3 arms, got {}; use `--arms <arm>,<arm>[,<arm>]`",
+            "--arms takes 1 to 3 arms, got {}; use `--arms <arm>[,<arm>[,<arm>]]`",
             arms.len()
         )));
     }
@@ -1981,9 +2027,10 @@ fn read_arms_prior(v: &json::Value, plan: &[Planned], arms: &[HarnessArm]) -> (P
     (prior, runs)
 }
 
-/// `eval run --arms <arm>,<arm>[,<arm>] [<id>...]`: the plain evals of
-/// `[evals] dir` in 2 or 3 harness arms, in waves (D57). Wave `r` runs each
-/// eval once in each arm, and the order of the arms rotates (`rotation`). The
+/// `eval run --arms <arm>[,<arm>[,<arm>]] [<id>...]`: the plain evals of
+/// `[evals] dir` in 1 to 3 harness arms, in waves (D57, D100). Wave `r` runs
+/// each eval once in each arm, and the order of the arms rotates
+/// (`rotation`). With 1 arm, a wave runs each eval once in that arm. The
 /// result is `<dir>/results/arms-<time>.json`. A stop by the cap keeps the
 /// complete waves, and the analysis drops a partial wave. The command gives
 /// no pass rate, so it never exits with 1.
@@ -2120,6 +2167,8 @@ pub fn run_arms(repo: &Repo, cfg: &Config, o: &ArmsOpts) -> Result<u8, Fatal> {
         excluded: vec![0; o.arms.len()],
         models: BTreeSet::new(),
         streak: 0,
+        floor: result_floor(repo, table.min_free_mib, &out_dir, o.resume.as_deref()),
+        low: None,
     };
     let mut started = utc_time(now_secs());
     let mut written: Option<String> = None;
@@ -2289,6 +2338,8 @@ pub fn run_arms(repo: &Repo, cfg: &Config, o: &ArmsOpts) -> Result<u8, Fatal> {
     }
     let path = path?;
     eprintln!("eval run: the result is in {path}");
+    // The path in a command that a message prints is one word of a shell.
+    let hint = shell_word(&path);
     match stopped {
         None => Ok(0),
         Some(Stop::MaxTotal) => {
@@ -2299,9 +2350,15 @@ pub fn run_arms(repo: &Repo, cfg: &Config, o: &ArmsOpts) -> Result<u8, Fatal> {
             Ok(3)
         }
         Some(Stop::Error) => unreachable!("an error returns above"),
+        Some(Stop::DiskSpace) => {
+            if let Some(low) = &state.low {
+                eprintln!("{}", low.message(Some(&path)));
+            }
+            Ok(3)
+        }
         Some(Stop::ApiError) => {
             eprintln!(
-                "eval run: stopped (api-error): the API refused the attempts and the waits are over, or 5 attempts in a row failed with an error and no cost; the partial result is written. Run the arms again later with spec-dna eval run --arms {} --resume {path}",
+                "eval run: stopped (api-error): the API refused the attempts and the waits are over, or 5 attempts in a row failed with an error and no cost; the partial result is written. Run the arms again later with spec-dna eval run --arms {} --resume {hint}",
                 names.join(",")
             );
             Ok(3)
@@ -2309,7 +2366,7 @@ pub fn run_arms(repo: &Repo, cfg: &Config, o: &ArmsOpts) -> Result<u8, Fatal> {
         Some(Stop::Interrupted) => {
             let sig = interrupt_signal().unwrap_or(2);
             eprintln!(
-                "eval run: interrupted; the partial result is written. Go on with spec-dna eval run --arms {} --resume {path}",
+                "eval run: interrupted; the partial result is written. Go on with spec-dna eval run --arms {} --resume {hint}",
                 names.join(",")
             );
             Ok((128 + sig) as u8)
@@ -2346,7 +2403,8 @@ fn arms_text(
     for (i, arm) in meta.arms.iter().enumerate() {
         let sides: Vec<&Side> = runs.iter().filter_map(|r| r.sides[i].as_ref()).collect();
         let passed = sides.iter().filter(|s| s.passed).count();
-        let cost: f64 = sides.iter().map(|s| s.cost.unwrap_or(0.0)).sum();
+        // Not `sum`: of no floats it is -0.0.
+        let cost = sides.iter().fold(0.0, |sum, s| sum + s.cost.unwrap_or(0.0));
         lines.push(format!(
             "{}: {passed} of {} runs passed, {cost:.2} USD",
             arm.name(),

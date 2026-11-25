@@ -584,6 +584,42 @@ fn a_side_of_arms_that_did_not_run_has_no_record() {
 }
 
 #[test]
+fn a_result_of_arms_with_1_arm_gives_its_records() {
+    // D100: `eval run --arms` takes 1 arm, and `eval records` reads its result.
+    // A side has `segments`, and a record does not.
+    let text = r#"{"spec_dna":"0.8.0","arms":["lean"],"claude_code":"2.1.330","models":["claude-a"],"evals":[{"id":"team-01","runs":2,"max_budget_usd":1,"results":[{"run":1,"arms":{"lean":{"passed":true,"cost_usd":0.5,"models":["claude-a"],"tokens":null,"turns":7,"segments":2,"seconds":1.5}}},{"run":2,"arms":{"lean":{"passed":false,"cost_usd":null,"models":["claude-a"],"tokens":null,"turns":null,"segments":0,"seconds":2.5}}}]}]}"#;
+    let (code, out, err) = records_of(text);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(
+        out,
+        "{\"skill\":\"harness\",\"eval\":\"team-01\",\"run\":1,\"arm\":\"lean\",\"pass\":true,\"cost\":0.5,\"tokens\":null,\"models\":[\"claude-a\"],\"claude_code\":\"2.1.330\",\"harness\":\"lean\",\"turns\":7,\"seconds\":1.5}\n{\"skill\":\"harness\",\"eval\":\"team-01\",\"run\":2,\"arm\":\"lean\",\"pass\":false,\"cost\":null,\"tokens\":null,\"models\":[\"claude-a\"],\"claude_code\":\"2.1.330\",\"harness\":\"lean\",\"turns\":null,\"seconds\":2.5}\n"
+    );
+    assert_eq!(err, "eval records: 2 records of 1 names (harness)\n");
+}
+
+#[test]
+fn a_result_of_arms_with_no_arm_or_more_than_3_stops_the_import() {
+    let of = |arms: &str| {
+        records_of(&format!(
+            r#"{{"arms":{arms},"claude_code":"2.1.330","models":["claude-a"],"evals":[]}}"#
+        ))
+    };
+    for arms in [
+        "[]",
+        r#"["none","lean","full","project"]"#,
+        r#"["lean","lean"]"#,
+    ] {
+        let (code, out, err) = of(arms);
+        assert_eq!(code, 3, "{arms}: {out}{err}");
+        assert!(
+            err.contains("the key `arms` has a value outside its form (1 to 3 different names of harness arms)"),
+            "{arms}: {err}"
+        );
+        assert_eq!(out, "", "{arms}");
+    }
+}
+
+#[test]
 fn an_arm_outside_the_names_or_a_negative_seconds_stops_the_import_of_arms() {
     let text = fs::read_to_string(fixture("arms.json")).unwrap();
     let (code, out, err) = records_of(&text.replace(

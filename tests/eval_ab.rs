@@ -120,6 +120,47 @@ case "$mode" in
         echo 'status: done' > notes.txt
         printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.1,"modelUsage":{"claude-b":{"inputTokens":10,"outputTokens":20,"cacheReadInputTokens":30,"cacheCreationInputTokens":40,"thinkingTokens":99},"claude-a":{"inputTokens":1,"outputTokens":2,"cacheReadInputTokens":3}},"permission_denials":[],"result":"ok"}\n'
         exit 0 ;;
+    segments)
+        echo 'status: done' > notes.txt
+        printf '{"type":"system","subtype":"init"}\n'
+        printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.05,"num_turns":3,"result":"ok"}\n'
+        printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.1,"num_turns":2,"result":"ok"}\n'
+        exit 0 ;;
+    cut)
+        # A finished segment of 0.1 USD, and a last line that is cut.
+        echo 'status: done' > notes.txt
+        printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.1,"num_turns":40,"result":"ok"}\n{"type":"assist'
+        exit 0 ;;
+    cutbig)
+        # A cut stream that reports 1.5 USD, above the budget of 1 USD.
+        echo 'status: done' > notes.txt
+        printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":1.5,"num_turns":40,"result":"ok"}\n{"type":"assist'
+        exit 0 ;;
+    hangbig)
+        # 1.5 USD reported, and then `claude` hangs to the time limit.
+        echo 'status: done' > notes.txt
+        printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":1.5,"num_turns":40,"result":"ok"}\n'
+        sleep 60 ;;
+    killbig)
+        # 1.5 USD reported, and then a signal ends `claude`.
+        echo 'status: done' > notes.txt
+        printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":1.5,"num_turns":40,"result":"ok"}\n'
+        kill -KILL $$ ;;
+    onelimit)
+        # One result event with a limit, and exit code 0.
+        echo 'status: done' > notes.txt
+        printf '{"type":"result","subtype":"error_max_turns","is_error":true,"total_cost_usd":0.1,"num_turns":5}\n'
+        exit 0 ;;
+    refusedcut)
+        # A refusal that reports its cost, and an event after it.
+        printf '{"type":"result","subtype":"success","is_error":true,"api_error_status":503,"result":"x","total_cost_usd":0.5}\n'
+        printf '{"type":"assistant","message":{}}\n'
+        exit 1 ;;
+    limitrefused)
+        # A segment that stops at the turn limit, and then a refusal of the API.
+        printf '{"type":"result","subtype":"error_max_turns","is_error":true,"total_cost_usd":0.1,"num_turns":5}\n'
+        printf '{"type":"result","subtype":"success","is_error":true,"api_error_status":503,"result":"x","total_cost_usd":0.2,"num_turns":1}\n'
+        exit 1 ;;
     nousage)
         echo 'status: done' > notes.txt
         printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.1,"permission_denials":[],"result":"ok"}\n'
@@ -152,6 +193,19 @@ case "$STUB_PASS" in
 esac
 [ "$pass" = 1 ] && echo 'status: done' > notes.txt
 printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":%s,"num_turns":4,"modelUsage":{"claude-test-1":{}},"permission_denials":[],"result":"ok"}\n' "${STUB_COST:-0.1}"
+"#;
+
+/// A stub `df` for the check of the free space (D100). The tests never read the
+/// free space of the machine. The stub logs its arguments to `$STUB_DF_LOG`,
+/// and it prints the output of `df -Pk` with much free space. From the call
+/// after the call number `$STUB_DF_LOW_AFTER` on, it prints 100 KiB.
+const DF_STUB: &str = r#"#!/bin/sh
+echo "$*" >> "$STUB_DF_LOG"
+n=$(wc -l < "$STUB_DF_LOG" | tr -d ' ')
+free=90000000
+if [ -n "$STUB_DF_LOW_AFTER" ] && [ "$n" -gt "$STUB_DF_LOW_AFTER" ]; then free=100; fi
+echo "Filesystem 1024-blocks Used Available Capacity Mounted on"
+echo "/dev/stub 100000000 1000 $free 1% /mnt/stub disk"
 "#;
 
 const CHECK_SH: &str = "file_has() {\n    grep -q -F -- \"$2\" \"$1\"\n}\n";
@@ -212,6 +266,7 @@ impl Fx {
         repo.commit("evals");
         let stubs = Repo::empty();
         stub_bin(&stubs.dir.join("bin"), "claude", STUB);
+        stub_bin(&stubs.dir.join("bin"), "df", DF_STUB);
         fs::create_dir_all(stubs.dir.join("tmp")).unwrap();
         Fx { repo, stubs }
     }
@@ -241,7 +296,9 @@ impl Fx {
         let tmp = self.path("tmp").to_string_lossy().into_owned();
         let results = self.repo.dir.join("evals/results");
         let results = results.to_string_lossy().into_owned();
+        let df_log = self.path("df-log").to_string_lossy().into_owned();
         let mut set: Vec<(&str, &str)> = vec![
+            ("STUB_DF_LOG", &df_log),
             ("STUB_RESULTS", &results),
             ("PATH", &bin),
             ("STUB_DIR", &dir),
@@ -265,6 +322,15 @@ impl Fx {
             }
         }
         calls
+    }
+
+    /// The arguments of each call of the stub `df`.
+    fn df_calls(&self) -> Vec<String> {
+        fs::read_to_string(self.path("df-log"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
     }
 
     /// The arguments of call `n` (0-based), without the prefix `ARG `.
@@ -665,6 +731,315 @@ fn a_resume_reads_back_the_tokens_the_models_and_the_checks() {
 }
 
 #[test]
+fn a_pair_has_the_turns_over_the_segments_of_each_side() {
+    // D95: the first call is the arm `with` of `tdd-1`, and it ends with 2
+    // result events of 3 and 2 turns. The other calls end with one event.
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.modes(&["segments"]);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--runs", "1", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let pair = first_pair(&out);
+    let at = pair.find("\"without\":").unwrap();
+    assert!(
+        pair[..at].contains("\"turns\":5,\"segments\":2,\"seconds\":"),
+        "{pair}"
+    );
+    assert!(
+        pair[at..].contains("\"turns\":4,\"segments\":1,\"seconds\":"),
+        "{pair}"
+    );
+    // The cost is the cost of the last event.
+    assert!(pair[..at].contains("\"cost_usd\":0.1,"), "{pair}");
+}
+
+#[test]
+fn a_wave_of_arms_has_the_turns_over_the_segments_of_each_arm() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM[..1]);
+    fx.modes(&["segments"]);
+    let (code, out, err) = fx.arms("none,lean", &["--max-total-usd", "100", "--json"], &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    // Wave 1 runs `lean` first for the first eval (the arms rotate), so the
+    // first call, with 2 result events, is the side of `lean`.
+    let at = out.find("\"lean\":{\"claude_exit\"").unwrap();
+    assert!(
+        out[..at].contains("\"turns\":4,\"segments\":1,\"seconds\":"),
+        "{out}"
+    );
+    assert!(
+        out[at..].contains("\"turns\":5,\"segments\":2,\"seconds\":"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_cut_run_of_ab_and_arms_counts_its_budget() {
+    // The first call is cut after a segment of 0.1 USD. Its side has no cost
+    // and no turns, and the spend counts its budget of 1 USD. The other calls
+    // cost 0.1 USD each.
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.modes(&["cut"]);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(field(&out, "spend_usd"), "1.9", "{out}");
+    let pair = first_pair(&out);
+    let with = &pair[..pair.find("\"without\":").unwrap()];
+    assert!(with.contains("\"cost_usd\":null,"), "{with}");
+    assert!(with.contains("\"turns\":null,\"segments\":1,"), "{with}");
+    // The run passes, as in 0.8.0, and its arm counts the budget too, as for
+    // a run with no cost.
+    assert!(with.contains("\"passed\":true"), "{with}");
+    assert!(
+        out.contains("\"with\":{\"runs\":5,\"passes\":5,\"pass_rate\":1,\"cost_usd\":1.4,"),
+        "{out}"
+    );
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM[..1]);
+    fx.modes(&["cut"]);
+    let (code, out, err) = fx.arms("none,lean", &["--max-total-usd", "100", "--json"], &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(field(&out, "spend_usd"), "1.1", "{out}");
+    assert!(out.contains("\"cost_usd\":null,"), "{out}");
+    assert!(out.contains("\"turns\":null,\"segments\":1,"), "{out}");
+}
+
+#[test]
+fn a_cut_run_that_a_signal_stops_in_its_check_pays_its_budget() {
+    // The agent ended with a cut stream, and SIGINT comes in the check. The
+    // side is not kept, and the spend has the budget of the run, 1 USD.
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM[..1]);
+    let path = fx.repo.dir.join(format!("evals/{}.json", TEAM[0]));
+    let eval = fs::read_to_string(&path).unwrap().replace(
+        "file_has notes.txt 'status: done'",
+        "kill -INT $PPID; sleep 30",
+    );
+    fs::write(&path, eval).unwrap();
+    fx.repo.commit("a check that interrupts");
+    fx.modes(&["cut"]);
+    let (code, out, err) = fx.arms("none", &["--max-total-usd", "100", "--json"], &[]);
+    assert_eq!(code, 130, "{out}{err}");
+    assert_eq!(field(&out, "spend_usd"), "1", "{out}");
+    assert!(out.contains("\"results\":[]}]}"), "{out}");
+}
+
+#[test]
+fn a_check_that_a_signal_stops_pays_a_reported_cost_above_the_budget() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM[..1]);
+    let path = fx.repo.dir.join(format!("evals/{}.json", TEAM[0]));
+    let eval = fs::read_to_string(&path).unwrap().replace(
+        "file_has notes.txt 'status: done'",
+        "kill -INT $PPID; sleep 30",
+    );
+    fs::write(&path, eval).unwrap();
+    fx.repo.commit("a check that interrupts");
+    fx.modes(&["cutbig"]);
+    let (code, out, err) = fx.arms("none", &["--max-total-usd", "100", "--json"], &[]);
+    assert_eq!(code, 130, "{out}{err}");
+    assert_eq!(field(&out, "spend_usd"), "1.5", "{out}");
+}
+
+#[test]
+fn a_refused_attempt_with_a_cut_stream_counts_the_cost_that_it_reports() {
+    // Guard: a refused attempt counts the cost that `claude` reports, 0.5 USD,
+    // also when an event follows its result. 10 runs of 0.1 USD follow.
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.modes(&["refusedcut"]);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(field(&out, "spend_usd"), "1.5", "{out}");
+    assert!(
+        out.contains("\"excluded\":{\"with\":1,\"without\":0}"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_reported_cost_above_the_budget_is_in_the_spend_of_ab() {
+    // The repro of the acceptance: the first call is killed after it reported
+    // 1.5 USD for a budget of 1 USD, and the 9 other calls report 1.5 USD
+    // each. The spend is 15 USD, as with 0.8.0.
+    for mode in ["killbig", "cutbig"] {
+        let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+        fx.modes(&[mode]);
+        let (code, out, err) = fx.run_env(
+            &["tdd", "--max-total-usd", "100", "--runs", "1", "--json"],
+            &[("STUB_COST", "1.5")],
+        );
+        assert_eq!(code, 0, "{mode}: {out}{err}");
+        assert_eq!(field(&out, "spend_usd"), "15", "{mode}: {out}");
+        // The verdict counts the reported cost too: the arm `with` costs
+        // 5 x 1.5 USD, as with 0.8.0.
+        assert!(
+            out.contains("\"with\":{\"runs\":5,\"passes\":"),
+            "{mode}: {out}"
+        );
+        assert_eq!(arm_cost(&out, "with"), "7.5", "{mode}: {out}");
+        assert_eq!(arm_cost(&out, "without"), "7.5", "{mode}: {out}");
+        let pair = first_pair(&out);
+        assert!(pair.contains("\"cost_usd\":1.5,"), "{mode}: {pair}");
+        assert!(pair.contains("\"turns\":null,"), "{mode}: {pair}");
+        // `eval records` reads the cost, and it computes the same item again.
+        let file = format!("evals/results/{}", fx.results()[0]);
+        let (code, records, err) = fx.raw(&["eval", "records", &file], &[]);
+        assert_eq!(code, 0, "{mode}: {records}{err}");
+        assert!(records.contains("\"cost\":1.5,"), "{mode}: {records}");
+    }
+}
+
+/// The `cost_usd` of an arm of the first skill of a result of `--ab`.
+fn arm_cost<'a>(json: &'a str, arm: &str) -> &'a str {
+    let at = json
+        .find(&format!("\"{arm}\":{{\"runs\":"))
+        .unwrap_or_else(|| panic!("no arm {arm} in {json}"));
+    field(&json[at..], "cost_usd")
+}
+
+#[test]
+fn the_verdict_counts_a_reported_cost_above_the_budget_after_a_time_limit() {
+    // The first call reports 1.5 USD and hangs to the time limit. The 9 other
+    // calls cost 0.1 USD: the arm `with` costs 1.5 + 4 x 0.1 USD, as with 0.8.0.
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.modes(&["hangbig"]);
+    let (code, out, err) = fx.run_env(
+        &["tdd", "--max-total-usd", "100", "--runs", "1", "--json"],
+        &[("SPEC_DNA_EVAL_TIMEOUT", "8")],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(field(&out, "spend_usd"), "2.4", "{out}");
+    assert_eq!(arm_cost(&out, "with"), "1.9", "{out}");
+    assert_eq!(arm_cost(&out, "without"), "0.5", "{out}");
+    let pair = first_pair(&out);
+    assert!(
+        pair.contains("\"subtype\":\"timeout\",\"cost_usd\":1.5,"),
+        "{pair}"
+    );
+}
+
+#[test]
+fn a_reported_cost_above_the_budget_is_in_the_spend_of_arms() {
+    // The first call reports 1.5 USD and is not whole. The other costs 0.1.
+    for mode in ["killbig", "cutbig"] {
+        let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+        fx.add_plain(&TEAM[..1]);
+        fx.modes(&[mode]);
+        let (code, out, err) = fx.arms("none,lean", &["--max-total-usd", "100", "--json"], &[]);
+        assert_eq!(code, 0, "{mode}: {out}{err}");
+        assert_eq!(field(&out, "spend_usd"), "1.6", "{mode}: {out}");
+        assert!(out.contains("\"cost_usd\":1.5,"), "{mode}: {out}");
+        assert!(!out.contains("\"cost_usd\":null,"), "{mode}: {out}");
+    }
+}
+
+// The pass of a side and a refusal are those of 0.8.0 for the same last event
+// and exit code.
+
+#[test]
+fn one_limit_result_with_exit_code_0_passes_a_side_as_in_0_8_0() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.modes(&["onelimit"]);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("\"with\":{\"runs\":5,\"passes\":5,"), "{out}");
+    let pair = first_pair(&out);
+    assert!(pair.contains("\"subtype\":\"error_max_turns\""), "{pair}");
+}
+
+#[test]
+fn the_last_result_event_decides_a_refusal_as_in_0_8_0() {
+    // The last event is a refusal of the API, with a limit before it: the
+    // attempt is excluded and runs again. It counts the 0.2 USD that it
+    // reports, and 10 runs of 0.1 USD follow.
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.modes(&["limitrefused"]);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(fx.calls().len(), 11, "a new attempt");
+    assert!(
+        out.contains("\"excluded\":{\"with\":1,\"without\":0}"),
+        "{out}"
+    );
+    assert_eq!(field(&out, "spend_usd"), "1.2", "{out}");
+}
+
+#[test]
+fn the_resume_hint_quotes_a_path_with_a_space_or_a_quote() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM[..1]);
+    let args = ["--max-total-usd", "100", "--out", "evals/my results"];
+    let (code, out, err) = fx.arms("none", &args, &[("STUB_DF_LOW_AFTER", "0")]);
+    assert_eq!(code, 3, "{out}{err}");
+    let hint = "run the command again with `--resume 'evals/my results/arms-";
+    assert!(err.contains(hint), "{err}");
+    // The stop by a signal gives the whole command.
+    fx.modes(&["sigint"]);
+    let args = ["--max-total-usd", "100", "--out", "evals/it's here"];
+    let (code, out, err) = fx.arms("none", &args, &[]);
+    assert_eq!(code, 130, "{out}{err}");
+    let hint = "Go on with spec-dna eval run --arms none --resume 'evals/it'\\''s here/arms-";
+    assert!(err.contains(hint), "{err}");
+    // And so do the stops of `--ab`.
+    fs::remove_file(fx.path("n")).unwrap();
+    fx.modes(&["sigint"]);
+    let args = ["tdd", "--max-total-usd", "100", "--out", "evals/ab results"];
+    let (code, out, err) = fx.run(&args);
+    assert_eq!(code, 130, "{out}{err}");
+    let hint = "Go on with --resume 'evals/ab results/skills-";
+    assert!(err.contains(hint), "{err}");
+    let end = err[err.find(hint).unwrap() + hint.len()..]
+        .lines()
+        .next()
+        .unwrap();
+    assert!(end.ends_with(".json'"), "{end}");
+}
+
+#[test]
+fn a_resume_of_a_result_of_0_8_0_writes_segments_as_null() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    let (code, out, err) = fx.run(&["tdd", "--max-total-usd", "100", "--runs", "1", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let file = format!("evals/results/{}", fx.results()[0]);
+    // A result of 0.8.0 has no key `segments`.
+    let path = fx.repo.dir.join(&file);
+    let old: String = fs::read_to_string(&path)
+        .unwrap()
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("\"segments\":"))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    assert!(!old.contains("segments"));
+    fs::write(&path, &old).unwrap();
+    let (code, out, err) = fx.run(&[
+        "tdd",
+        "--resume",
+        &file,
+        "--runs",
+        "2",
+        "--max-total-usd",
+        "100",
+        "--json",
+    ]);
+    assert_eq!(code, 0, "{out}{err}");
+    // The sides of run 1 are the old ones, and the sides of run 2 are new.
+    let first = first_pair(&out);
+    assert!(
+        first.contains("\"turns\":4,\"segments\":null,\"seconds\":"),
+        "{first}"
+    );
+    assert!(
+        !first.contains("\"segments\":1"),
+        "run 1 is not run again: {first}"
+    );
+    let at = out.find("\"eval\":\"tdd-1\",\"run\":2").unwrap();
+    let second = &out[at..at + 1500.min(out.len() - at)];
+    assert!(
+        second.contains("\"turns\":4,\"segments\":1,\"seconds\":"),
+        "{second}"
+    );
+}
+
+#[test]
 fn resume_with_more_runs_extends_each_eval() {
     let fx = Fx::new(&["brainstorm"], &["tdd"], 4);
     // The smoke: 1 run of each of the 5 evals.
@@ -806,7 +1181,8 @@ fn the_arm_without_has_no_skill_no_discipline_and_denies_the_command() {
         "--disallowedTools",
         "Bash(spec-dna skill:*)",
         "--output-format",
-        "json",
+        "stream-json",
+        "--verbose",
         "--max-turns",
         "5",
         "--max-budget-usd",
@@ -989,7 +1365,7 @@ fn the_result_has_the_arms_the_pairs_the_interval_and_the_verdict() {
         "\"verdict\":\"on\"",
         "\"rule\":1",
         "\"cost_ratio\":null",
-        "\"pairs\":[{\"eval\":\"tdd-1\",\"run\":1,\"with\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":0,\"permission_denials\":0,\"passed\":true,\"tokens\":{\"in\":0,\"out\":0,\"cache_read\":0,\"cache_write\":0},\"models\":[\"claude-test-1\"],\"checks\":[{\"name\":\"notes-done\",\"passed\":true}],\"turns\":4,\"seconds\":",
+        "\"pairs\":[{\"eval\":\"tdd-1\",\"run\":1,\"with\":{\"claude_exit\":0,\"subtype\":\"success\",\"cost_usd\":0.1,\"excluded\":0,\"permission_denials\":0,\"passed\":true,\"tokens\":{\"in\":0,\"out\":0,\"cache_read\":0,\"cache_write\":0},\"models\":[\"claude-test-1\"],\"checks\":[{\"name\":\"notes-done\",\"passed\":true}],\"turns\":4,\"segments\":1,\"seconds\":",
     ] {
         assert!(out.contains(part), "`{part}` not in {out}");
     }
@@ -2446,7 +2822,7 @@ fn the_result_of_arms_has_one_side_for_each_arm_with_the_turns_and_the_seconds()
         "\"excluded\":{\"none\":0,\"lean\":0}",
         "\"waves\":1",
         "\"evals\":[{\"id\":\"team-01\",\"runs\":1,\"max_budget_usd\":1,\"results\":[{\"run\":1,\"arms\":{\"none\":{\"claude_exit\":0,",
-        "\"turns\":4,\"seconds\":",
+        "\"turns\":4,\"segments\":1,\"seconds\":",
     ] {
         assert!(out.contains(part), "`{part}` not in {out}");
     }
@@ -2461,14 +2837,455 @@ fn the_result_of_arms_has_one_side_for_each_arm_with_the_turns_and_the_seconds()
     assert_eq!(code, 0, "{out}");
 }
 
+/// The path of the result file that a command made: the one that is not in
+/// `before`.
+fn new_result(fx: &Fx, before: &[String]) -> String {
+    let new: Vec<String> = fx
+        .results()
+        .into_iter()
+        .filter(|n| !before.contains(n))
+        .collect();
+    assert_eq!(new.len(), 1, "{new:?}");
+    format!("evals/results/{}", new[0])
+}
+
+/// 3 result files of `--arms` on the same evals: both arms in one command, and
+/// each arm of them alone in a command. The paths are `both`, `none` and `lean`.
+fn three_files(fx: &Fx, none_cost: &str, lean_cost: &str) -> [String; 3] {
+    let args = ["--runs", "2", "--max-total-usd", "100", "--json"];
+    let before = fx.results();
+    let (code, out, err) = fx.arms("none,lean", &args, &[("STUB_COST", lean_cost)]);
+    assert_eq!(code, 0, "{out}{err}");
+    let both = new_result(fx, &before);
+    let before = fx.results();
+    let (code, out, err) = fx.arms("none", &args, &[("STUB_COST", none_cost)]);
+    assert_eq!(code, 0, "{out}{err}");
+    let none = new_result(fx, &before);
+    let before = fx.results();
+    let (code, out, err) = fx.arms("lean", &args, &[("STUB_COST", lean_cost)]);
+    assert_eq!(code, 0, "{out}{err}");
+    let lean = new_result(fx, &before);
+    [both, none, lean]
+}
+
+#[test]
+fn compare_joins_2_files_of_one_arm() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM);
+    // The same cost in each arm: the 2 files give the verdict of the file that
+    // has both arms, in each order of the files.
+    let [both, none, lean] = three_files(&fx, "0.1", "0.1");
+    let compare = |files: &[&str]| {
+        let mut args = vec!["eval", "verdict", "--compare", "lean,none"];
+        args.extend_from_slice(files);
+        args.push("--json");
+        fx.raw(&args, &[])
+    };
+    let (code, want, err) = compare(&[&both]);
+    assert_eq!(code, 0, "{want}{err}");
+    assert!(want.contains("\"waves\":2,\"planned_waves\":2"), "{want}");
+    assert!(want.contains("\"evals\":2,\"pairs\":4"), "{want}");
+    for files in [[&none, &lean], [&lean, &none]] {
+        let (code, out, err) = compare(&[files[0], files[1]]);
+        assert_eq!(code, 0, "{out}{err}");
+        assert_eq!(out, want);
+        assert!(err.is_empty(), "{err}");
+    }
+    // The costs of each file count: 4 runs of 0.2 USD against 4 runs of 0.1 USD.
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM);
+    let [_, none, lean] = three_files(&fx, "0.2", "0.1");
+    let (code, out, err) = fx.raw(
+        &[
+            "eval",
+            "verdict",
+            "--compare",
+            "lean,none",
+            &lean,
+            &none,
+            "--json",
+        ],
+        &[],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("\"with\":{\"runs\":4,\"passes\":4,\"pass_rate\":1,\"cost_usd\":0.4,"),
+        "{out}"
+    );
+    assert!(
+        out.contains("\"without\":{\"runs\":4,\"passes\":4,\"pass_rate\":1,\"cost_usd\":0.8,"),
+        "{out}"
+    );
+    // The text form reads the same files.
+    let (code, out, err) = fx.raw(
+        &["eval", "verdict", "--compare", "lean,none", &lean, &none],
+        &[],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.starts_with("lean against none: lean 4 of 4 runs passed, none 4 of 4"),
+        "{out}"
+    );
+    assert!(out.contains("waves: 2 complete of 2 planned"), "{out}");
+    // An arm that no file has is a usage error.
+    let (code, _, err) = fx.raw(
+        &["eval", "verdict", "--compare", "lean,full", &lean, &none],
+        &[],
+    );
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("no arm `full`"), "{err}");
+}
+
+#[test]
+fn a_run_in_2_files_is_exit_code_3() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM);
+    let [both, none, lean] = three_files(&fx, "0.1", "0.1");
+    // The file `none` twice: each run of each eval is in 2 files.
+    let (code, out, err) = fx.raw(
+        &[
+            "eval",
+            "verdict",
+            "--compare",
+            "lean,none",
+            &lean,
+            &none,
+            &none,
+        ],
+        &[],
+    );
+    assert_eq!(code, 3, "{out}{err}");
+    assert!(out.is_empty(), "{out}");
+    let want = format!(
+        "--compare: the run 1 of `team-01` in the arm `none` is in 2 files: {none}, {none}"
+    );
+    assert!(err.contains(&want), "{err}");
+    // A file with both arms and a file with one of them hold the same runs.
+    let (code, out, err) = fx.raw(
+        &["eval", "verdict", "--compare", "lean,none", &both, &lean],
+        &[],
+    );
+    assert_eq!(code, 3, "{out}{err}");
+    assert!(err.contains("in the arm `lean` is in 2 files"), "{err}");
+    assert!(err.contains(&format!("{both}, {lean}")), "{err}");
+    // A file that is no result of `--arms` is exit code 3 too.
+    fx.repo
+        .write("evals/results/other.json", "{\"skills\":[]}\n");
+    let (code, _, err) = fx.raw(
+        &[
+            "eval",
+            "verdict",
+            "--compare",
+            "lean,none",
+            &lean,
+            "evals/results/other.json",
+        ],
+        &[],
+    );
+    assert_eq!(code, 3, "{err}");
+    assert!(err.contains("is no result of `eval run --arms`"), "{err}");
+}
+
+#[test]
+fn files_of_2_versions_of_claude_code_give_a_note() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM);
+    let [_, none, lean] = three_files(&fx, "0.1", "0.1");
+    let (code, out, err) = fx.raw(
+        &["eval", "verdict", "--compare", "lean,none", &lean, &none],
+        &[],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!err.contains("note"), "the same version: {err}");
+    let path = fx.repo.dir.join(&lean);
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(text.contains("\"claude_code\": \"2.1.325\""), "{text}");
+    fs::write(
+        &path,
+        text.replace(
+            "\"claude_code\": \"2.1.325\"",
+            "\"claude_code\": \"2.1.400\"",
+        ),
+    )
+    .unwrap();
+    for json in [false, true] {
+        let mut args = vec!["eval", "verdict", "--compare", "lean,none", &lean, &none];
+        if json {
+            args.push("--json");
+        }
+        let (code, out, err) = fx.raw(&args, &[]);
+        assert_eq!(code, 0, "{out}{err}");
+        assert!(
+            err.contains(&format!(
+                "--compare: the files come from different versions of Claude Code: {lean} 2.1.400, {none} 2.1.325"
+            )),
+            "{err}"
+        );
+        // The note is on the standard error: the output has the verdict only.
+        assert!(!out.contains("2.1.400"), "{out}");
+    }
+}
+
+// D100: a floor of free space before each attempt.
+
+#[test]
+fn a_disk_below_the_floor_stops_before_the_second_pair_and_resume_goes_on() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    // Each attempt reads 2 folders. The stub `df` is low after 4 calls: the
+    // first pair (2 attempts) runs, and the second pair does not start.
+    let (code, out, err) = fx.run_env(
+        &["tdd", "--max-total-usd", "100", "--json"],
+        &[("STUB_DF_LOW_AFTER", "4")],
+    );
+    assert_eq!(code, 3, "{out}{err}");
+    assert_eq!(fx.calls().len(), 2, "only the first pair ran");
+    assert_eq!(fx.df_calls().len(), 5, "{:?}", fx.df_calls());
+    assert!(out.contains("\"stopped\":\"disk-space\""), "{out}");
+    let names = fx.results();
+    assert_eq!(names.len(), 1, "{names:?}");
+    let file = format!("evals/results/{}", names[0]);
+    let tmp = fx.path("tmp").to_string_lossy().into_owned();
+    assert!(
+        err.contains(&format!(
+            "spec-dna eval run: stopped before a run: `{tmp}` has 0 MiB free, below `[evals] min-free-mib` (2048); free space, then run the command again with `--resume {file}`"
+        )),
+        "{err}"
+    );
+    // The file keeps the complete pair, and the next pairs are not there.
+    let text: String = fs::read_to_string(fx.repo.dir.join(&file))
+        .unwrap()
+        .split_whitespace()
+        .collect();
+    assert!(text.contains("\"stopped\":\"disk-space\""), "{text}");
+    assert!(text.contains("\"eval\":\"tdd-1\",\"run\":1"), "{text}");
+    assert!(!text.contains("\"eval\":\"tdd-2\""), "{text}");
+    // `--resume` after the person freed space (the stub reports much) runs the rest.
+    let (code, out, err) = fx.run(&["tdd", "--resume", &file, "--max-total-usd", "100", "--json"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(fx.calls().len(), 10, "the 8 attempts that were left");
+    assert!(out.contains("\"stopped\":null"), "{out}");
+    assert_eq!(fx.results().len(), 1, "--resume writes the same file");
+    fx.assert_clean();
+}
+
+#[test]
+fn a_resume_reads_the_free_space_of_the_folder_of_its_result_file() {
+    // D100: the folder of the result file. A first run with `--out` has its
+    // file there, and `--resume` writes the same file.
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM[..1]);
+    let first = ["--max-total-usd", "100", "--out", "evals/kept"];
+    let (code, out, err) = fx.arms("none", &first, &[("STUB_DF_LOW_AFTER", "0")]);
+    assert_eq!(code, 3, "{out}{err}");
+    let mut full = vec!["tdd"];
+    full.extend_from_slice(&["--max-total-usd", "100", "--out", "evals/kept-ab"]);
+    let (code, out, err) = fx.run_env(&full, &[("STUB_DF_LOW_AFTER", "0")]);
+    assert_eq!(code, 3, "{out}{err}");
+    let file_in = |dir: &str| {
+        let entry = fs::read_dir(fx.repo.dir.join(dir))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap();
+        format!("{dir}/{}", entry.file_name().to_string_lossy())
+    };
+    let arms_file = file_in("evals/kept");
+    let ab_file = file_in("evals/kept-ab");
+    for (dir, resume) in [("evals/kept", &arms_file), ("evals/kept-ab", &ab_file)] {
+        fs::remove_file(fx.path("df-log")).unwrap();
+        let args = ["--resume", resume.as_str(), "--max-total-usd", "100"];
+        let (code, out, err) = if dir == "evals/kept" {
+            fx.arms("none", &args, &[])
+        } else {
+            let mut full = vec!["tdd"];
+            full.extend_from_slice(&args);
+            fx.run_env(&full, &[])
+        };
+        assert_eq!(code, 0, "{out}{err}");
+        let calls = fx.df_calls();
+        assert!(!calls.is_empty());
+        for pair in calls.chunks(2) {
+            assert!(pair[1].ends_with(&format!("/{dir}")), "{calls:?}");
+        }
+    }
+}
+
+#[test]
+fn a_stop_before_the_first_run_of_ab_and_arms_prints_no_negative_zero() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM[..1]);
+    for json in [false, true] {
+        let mut args = vec!["--max-total-usd", "100"];
+        if json {
+            args.push("--json");
+        }
+        let (code, out, err) = fx.arms("none,lean", &args, &[("STUB_DF_LOW_AFTER", "0")]);
+        assert_eq!(code, 3, "{out}{err}");
+        // A number only: the id `team-01` also has the bytes `-0`.
+        assert!(
+            !out.contains("-0.00") && !out.contains(":-0"),
+            "arms: {out}"
+        );
+        let mut full = vec!["tdd"];
+        full.extend_from_slice(&args);
+        let (code, out, err) = fx.run_env(&full, &[("STUB_DF_LOW_AFTER", "0")]);
+        assert_eq!(code, 3, "{out}{err}");
+        // The text of a skill with no complete pair has no negative number.
+        assert!(!out.contains("-0.00") && !out.contains(":-0"), "ab: {out}");
+    }
+    assert!(fx.calls().is_empty(), "no run started");
+    for name in fx.results() {
+        let text: String = fs::read_to_string(fx.repo.dir.join("evals/results").join(&name))
+            .unwrap()
+            .split_whitespace()
+            .collect();
+        assert!(!text.contains(":-0"), "{name}: {text}");
+        assert!(
+            text.contains("\"stopped\":\"disk-space\""),
+            "{name}: {text}"
+        );
+    }
+}
+
+#[test]
+fn the_free_space_is_read_again_after_a_refusal_of_the_api() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    // The first attempt is refused (503), and the disk is low when the retry
+    // would start: the stub `df` is low after its 2 first calls.
+    fx.modes(&["503"]);
+    let (code, out, err) = fx.run_env(
+        &["tdd", "--max-total-usd", "100", "--json"],
+        &[("STUB_DF_LOW_AFTER", "2")],
+    );
+    assert_eq!(code, 3, "{out}{err}");
+    assert_eq!(fx.calls().len(), 1, "the retry did not start");
+    assert!(out.contains("\"stopped\":\"disk-space\""), "{out}");
+    assert!(
+        out.contains("\"excluded\":{\"with\":1,\"without\":0}"),
+        "{out}"
+    );
+    assert!(err.contains("stopped before a run:"), "{err}");
+}
+
+#[test]
+fn a_disk_below_the_floor_stops_arms_and_resume_goes_on() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM[..1]);
+    // A wave is 2 attempts (2 arms). The stub `df` is low after 4 calls: wave 1
+    // runs, and wave 2 does not start.
+    let (code, out, err) = fx.arms(
+        "none,lean",
+        &["--runs", "2", "--max-total-usd", "100", "--json"],
+        &[("STUB_DF_LOW_AFTER", "4")],
+    );
+    assert_eq!(code, 3, "{out}{err}");
+    assert_eq!(fx.calls().len(), 2);
+    assert!(out.contains("\"stopped\":\"disk-space\""), "{out}");
+    assert!(out.contains("\"waves\":1"), "{out}");
+    let file = format!("evals/results/{}", fx.results()[0]);
+    assert!(
+        err.contains(&format!(
+            "has 0 MiB free, below `[evals] min-free-mib` (2048); free space, then run the command again with `--resume {file}`"
+        )),
+        "{err}"
+    );
+    let (code, out, err) = fx.arms(
+        "none,lean",
+        &["--resume", &file, "--max-total-usd", "100", "--json"],
+        &[],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(fx.calls().len(), 4, "wave 2 ran");
+    assert!(out.contains("\"waves\":2"), "{out}");
+    assert!(out.contains("\"stopped\":null"), "{out}");
+}
+
+#[test]
+fn a_floor_of_0_turns_the_check_off_for_ab_and_arms() {
+    // Guard: with the floor at 0, the stub `df` is never called, also when it
+    // would report no space.
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    let toml = fs::read_to_string(fx.repo.dir.join("spec-dna.toml")).unwrap();
+    fx.repo.write(
+        "spec-dna.toml",
+        &toml.replace("[evals]\n", "[evals]\nmin-free-mib = 0\n"),
+    );
+    fx.add_plain(&TEAM[..1]);
+    let (code, out, err) = fx.arms(
+        "none",
+        &["--max-total-usd", "100"],
+        &[("STUB_DF_LOW_AFTER", "0")],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    let (code, out, err) = fx.run_env(
+        &["tdd", "--max-total-usd", "100", "--runs", "1"],
+        &[("STUB_DF_LOW_AFTER", "0")],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(fx.df_calls().is_empty(), "{:?}", fx.df_calls());
+}
+
+#[test]
+fn arms_runs_one_arm_alone() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM);
+    let (code, out, err) = fx.arms("none", &["--max-total-usd", "100", "--json"], &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    // Wave 1 runs each eval once in the arm `none`, and the file has this arm only.
+    assert_eq!(fx.calls().len(), 2);
+    for part in [
+        "\"arms\":[\"none\"]",
+        "\"excluded\":{\"none\":0}",
+        "\"waves\":1",
+        "\"stopped\":null",
+        "\"results\":[{\"run\":1,\"arms\":{\"none\":{\"claude_exit\":0,",
+    ] {
+        assert!(out.contains(part), "`{part}` not in {out}");
+    }
+    assert!(!out.contains("\"lean\""), "{out}");
+    let names = fx.results();
+    assert_eq!(names.len(), 1, "{names:?}");
+    assert!(names[0].starts_with("arms-"), "{names:?}");
+}
+
+#[test]
+fn a_run_of_one_arm_goes_on_with_resume() {
+    let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
+    fx.add_plain(&TEAM);
+    // A wave is 2 evals x 1 arm = 2 runs of 1 USD. The cap of 3.5 USD stops
+    // before the 4th run: wave 1 is complete, and wave 2 has 1 run.
+    let (code, out, err) = fx.arms(
+        "none",
+        &["--runs", "2", "--max-total-usd", "3.5", "--json"],
+        &[("STUB_COST", "1")],
+    );
+    assert_eq!(code, 3, "{out}{err}");
+    assert_eq!(fx.calls().len(), 3);
+    assert!(out.contains("\"stopped\":\"max-total-usd\""), "{out}");
+    assert!(out.contains("\"waves\":1"), "{out}");
+    let file = format!("evals/results/{}", fx.results()[0]);
+    let (code, out, err) = fx.arms(
+        "none",
+        &["--resume", &file, "--max-total-usd", "100", "--json"],
+        &[("STUB_COST", "1")],
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(fx.calls().len(), 4, "only the run that was left");
+    assert!(out.contains("\"waves\":2"), "{out}");
+    assert!(out.contains("\"stopped\":null"), "{out}");
+    assert_eq!(fx.results().len(), 1, "--resume writes the same file");
+    // The arms of the file and of the command must be the same.
+    let (code, _, err) = fx.arms("none,lean", &["--resume", &file], &[]);
+    assert_eq!(code, 2, "{err}");
+}
+
 #[test]
 fn the_usage_errors_of_arms_and_harness_start_no_process() {
     let fx = Fx::new(&["brainstorm"], &["tdd"], 1);
     fx.add_plain(&TEAM[..1]);
-    let cases: [(&[&str], &str); 11] = [
+    let cases: [(&[&str], &str); 10] = [
         (&["--arms", "none,nonsense"], "no harness arm"),
-        (&["--arms", "none"], "2 or 3 arms"),
-        (&["--arms", "none,lean,full,project"], "2 or 3 arms"),
+        (&["--arms", "none,lean,full,project"], "1 to 3 arms"),
         (&["--arms", "none,none"], "twice"),
         (&["--arms", "none,lean", "--ab"], "exclude each other"),
         (&["--arms", "none,lean", "--no-isolate"], "--no-isolate"),
@@ -2737,10 +3554,10 @@ fn compare_gives_usage_errors_for_the_arms_and_exit_code_3_for_other_files() {
     );
     assert_eq!(code, 2, "{err}");
     assert!(err.contains("named twice"), "{err}");
-    // No file, 2 files, and `--release`.
+    // No file, and `--release`. The same file twice is a run in 2 files: exit
+    // code 3 (`a_run_in_2_files_is_exit_code_3`).
     for args in [
         vec!["eval", "verdict", "--compare", "lean,none"],
-        vec!["eval", "verdict", "--compare", "lean,none", &file, &file],
         vec![
             "eval",
             "verdict",
@@ -2916,7 +3733,10 @@ fn a_result_of_ab_has_the_harness_the_turns_the_seconds_and_the_floor() {
         out.contains("\"verdict\":\"inconclusive\",\"rule\":null,\"below_floor\":true,\"pairs\":["),
         "{out}"
     );
-    assert!(out.contains("\"turns\":4,\"seconds\":"), "{out}");
+    assert!(
+        out.contains("\"turns\":4,\"segments\":1,\"seconds\":"),
+        "{out}"
+    );
     let (code, out, _) = fx.run_env(
         &["tdd", "--max-total-usd", "100"],
         &[("STUB_PASS", "skill"), ("STUB_SKILL", "tdd")],
@@ -3197,8 +4017,11 @@ fn the_result_of_the_target_accept_is_a_result_of_the_skill_review_that_eval_rec
     assert!(out.contains("\"target\":\"accept\""), "{out}");
     assert!(out.contains("\"name\":\"review\""), "{out}");
     assert!(out.contains("\"harness\":\"lean\""), "{out}");
-    // Each side has the cost, the turns and the seconds (D58).
-    assert!(out.contains("\"turns\":4,\"seconds\":"), "{out}");
+    // Each side has the cost, the turns, the segments and the seconds (D58).
+    assert!(
+        out.contains("\"turns\":4,\"segments\":1,\"seconds\":"),
+        "{out}"
+    );
     assert!(out.contains("\"cost_usd\":"), "{out}");
     let files = fx.results();
     assert_eq!(files.len(), 1, "{files:?}");
