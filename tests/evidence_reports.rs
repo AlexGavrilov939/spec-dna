@@ -3489,3 +3489,29 @@ fn the_module_line_of_go_mod_tells_2_folders_of_one_name_apart() {
     assert_eq!(lines(&out, "SD617").len(), 1, "{out}");
     assert_eq!(code, 1, "{out}");
 }
+
+#[test]
+fn a_clash_with_a_tracked_file_outside_the_test_globs_makes_the_bind_weak() {
+    let evidence = format!("{REPORTS}tests = [\"tests/**\"]\n");
+    let files = [
+        ("tests/test_valves.py", PY_TEST),
+        // No glob of the tests matches this file. Its dotted path ends with the
+        // same `classname`.
+        (
+            "vendor/tests/test_valves.py",
+            "def test_closes_on_timeout():\n    assert True\n",
+        ),
+    ];
+    let r = pr("strict", &evidence, &files);
+    r.write(
+        "reports/r.xml",
+        &junit(
+            "pytest",
+            &[("tests.test_valves", "test_closes_on_timeout", "")],
+        ),
+    );
+    stamp(&r);
+    let (_, out) = check(&r, &[]);
+    assert_eq!(lines(&out, "SD621").len(), 1, "{out}");
+    assert!(!has(&out, "SD617"), "{out}");
+}

@@ -791,19 +791,29 @@ fn literal(s: &str) -> Option<&str> {
 }
 
 /// The form call: `it`, `test`, `specify`, `example` or `scenario`, with the
-/// suffixes `.only`, `.skip`, `.todo`, `.concurrent` and `.failing`, then `(` or
-/// a space, then a literal. `rest` starts after the word.
+/// suffixes `.only`, `.skip`, `.todo`, `.concurrent`, `.failing`, `.fails` and
+/// `.sequential`, and `.runIf(<cond>)` and `.skipIf(<cond>)`, then `(` or a
+/// space, then a literal. `rest` starts after the word.
 fn call_form(rest: &str) -> Option<Under> {
     let mut s = rest;
     let mut each = false;
     while let Some(r) = s.strip_prefix('.') {
         let n = ident_end(r);
+        s = &r[n..];
         match &r[..n] {
-            "only" | "skip" | "todo" | "concurrent" | "failing" => {}
+            "only" | "skip" | "todo" | "concurrent" | "failing" | "fails" | "sequential" => {}
+            // The condition comes before the literal of the title.
+            "runIf" | "skipIf" => {
+                if !s.starts_with('(') {
+                    return None;
+                }
+                let one = [s];
+                let (_, end) = close_of(&one, 0, 0, 1)?;
+                s = &s[end..];
+            }
             "each" => each = true,
             _ => return None,
         }
-        s = &r[n..];
     }
     if each {
         // The table comes first: `(rows)` or a template literal. The name is in
@@ -1214,6 +1224,8 @@ fn group_title(line: &str) -> Option<Option<Title>> {
 /// group or has a title that is not a literal or a bare constant, or a group at
 /// the indent of the definition stays open above it (no indent).
 fn ancestors(lines: &[&str], def: usize) -> Option<Vec<Title>> {
+    #[cfg(test)]
+    calls::count(calls::ANCESTORS);
     let mut want = indent(lines[def]);
     let mut out = Vec::new();
     // The closers at the indent `want` that wait for their opener.
@@ -1260,19 +1272,66 @@ fn ancestors(lines: &[&str], def: usize) -> Option<Vec<Title>> {
     Some(out)
 }
 
-/// One definition of a test file: a test, or a template.
-struct Found<'a> {
+/// The count of the calls of the scan and of the classification, for the guard
+/// of the work of a bind.
+#[cfg(test)]
+mod calls {
+    use std::cell::Cell;
+    thread_local! {
+        static COUNTS: Cell<[usize; 3]> = const { Cell::new([0; 3]) };
+    }
+    pub const TESTS_OF: usize = 0;
+    pub const ANCESTORS: usize = 1;
+    pub const JUDGE: usize = 2;
+    pub fn count(of: usize) {
+        COUNTS.with(|c| {
+            let mut n = c.get();
+            n[of] += 1;
+            c.set(n);
+        });
+    }
+    pub fn reset() {
+        COUNTS.with(|c| c.set([0; 3]));
+    }
+    pub fn get() -> [usize; 3] {
+        COUNTS.with(Cell::get)
+    }
+}
+
+/// One definition of a test file.
+struct Found {
     line: usize,
     /// The first line of the items of the definition.
     first: usize,
-    text: &'a str,
+    form: Form,
     test: TestName,
 }
 
-/// The definitions of a file. It reads the file once. A template with a literal
-/// and no placeholder (`it.each(rows)('closes')`) gives a name too.
-fn tests_of<'a>(lines: &[&'a str]) -> Vec<Found<'a>> {
+/// The literal of the title of a `.each` call whose table starts on the line
+/// `def` and ends on a later one: `])('closes %s', ...)`, with the literal also
+/// on the next line.
+fn table_title(lines: &[&str], def: usize) -> Option<String> {
+    let at = lines[def].find(".each(")? + ".each".len();
+    let end = (def + SCAN_LINES).min(lines.len());
+    let (line, off) = close_of(lines, def, at, end)?;
+    let mut rest = lines[line][off..]
+        .trim_start()
+        .strip_prefix('(')?
+        .trim_start();
+    if rest.is_empty() {
+        rest = lines.get(line + 1)?.trim_start();
+    }
+    literal(rest).map(str::to_string)
+}
+
+/// The definitions of a file, and its templates with a placeholder: the line and
+/// the literal. It reads the file once. A template with a literal and no
+/// placeholder (`it.each(rows)('closes')`) gives a name.
+fn tests_of(lines: &[&str]) -> (Vec<Found>, Vec<(usize, String)>) {
+    #[cfg(test)]
+    calls::count(calls::TESTS_OF);
     let mut out = Vec::new();
+    let mut templates = Vec::new();
     let mut i = 0;
     while i < lines.len() {
         let t = lines[i].trim();
@@ -1286,29 +1345,167 @@ fn tests_of<'a>(lines: &[&'a str]) -> Vec<Found<'a>> {
         };
         let test = match classify(d.text, d.annotated) {
             Some(Under::Test(t)) => Some(t),
-            Some(Under::Template(name))
-                if !name.is_empty() && !name.contains(['%', '$']) && !name.contains("#{") =>
-            {
-                Some(TestName {
-                    name,
-                    call: true,
-                    bt: false,
-                    recv: None,
-                })
+            Some(Under::Template(name)) if name.contains(['%', '$']) || name.contains("#{") => {
+                templates.push((d.line, name));
+                None
             }
+            // A table on more than one line: its title is a template of the
+            // file, also with no placeholder.
+            Some(Under::Template(name)) if name.is_empty() => {
+                templates.extend(table_title(lines, d.line).map(|title| (d.line, title)));
+                None
+            }
+            Some(Under::Template(name)) => Some(TestName {
+                name,
+                call: true,
+                bt: false,
+                recv: None,
+            }),
             _ => None,
         };
         if let Some(test) = test {
             out.push(Found {
                 line: d.line,
                 first: d.first,
-                text: d.text,
+                form: form_of(&test, d.text),
                 test,
             });
         }
         i = d.line + 1;
     }
-    out
+    (out, templates)
+}
+
+/// True if the literal of a template can give `title`, when each placeholder
+/// reads as any text: `%s`, `$name`, `${...}` and `#{...}`.
+fn template_makes(literal: &str, title: &str) -> bool {
+    let word = |c: char| c.is_alphanumeric() || c == '_' || c == '.' || c == '#';
+    let mut parts = Vec::new();
+    let (mut from, mut i) = (0, 0);
+    while i < literal.len() {
+        let rest = &literal[i..];
+        let mut chars = rest.chars();
+        let first = chars.next().unwrap_or(' ');
+        let next = chars.next();
+        let placeholder = match (first, next) {
+            ('$' | '#', Some('{')) => {
+                let one = [&rest[1..]];
+                Some(close_of(&one, 0, 0, 1).map_or(rest.len(), |(_, end)| end + 1))
+            }
+            ('%', Some(c)) => Some(1 + c.len_utf8()),
+            ('$', Some(c)) if word(c) => {
+                Some(1 + rest[1..].find(|c| !word(c)).unwrap_or(rest.len() - 1))
+            }
+            _ => None,
+        };
+        match placeholder {
+            Some(n) => {
+                parts.push(&literal[from..i]);
+                i += n;
+                from = i;
+            }
+            None => i += first.len_utf8(),
+        }
+    }
+    parts.push(&literal[from..]);
+    let [head, middle @ .., tail] = parts.as_slice() else {
+        return literal == title;
+    };
+    let Some(mut left) = title.strip_prefix(head).and_then(|t| t.strip_suffix(tail)) else {
+        return false;
+    };
+    middle.iter().all(|part| {
+        left.find(part)
+            .map(|at| left = &left[at + part.len()..])
+            .is_some()
+    })
+}
+
+/// A line, to the groups around it (`ancestors`).
+type Chains = RefCell<HashMap<usize, Option<Rc<[Title]>>>>;
+
+/// What a bind reads of one test file. It is built once for all tags of the
+/// file.
+struct Facts {
+    tests: Vec<Found>,
+    /// A name of a test, with and without a `[<project>] ` prefix, to the
+    /// definitions of `tests` that have it.
+    by_name: HashMap<String, Vec<usize>>,
+    templates: Vec<(usize, String)>,
+    /// The lines `include_examples` and `include_context` of RSpec.
+    includes: Vec<usize>,
+    /// The names of the `mod` blocks.
+    modules: HashSet<String>,
+    /// A display name, to the lines of the methods that have it.
+    displays: HashMap<String, Vec<usize>>,
+    /// The chain of each line that a bind asked for.
+    chains: Chains,
+}
+
+impl Facts {
+    fn of(lines: &[&str]) -> Facts {
+        let (tests, templates) = tests_of(lines);
+        let mut by_name: HashMap<String, Vec<usize>> = HashMap::new();
+        let mut displays: HashMap<String, Vec<usize>> = HashMap::new();
+        for (i, f) in tests.iter().enumerate() {
+            let name = f.test.name.as_str();
+            by_name.entry(name.to_string()).or_default().push(i);
+            if without_project(name) != name {
+                let short = without_project(name).to_string();
+                by_name.entry(short).or_default().push(i);
+            }
+            if f.form == Form::Method
+                && let Some(Some(display)) = display_name(lines, f.first, f.line)
+            {
+                displays.entry(display).or_default().push(f.line);
+            }
+        }
+        let mut includes = Vec::new();
+        let mut modules = HashSet::new();
+        for (i, line) in lines.iter().enumerate() {
+            let t = line.trim_start();
+            let include = ["include_examples", "include_context"]
+                .iter()
+                .any(|w| t.strip_prefix(w).is_some_and(|r| r.starts_with([' ', '('])));
+            if include {
+                includes.push(i);
+            }
+            if t.contains("mod ")
+                && !is_comment(t)
+                && let Some(Some(group)) = group_title(t)
+                && group.kind == GroupKind::Module
+            {
+                modules.insert(group.text);
+            }
+        }
+        Facts {
+            tests,
+            by_name,
+            templates,
+            includes,
+            modules,
+            displays,
+            chains: RefCell::new(HashMap::new()),
+        }
+    }
+
+    /// `ancestors` of a line, once for each line.
+    fn chain(&self, lines: &[&str], line: usize) -> Option<Rc<[Title]>> {
+        self.chains
+            .borrow_mut()
+            .entry(line)
+            .or_insert_with(|| ancestors(lines, line).map(Rc::from))
+            .clone()
+    }
+
+    /// The definitions with this name, also behind a project prefix.
+    fn named<'f>(&'f self, name: &str) -> impl Iterator<Item = &'f Found> {
+        self.by_name
+            .get(name)
+            .into_iter()
+            .flatten()
+            .map(|i| &self.tests[*i])
+    }
 }
 
 /// The dotted path of a file: the path without its extension, with `.` for `/`.
@@ -1441,21 +1638,21 @@ fn suite_types(call: &str) -> Vec<String> {
     out
 }
 
-/// The functions that run the Go suite of the type `ty` and that can name its
-/// method `method`. A function `func TestX(t *testing.T)` of the files runs a
-/// type when its lines have `suite.Run(t, new(<Type>))` or `suite.Run(t,
-/// &<Type>{...})`. The result leaves out a function that also runs another type
-/// with a method of the same name: the cases of both methods have one name, so
-/// they bind to neither. The result is empty when no function runs the type,
-/// and then the method binds no case.
-pub fn suite_funcs<'a>(
-    texts: impl IntoIterator<Item = &'a str>,
-    ty: &str,
-    method: &str,
-) -> Vec<String> {
-    let mut runs: Vec<(String, String)> = Vec::new();
-    let mut methods: HashSet<(String, String)> = HashSet::new();
-    for text in texts {
+/// The functions of the test files of a Go package that run suites, and the
+/// methods of the types.
+#[derive(Default)]
+struct Suites {
+    /// A test function, and a type that it runs.
+    runs: Vec<(String, String)>,
+    /// A type, and a method of it.
+    methods: HashSet<(String, String)>,
+}
+
+impl Suites {
+    /// Adds the lines of one file. A function `func TestX(t *testing.T)` runs a
+    /// type when its lines have `suite.Run(t, new(<Type>))` or `suite.Run(t,
+    /// &<Type>{...})`.
+    fn read(&mut self, text: &str) {
         let mut current: Option<&str> = None;
         for line in text.lines() {
             if let Some(rest) = line.strip_prefix("func ") {
@@ -1468,7 +1665,7 @@ pub fn suite_funcs<'a>(
                         let after = rest[close + 1..].trim_start();
                         let name = &after[..ident_end(after)];
                         if !recv.is_empty() && !name.is_empty() {
-                            methods.insert((recv.to_string(), name.to_string()));
+                            self.methods.insert((recv.to_string(), name.to_string()));
                         }
                     }
                 } else {
@@ -1481,21 +1678,39 @@ pub fn suite_funcs<'a>(
                 && let Some(at) = line.find("suite.Run(")
             {
                 for t in suite_types(&line[at..]) {
-                    runs.push((func.to_string(), t));
+                    self.runs.push((func.to_string(), t));
                 }
             }
         }
     }
-    let mut out: Vec<String> = Vec::new();
-    for (func, t) in &runs {
-        let clash = runs.iter().any(|(g, other)| {
-            g == func && other != ty && methods.contains(&(other.clone(), method.to_string()))
-        });
-        if t == ty && !clash && !out.contains(func) {
-            out.push(func.clone());
+
+    /// The functions that run the Go suite of the type `ty` and that can name
+    /// its method `method`. The result leaves out a function that also runs
+    /// another type with a method of the same name: the cases of both methods
+    /// have one name, so they bind to neither. The result is empty when no
+    /// function runs the type, and then the method binds no case.
+    fn funcs(&self, ty: &str, method: &str) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for (func, t) in &self.runs {
+            let clash = self.runs.iter().any(|(g, other)| {
+                g == func
+                    && other != ty
+                    && self.methods.contains(&(other.clone(), method.to_string()))
+            });
+            if t == ty && !clash && !out.contains(func) {
+                out.push(func.clone());
+            }
         }
+        out
     }
-    out
+}
+
+/// What a bind reads of the `_test.go` files of one folder. They are read once.
+#[derive(Default)]
+struct GoFolder {
+    suites: Suites,
+    /// A receiver and a name of a `func`, to the files that define it.
+    funcs: HashMap<(Option<String>, String), HashSet<String>>,
 }
 
 /// The path of the folder of a file, or an empty text for a file in the root.
@@ -1543,6 +1758,34 @@ struct Target {
     root: String,
     part: Part,
     module: Vec<String>,
+    /// For a module of `src/`, the root file that declares it. `None` when the
+    /// roots do not tell: both declare it, or no root file is there.
+    declared: Option<Root>,
+}
+
+/// A root file of a crate: `src/lib.rs` or `src/main.rs`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Root {
+    Lib,
+    Main,
+}
+
+/// True if the root file declares the module with the line `mod <name>;`, with
+/// no indent.
+fn declares_module(text: &str, name: &str) -> bool {
+    text.lines().any(|line| {
+        if indent(line) != 0 || !line.contains(name) {
+            return false;
+        }
+        let mut off = 0;
+        while let Some((_, end)) = skip_item(&[line], 0, off, 1) {
+            off = end;
+        }
+        strip_modifiers(&line[off..])
+            .strip_prefix("mod ")
+            .and_then(|r| r.trim_start().strip_prefix(name))
+            .is_some_and(|r| r.trim_start().starts_with(';'))
+    })
 }
 
 impl Target {
@@ -1608,42 +1851,86 @@ fn rust_target(path: &str, files: &HashSet<&str>) -> Option<Target> {
             _ => (Part::Module, module(rest, &["mod"])),
         }
     };
-    Some(Target { root, part, module })
+    Some(Target {
+        root,
+        part,
+        module,
+        declared: None,
+    })
 }
 
-/// What the test files name: their paths, the ends of their paths and of their
-/// dotted paths, the folders of Go and the targets of Rust. Each count is the
-/// number of the files, for the rule that an identity must be unique.
+/// The number of files of one family whose dotted path ends with a name, and
+/// the number whose whole dotted path is the name.
+struct Dotted<'t> {
+    family: &'t str,
+    ends: usize,
+    whole: usize,
+}
+
+/// What the files of the code tree name, with the test files that git does not
+/// track: their paths, the ends of their paths and of their dotted paths, their
+/// stems and folders, the folders of Go and the targets of Rust. Each count is
+/// the number of the files, for the rule that an identity must be unique.
 struct Names<'t> {
     whole: HashSet<&'t str>,
     ends: HashMap<&'t str, usize>,
-    /// (family, dotted path) to the number of files with it.
-    dotted_whole: HashMap<(&'t str, String), usize>,
-    /// (family, end of a dotted path) to the number of files with it.
-    dotted: HashMap<(&'t str, String), usize>,
+    /// An end of a dotted path, to its counts for each family.
+    dotted: HashMap<String, Vec<Dotted<'t>>>,
     /// (family) to the number of files.
     families: HashMap<&'t str, usize>,
-    /// The stem of a C# file to the number of files with it.
-    stems: HashMap<&'t str, usize>,
+    /// The stem of each file, and the folder of a file with the stem `main`.
+    stems: HashSet<&'t str>,
+    folders: HashSet<&'t str>,
+    folder_names: HashSet<&'t str>,
     go_folders: Vec<&'t str>,
+    /// A folder, to its `_test.go` files.
+    go_tests: HashMap<&'t str, Vec<&'t str>>,
     /// The key of a Rust target to the folders of the crates that have it.
     rust: HashMap<String, HashSet<String>>,
 }
 
+/// The stem of a file as the binary id of nextest writes it: the name of the
+/// folder when the stem is `main`.
+fn binary_stem(path: &str) -> &str {
+    let (folder, file) = path.rsplit_once('/').unwrap_or(("", path));
+    match file.rsplit_once('.').map_or(file, |(stem, _)| stem) {
+        "main" => base_name(folder),
+        stem => stem,
+    }
+}
+
+/// The part of a path after its last `/`.
+fn base_name(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+
+/// True if a `classname` ends with the extension of a script. A spec file in
+/// the root of the runner has no `/`: the extension shows that it is a path.
+fn is_script(classname: &str) -> bool {
+    classname.rsplit_once('.').is_some_and(|(_, e)| {
+        matches!(
+            e,
+            "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs" | "mts" | "cts" | "vue" | "svelte"
+        )
+    })
+}
+
 impl<'t> Names<'t> {
-    fn new(test_files: &'t [String]) -> Names<'t> {
+    fn new(paths: &'t [String]) -> Names<'t> {
         let mut n = Names {
-            whole: test_files.iter().map(String::as_str).collect(),
+            whole: paths.iter().map(String::as_str).collect(),
             ends: HashMap::new(),
-            dotted_whole: HashMap::new(),
             dotted: HashMap::new(),
             families: HashMap::new(),
-            stems: HashMap::new(),
+            stems: HashSet::new(),
+            folders: HashSet::new(),
+            folder_names: HashSet::new(),
             go_folders: Vec::new(),
+            go_tests: HashMap::new(),
             rust: HashMap::new(),
         };
-        let mut folders = HashSet::new();
-        let files: Vec<&'t str> = test_files.iter().map(String::as_str).collect();
+        let mut go = HashSet::new();
+        let files: Vec<&'t str> = paths.iter().map(String::as_str).collect();
         for f in files {
             for end in path_ends(f) {
                 *n.ends.entry(end).or_default() += 1;
@@ -1652,15 +1939,30 @@ impl<'t> Names<'t> {
             *n.families.entry(fam).or_default() += 1;
             let d = dotted(f);
             for end in dotted_ends(&d) {
-                *n.dotted.entry((fam, end.to_string())).or_default() += 1;
+                let counts = n.dotted.entry(end.to_string()).or_default();
+                let at = counts.iter().position(|c| c.family == fam);
+                let at = at.unwrap_or_else(|| {
+                    counts.push(Dotted {
+                        family: fam,
+                        ends: 0,
+                        whole: 0,
+                    });
+                    counts.len() - 1
+                });
+                counts[at].ends += 1;
+                counts[at].whole += usize::from(end.len() == d.len());
             }
-            *n.dotted_whole.entry((fam, d)).or_default() += 1;
-            if fam == "cs" {
-                let name = f.rsplit('/').next().unwrap_or(f);
-                *n.stems.entry(name.trim_end_matches(".cs")).or_default() += 1;
+            n.stems.insert(binary_stem(f));
+            let folder = folder_of(f);
+            if !folder.is_empty() {
+                n.folders.insert(folder);
+                n.folder_names.insert(base_name(folder));
             }
-            if fam == "go" && folders.insert(folder_of(f)) {
-                n.go_folders.push(folder_of(f));
+            if fam == "go" && go.insert(folder) {
+                n.go_folders.push(folder);
+            }
+            if f.ends_with("_test.go") {
+                n.go_tests.entry(folder).or_default().push(f);
             }
             if let Some(t) = rust_target(f, &n.whole) {
                 n.rust.entry(t.key()).or_default().insert(t.root);
@@ -1669,7 +1971,7 @@ impl<'t> Names<'t> {
         n
     }
 
-    /// The number of test files that the path of a case names.
+    /// The number of files that the path of a case names.
     fn files_named(&self, case_file: &str) -> usize {
         let shorter = path_ends(case_file)
             .skip(1)
@@ -1678,26 +1980,70 @@ impl<'t> Names<'t> {
         self.ends.get(case_file).copied().unwrap_or(0) + shorter
     }
 
-    /// The number of test files of a family whose dotted path relates to
-    /// `name`. An empty name relates to each file of the family.
-    fn dotted_named(&self, path: &str, name: &str) -> usize {
+    /// The counts of a dotted name for the family of `path`.
+    fn counts(&self, path: &str, name: &str) -> Option<&Dotted<'t>> {
         let fam = family(path);
+        self.dotted.get(name)?.iter().find(|c| c.family == fam)
+    }
+
+    /// The number of files of a family whose dotted path ends with `name`.
+    fn dotted_ending(&self, path: &str, name: &str) -> usize {
+        self.counts(path, name).map_or(0, |c| c.ends)
+    }
+
+    /// The number of files of a family whose dotted path relates to `name`. An
+    /// empty name relates to each file of the family.
+    fn dotted_named(&self, path: &str, name: &str) -> usize {
         if name.is_empty() {
-            return self.families.get(fam).copied().unwrap_or(0);
+            return self.families.get(family(path)).copied().unwrap_or(0);
         }
-        // The key borrows nothing from the maps.
-        let get = |map: &HashMap<(&'t str, String), usize>, key: &str| {
-            self.families
-                .get_key_value(fam)
-                .and_then(|(f, _)| map.get(&(*f, key.to_string())))
-                .copied()
-                .unwrap_or(0)
-        };
         let shorter: usize = dotted_ends(name)
             .skip(1)
-            .map(|e| get(&self.dotted_whole, e))
+            .map(|e| self.counts(path, e).map_or(0, |c| c.whole))
             .sum();
-        get(&self.dotted, name) + shorter
+        self.dotted_ending(path, name) + shorter
+    }
+
+    /// True if the `classname` of a case names a file of the tree in full and
+    /// does not name the test file `path`, by the file test of its shape
+    /// (design 0.8.1, D82 item 6). A text with a space is a title, which names
+    /// no file.
+    fn names_another_file(&self, classname: &str, path: &str) -> bool {
+        if let Some((_, rest)) = classname.rsplit_once("::") {
+            let stem = base_name(rest);
+            return self.stems.contains(stem) && binary_stem(path) != stem;
+        }
+        let slashed = report_path(classname);
+        if is_script(&slashed) || classname.contains('/') && base_name(&slashed).contains('.') {
+            return self.files_named(&slashed) > 0 && !same_file(&slashed, path);
+        }
+        if classname.contains('/') {
+            let ends = |folder: &str| {
+                slashed == folder
+                    || slashed
+                        .strip_suffix(folder)
+                        .is_some_and(|r| r.ends_with('/'))
+            };
+            let own = folder_of(path);
+            return path_ends(&slashed).any(|e| self.folders.contains(e))
+                && (own.is_empty() || !ends(own));
+        }
+        if classname.contains(char::is_whitespace) {
+            return false;
+        }
+        let name = classname.replace(['$', '+', '\\'], ".");
+        let head = name.rsplit_once('.').map(|(head, _)| head);
+        // A name of one segment also names a file of a folder with the name.
+        let in_folder = head.is_none() && self.folder_names.contains(name.as_str());
+        let named = self.dotted.contains_key(&name)
+            || head.is_some_and(|h| self.dotted.contains_key(h))
+            || in_folder;
+        if !named {
+            return false;
+        }
+        let own = dotted(path);
+        let own_folder = head.is_none() && base_name(folder_of(path)) == name;
+        !(relates(&own, &name) || head.is_some_and(|h| relates(&own, h)) || own_folder)
     }
 }
 
@@ -1733,17 +2079,58 @@ fn without_project(name: &str) -> &str {
     }
 }
 
-/// The keys of a case name for the index, each a part of the name, and true for
-/// a head with more words than the keys hold. The keys are:
+/// The head of a name: the part before the first place where a row tail starts.
+fn head_of(name: &str) -> &str {
+    name.char_indices()
+        .skip(1)
+        .find(|(i, _)| tail_at(name, *i))
+        .map_or(name, |(i, _)| name[..i].trim_end())
+}
+
+/// The part of a text after its last space.
+fn last_word(text: &str) -> &str {
+    text.rsplit(' ').next().unwrap_or(text)
+}
+
+/// The part of a name after its last separator of segments.
+fn last_segment(name: &str) -> &str {
+    SEPS.iter()
+        .filter_map(|s| name.rfind(s).map(|i| i + s.len()))
+        .max()
+        .map_or(name, |i| &name[i..])
+}
+
+/// The whole segments of a text, between the separators `SEPS`.
+fn segments(text: &str) -> Vec<&str> {
+    let mut cuts: Vec<(usize, usize)> = SEPS
+        .iter()
+        .flat_map(|s| text.match_indices(s).map(|(i, _)| (i, i + s.len())))
+        .collect();
+    cuts.sort_unstable();
+    let mut out = Vec::new();
+    let mut from = 0;
+    for (a, b) in cuts {
+        if a >= from {
+            out.push(&text[from..a]);
+            from = b;
+        }
+    }
+    out.push(&text[from..]);
+    out
+}
+
+/// The keys of a case name for the index, each a part of the name:
 ///
 /// - the whole name, and the name without a `[<project>] ` prefix;
 /// - the prefixes before the first 32 places where a row tail, a `::` or a `/`
 ///   starts (in the first 256 bytes);
-/// - for a head that is not too long: each whole segment of the head, and, when
-///   it has no segment of ` > `, each end of it after one of its last 32 spaces.
+/// - for a head that is not too long, each whole segment of the head;
+/// - the last word of the name. A title ends a name after a space only when
+///   both have one last word. When parameters in `(` or `[` follow the head, the
+///   last word of the head too, for a Kotlin name in backticks.
 ///
-/// A name has at most 98 keys, and one more with a project prefix.
-fn case_keys(name: &str) -> (Vec<&str>, bool) {
+/// A name has at most 67 keys, and one more with a project prefix.
+fn case_keys(name: &str) -> Vec<&str> {
     let base = without_project(name);
     let mut keys = vec![name, base];
     let mut prefixes = 0;
@@ -1770,32 +2157,40 @@ fn case_keys(name: &str) -> (Vec<&str>, bool) {
             break;
         }
     }
+    let parameters = base[head..].trim_start().starts_with(['(', '[']);
     let head = base[..head].trim_end();
-    let mut wordy = false;
     if !is_long(head) {
-        let mut cuts: Vec<(usize, usize)> = SEPS
-            .iter()
-            .flat_map(|s| head.match_indices(s).map(|(i, _)| (i, i + s.len())))
-            .collect();
-        cuts.sort_unstable();
-        let mut from = 0;
-        for (a, b) in cuts {
-            if a >= from {
-                keys.push(&head[from..a]);
-                from = b;
-            }
-        }
-        keys.push(&head[from..]);
-        if !head.contains(" > ") && !head.contains(" \u{203a} ") {
-            let mut spaces = head.rmatch_indices(' ');
-            keys.extend(spaces.by_ref().take(LONG_SEPS).map(|(p, _)| &head[p + 1..]));
-            wordy = spaces.next().is_some();
-        }
+        keys.extend(segments(head));
+    }
+    keys.push(last_word(base));
+    if parameters {
+        keys.push(last_word(head));
     }
     keys.retain(|k| !k.is_empty());
     keys.sort_unstable();
     keys.dedup();
-    (keys, wordy)
+    keys
+}
+
+/// The keys of a name that is too long to read. They serve the reason
+/// `long-name` only: the first and the last segments of its head, and its last
+/// words.
+fn long_keys(name: &str) -> Vec<&str> {
+    let base = without_project(name);
+    let head = head_of(base);
+    let all = segments(head);
+    let ends = LONG_SEPS + 1;
+    let mut keys: Vec<&str> = all
+        .iter()
+        .take(ends)
+        .chain(all.iter().rev().take(ends))
+        .copied()
+        .collect();
+    keys.extend([last_word(base), last_word(head)]);
+    keys.retain(|k| !k.is_empty());
+    keys.sort_unstable();
+    keys.dedup();
+    keys
 }
 
 /// The cases of one key. Most keys have one case, so an entry of the index is
@@ -1878,7 +2273,7 @@ fn form_of(test: &TestName, text: &str) -> Form {
 
 /// A row of the identity rule (docs/test-report.md): the form of the
 /// definition and the shape of the case.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Row {
     /// A case with no `classname`: the line format.
     Lines,
@@ -1896,6 +2291,23 @@ enum Row {
     /// Vitest and Playwright.
     PathTitles,
     JestDefaults,
+}
+
+impl Row {
+    /// Each row, in the order of its number.
+    const ALL: [Row; 11] = [
+        Row::Lines,
+        Row::Unlisted,
+        Row::PytestXunit2,
+        Row::PytestXunit1,
+        Row::Nextest,
+        Row::Go,
+        Row::Jvm,
+        Row::Phpunit,
+        Row::FileTitles,
+        Row::PathTitles,
+        Row::JestDefaults,
+    ];
 }
 
 fn row_of(form: Form, case: &Case) -> Row {
@@ -1916,15 +2328,7 @@ fn row_of(form: Form, case: &Case) -> Row {
     }
     let binary = cn.contains("::");
     let path = !binary && cn.contains(['/', '\\']);
-    // A spec file in the root of the runner has no `/`: its extension shows
-    // that the `classname` is a path.
-    let script = !binary
-        && cn.rsplit_once('.').is_some_and(|(_, e)| {
-            matches!(
-                e,
-                "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs" | "mts" | "cts" | "vue" | "svelte"
-            )
-        });
+    let script = !binary && is_script(cn);
     let extension = script || path && cn.rsplit(['/', '\\']).next().unwrap_or(cn).contains('.');
     // The name of a Cargo package has no dot and no space.
     let package = cn
@@ -2116,10 +2520,17 @@ fn part_field(target: &Target, id: Option<&Part>, package: Option<&str>) -> Fiel
                 Field::Unread
             }
         }
-        // A module belongs to the library, or to a binary: the path does not
-        // tell which.
-        (Part::Module, Some(Part::Lib)) => Field::Same,
-        (Part::Module, Some(Part::Bin(_))) => Field::Unread,
+        // A module belongs to the target of the root file that declares it.
+        (Part::Module, Some(Part::Lib)) => match target.declared {
+            Some(Root::Lib) => Field::Same,
+            Some(Root::Main) => Field::Differs,
+            None => Field::Unread,
+        },
+        (Part::Module, Some(Part::Bin(b))) => match target.declared {
+            Some(Root::Main) if package == Some(b.as_str()) => Field::Same,
+            Some(Root::Lib) => Field::Differs,
+            _ => Field::Unread,
+        },
         _ => Field::Differs,
     }
 }
@@ -2130,7 +2541,7 @@ struct Identity<'p> {
     test: TestName,
     form: Form,
     /// The groups around the definition. `None`: the scanner cannot read them.
-    chain: Option<Vec<Title>>,
+    chain: Option<Rc<[Title]>>,
     /// False for a title of a call that is not the whole literal.
     plain: bool,
     /// The functions that run the Go suite of the method.
@@ -2140,15 +2551,44 @@ struct Identity<'p> {
     target: Option<Target>,
     cargo: Option<String>,
     go: Option<GoModule>,
-    /// The other definitions of the tag file.
-    others: Vec<Found<'p>>,
-    lines: &'p [&'p str],
-    /// The `classname` of pytest: the dotted path and the classes. A tag can
-    /// have thousands of cases to read, so it is built once.
+    /// The names that a case of the test has in each row (`build_heads`), by the
+    /// number of the row, and the names to look up: a tag can have thousands of
+    /// cases to read, so each one is built once.
+    heads: [Vec<String>; Row::ALL.len()],
+    lookups: Vec<String>,
+    /// The `classname` of pytest: the dotted path and the classes.
     pytest: Option<String>,
-    /// True if the file of a test of the form call has a template. A template
-    /// can give any title, also the title of the test.
-    templates: bool,
+    /// What the other definitions build.
+    twins: Twins,
+}
+
+/// The identities that other definitions of the project build too (design
+/// 0.8.1, D82). It is built once for a tag, so that a case is compared with no
+/// definition.
+#[derive(Default)]
+struct Twins {
+    /// Another definition builds the identity of the tag.
+    all: bool,
+    /// The names of cases that another definition builds.
+    names: HashSet<String>,
+    /// For `fn`: the paths of the tests in a `mod` with the name of the test. A
+    /// row of the test can have such a path.
+    below: HashSet<String>,
+}
+
+impl Twins {
+    /// True if another definition builds the name of the case.
+    fn builds(&self, case: &str, name: &str) -> bool {
+        self.all
+            || self.names.contains(name)
+            || self.names.contains(case)
+            || !self.below.is_empty()
+                && case
+                    .match_indices("::")
+                    .map(|(i, _)| i)
+                    .chain([case.len()])
+                    .any(|i| self.below.contains(&case[..i]))
+    }
 }
 
 /// The case that names the test, as the rule judges it.
@@ -2283,7 +2723,11 @@ impl Identity<'_> {
 
     /// The names that a case of the test has in this row, before its row tail.
     /// Empty when the scanner cannot build the name.
-    fn heads(&self, row: Row) -> Vec<String> {
+    fn heads(&self, row: Row) -> &[String] {
+        &self.heads[row as usize]
+    }
+
+    fn build_heads(&self, row: Row) -> Vec<String> {
         let name = &self.test.name;
         match row {
             Row::PytestXunit2 | Row::PytestXunit1 => vec![name.clone()],
@@ -2321,15 +2765,15 @@ impl Identity<'_> {
 
     /// The names to look up in the index, for each row of the form. A case of
     /// the line format has one of them.
-    fn lookups(&self) -> Vec<String> {
+    fn build_lookups(&self) -> Vec<String> {
         let name = &self.test.name;
         let mut out = vec![name.clone()];
         match self.form {
             Form::Def => {}
             Form::Fn => out.extend(self.module_path()),
-            Form::Func => out.extend(self.heads(Row::Go)),
+            Form::Func => out.extend(self.build_heads(Row::Go)),
             Form::Method => {
-                out.extend(self.heads(Row::Jvm));
+                out.extend(self.build_heads(Row::Jvm));
                 out.extend(self.display.clone().flatten());
             }
             Form::Call => {
@@ -2382,7 +2826,7 @@ impl Identity<'_> {
             }
         }
         name_match(case, &self.test)
-            || self.lookups().iter().any(|l| l == without_project(case))
+            || self.lookups.iter().any(|l| l == without_project(case))
             || [
                 Row::PytestXunit2,
                 Row::Nextest,
@@ -2461,6 +2905,23 @@ impl Identity<'_> {
         }
     }
 
+    /// True if the built identity of the row ties a `classname` to the tag file,
+    /// also where the field is not read in full: the class chain of the JVM and
+    /// .NET, and the manifest of Rust and Go.
+    fn ties(&self, row: Row, classname: &str) -> bool {
+        match row {
+            Row::Nextest | Row::Go => true,
+            Row::Jvm => {
+                let cn = classname.replace(['$', '+'], ".");
+                // An unreadable chain gives nothing to compare.
+                self.classes()
+                    .is_none_or(|classes| ends_in_segments(&cn, &classes))
+                    || matches!(&self.package, Package::Line(p) if cn == self.outer(p))
+            }
+            _ => false,
+        }
+    }
+
     /// True for a test of a class inside a class.
     fn nested(&self) -> bool {
         self.groups()
@@ -2476,59 +2937,111 @@ impl Identity<'_> {
         format!("{package}.{top}")
     }
 
-    /// True if another definition of the tag file builds the name of the case.
-    fn twin(&self, case: &str, name: &str) -> bool {
-        let mine = self.groups();
-        self.others.iter().any(|o| {
-            if self.form == Form::Call {
-                let t = o.test.name.as_str();
-                if !o.test.call || !(name.ends_with(t) || case.ends_with(t)) {
-                    return false;
+    /// What the other definitions build. Only a definition that can build a name
+    /// of the test gets its chain. `tagged` is the line of the definition of the
+    /// tag, and `folder` holds the `_test.go` files of a Go test.
+    fn build_twins(
+        &self,
+        facts: &Facts,
+        lines: &[&str],
+        tagged: usize,
+        folder: Option<&GoFolder>,
+    ) -> Twins {
+        let mut twins = Twins::default();
+        let name = self.test.name.as_str();
+        let titles = |c: &[Title]| c.iter().map(|t| t.text.clone()).collect::<Vec<_>>();
+        let mine = self.groups().map(titles);
+        let theirs = |line: usize| facts.chain(lines, line).map(|c| titles(&c));
+        if self.form == Form::Call {
+            let Some(mine) = &mine else {
+                return twins;
+            };
+            let heads = self.groups().map(|c| full_titles(c, name));
+            let heads = heads.iter().flatten();
+            // A title can end a full title only after a space.
+            let mut ends: HashSet<&str> = heads
+                .clone()
+                .flat_map(|h| {
+                    let after = h.match_indices(' ').map(|(i, _)| &h[i + 1..]);
+                    std::iter::once(h.as_str()).chain(after)
+                })
+                .collect();
+            ends.insert(name);
+            for t in ends {
+                for o in facts.named(t).filter(|o| o.line != tagged && o.test.call) {
+                    let literal = o.test.name.as_str();
+                    match facts.chain(lines, o.line) {
+                        // A group that the scanner cannot read can build it.
+                        None => twins.all |= literal == name,
+                        Some(chain) => twins.names.extend(
+                            full_titles(&chain, literal)
+                                .into_iter()
+                                .filter(|f| heads.clone().any(|h| h == without_project(f))),
+                        ),
+                    }
                 }
-                return match ancestors(self.lines, o.line) {
-                    // A group that the scanner cannot read can build it.
-                    None => t == self.test.name,
-                    Some(chain) => full_titles(&chain, t)
-                        .iter()
-                        .any(|f| f == name || f == case),
-                };
             }
-            // A display name replaces the name of the method in some runners.
-            if self.form == Form::Method
-                && display_name(self.lines, o.first, o.line)
-                    .flatten()
-                    .is_some_and(|d| d == case)
-            {
-                return true;
-            }
-            if form_of(&o.test, o.text) != self.form || o.test.recv != self.test.recv {
-                return false;
-            }
-            let theirs = ancestors(self.lines, o.line);
-            // The cases of a `mod` with the name of the test look as its rows.
-            if self.form == Form::Fn
-                && let (Some(path), Some(chain), Some(target)) =
-                    (self.module_path(), &theirs, &self.target)
-            {
-                let mut other = target.module.clone();
-                other.extend(chain.iter().map(|t| t.text.clone()));
-                other.push(o.test.name.clone());
-                let other = other.join("::");
-                if case.starts_with(&format!("{path}::")) && case.starts_with(&other) {
-                    return other.len() > path.len();
-                }
-            }
-            if o.test.name != self.test.name {
-                return false;
-            }
-            let (Some(mine), Some(theirs)) = (mine, &theirs) else {
+            // A template of the same chain, and examples of another file in a
+            // group of the chain.
+            twins.all |= facts.templates.iter().any(|(line, literal)| {
+                *line != tagged
+                    && template_makes(literal, name)
+                    && theirs(*line).is_none_or(|c| &c == mine)
+            });
+            twins.all |= facts
+                .includes
+                .iter()
+                .any(|line| theirs(*line).is_none_or(|c| mine.starts_with(&c)));
+            return twins;
+        }
+        // A display name replaces the name of the method in some runners.
+        if self.form == Form::Method {
+            twins.names.extend(
+                facts
+                    .displays
+                    .iter()
+                    .filter(|(_, at)| at.iter().any(|line| *line != tagged))
+                    .map(|(display, _)| display.clone()),
+            );
+        }
+        let alike =
+            |o: &&Found| o.line != tagged && o.form == self.form && o.test.recv == self.test.recv;
+        let same = |o: &&Found| alike(o) && o.test.name == name;
+        twins.all |= facts.named(name).filter(same).any(|o| {
+            let (Some(mine), Some(theirs)) = (&mine, theirs(o.line)) else {
                 return true;
             };
-            let titles = |c: &[Title]| c.iter().map(|t| t.text.clone()).collect::<Vec<_>>();
-            let (mine, theirs) = (titles(mine), titles(theirs));
             // A newer Surefire writes the outer class for a nested one.
-            mine == theirs || (self.form == Form::Method && theirs.starts_with(&mine))
-        })
+            mine == &theirs || (self.form == Form::Method && theirs.starts_with(mine))
+        });
+        // The cases of a `mod` with the name of the test look as its rows.
+        if self.form == Form::Fn
+            && facts.modules.contains(name)
+            && let (Some(path), Some(target)) = (self.module_path(), &self.target)
+        {
+            let below = format!("{path}::");
+            for o in facts.tests.iter().filter(alike) {
+                let Some(chain) = theirs(o.line) else {
+                    continue;
+                };
+                let mut other = target.module.clone();
+                other.extend(chain);
+                other.push(o.test.name.clone());
+                let other = other.join("::");
+                if other.starts_with(&below) {
+                    twins.below.insert(other);
+                }
+            }
+        }
+        // Build constraints: one `TestX` in 2 files of a package.
+        if let Some(folder) = folder {
+            let key = (self.test.recv.clone(), name.to_string());
+            twins.all |= folder
+                .funcs
+                .get(&key)
+                .is_some_and(|files| files.iter().any(|f| f != self.path));
+        }
+        twins
     }
 }
 
@@ -2544,6 +3057,20 @@ fn row_form(row: Row) -> Form {
     }
 }
 
+/// The keys that find the cases of a test name: the name, its last segment,
+/// its last word, and the last word of its head.
+fn name_keys(name: &str) -> Vec<&str> {
+    let mut keys = vec![
+        name,
+        last_segment(name),
+        last_word(name),
+        last_word(head_of(name)),
+    ];
+    keys.sort_unstable();
+    keys.dedup();
+    keys
+}
+
 /// The index of the cases of the reports, for the bind of many tags. It holds,
 /// once for all tags, the cases by the keys of their names, what the test files
 /// name, and each manifest that a bind read. The cost of a bind is then the cost
@@ -2552,56 +3079,139 @@ pub struct Binder<'a> {
     cases: &'a [Case],
     /// A key of a name (`case_keys`), to the cases that have it.
     index: Index,
-    /// The cases with a head of more words than their keys hold.
-    wordy: Vec<u32>,
-    /// The cases with a name that is too long to read (`is_long`).
-    long: Vec<u32>,
+    /// A key of a name that is too long to read (`long_keys`), for the reason
+    /// `long-name` only.
+    long: Index,
     names: Names<'a>,
-    /// A manifest path, to its text: each is read once.
+    /// A manifest or a root file of a crate, to its text: each is read once.
     manifests: RefCell<HashMap<String, Option<Rc<str>>>>,
     /// The folder of a `Cargo.toml`, to its package: each is parsed once.
     packages: RefCell<HashMap<String, Option<String>>>,
     /// A `classname` of Go, to the number of folders that it names.
     go_counts: RefCell<HashMap<(String, bool), usize>>,
+    /// A test file, to what its tags read of it.
+    files: RefCell<HashMap<String, Rc<Facts>>>,
+    /// A folder, to what a Go tag reads of its `_test.go` files.
+    go_folders: RefCell<HashMap<String, Rc<GoFolder>>>,
 }
 
 /// Reads a file of the working tree, by its path from the root of the
 /// repository.
 type Read<'r> = &'r dyn Fn(&str) -> Option<String>;
 
+/// A row with the `file` and the `classname` of a case: the fields that say if
+/// the file field names more than one file. The answer is kept for one tag.
+type Clashes<'a> = HashMap<(Row, Option<&'a str>, Option<&'a str>), bool>;
+
 impl<'a> Binder<'a> {
-    pub fn new(cases: &'a [Case], test_files: &'a [String]) -> Binder<'a> {
+    /// `paths` are the files of the code tree, and the test files that git does
+    /// not track.
+    pub fn new(cases: &'a [Case], paths: &'a [String]) -> Binder<'a> {
         let mut index = Index::default();
-        let mut wordy = Vec::new();
-        let mut long = Vec::new();
+        let mut long = Index::default();
         for (i, c) in cases.iter().enumerate() {
             let i = i as u32;
             let name = c.name.as_str();
             if is_long(name) {
-                long.push(i);
+                for k in long_keys(name) {
+                    long.add(k, i);
+                }
             }
-            let (keys, more) = case_keys(name);
-            if more {
-                wordy.push(i);
-            }
-            for k in keys {
+            for k in case_keys(name) {
                 index.add(k, i);
             }
         }
         Binder {
             cases,
             index,
-            wordy,
             long,
-            names: Names::new(test_files),
+            names: Names::new(paths),
             manifests: RefCell::new(HashMap::new()),
             packages: RefCell::new(HashMap::new()),
             go_counts: RefCell::new(HashMap::new()),
+            files: RefCell::new(HashMap::new()),
+            go_folders: RefCell::new(HashMap::new()),
         }
     }
 
     fn lookup(&self, key: &str) -> &[u32] {
         self.index.get(key)
+    }
+
+    /// What the tags of a test file read of it, built for the first tag.
+    fn facts(&self, path: &str, lines: &[&str]) -> Rc<Facts> {
+        self.files
+            .borrow_mut()
+            .entry(path.to_string())
+            .or_insert_with(|| Rc::new(Facts::of(lines)))
+            .clone()
+    }
+
+    /// The `_test.go` files of the folder of a Go test file, with that file.
+    /// `lines` are its lines.
+    fn go_folder(&self, path: &str, lines: &[&str], read: Read) -> Rc<GoFolder> {
+        let folder = folder_of(path);
+        if let Some(known) = self.go_folders.borrow().get(folder) {
+            return known.clone();
+        }
+        let mut out = GoFolder::default();
+        let others = self.names.go_tests.get(folder).into_iter().flatten();
+        let texts = others
+            .filter(|f| **f != path)
+            .filter_map(|f| Some((f.to_string(), read(f)?)))
+            .chain([(path.to_string(), lines.join("\n"))]);
+        for (file, text) in texts {
+            out.suites.read(&text);
+            let lines: Vec<&str> = text.lines().collect();
+            for f in tests_of(&lines).0 {
+                if f.form == Form::Func {
+                    let key = (f.test.recv, f.test.name);
+                    out.funcs.entry(key).or_default().insert(file.clone());
+                }
+            }
+        }
+        let out = Rc::new(out);
+        self.go_folders
+            .borrow_mut()
+            .insert(folder.to_string(), out.clone());
+        out
+    }
+
+    /// The text of a file that a bind reads beside the tag file, read once.
+    fn text(&self, path: &str, read: Read) -> Option<Rc<str>> {
+        self.manifests
+            .borrow_mut()
+            .entry(path.to_string())
+            .or_insert_with(|| read(path).map(Rc::from))
+            .clone()
+    }
+
+    /// The target of a Rust file (`rust_target`). For a module of `src/`, the
+    /// root files tell its target: the only one of the crate, or the one of 2
+    /// that declares the module.
+    fn target(&self, path: &str, read: Read) -> Option<Target> {
+        let mut target = rust_target(path, &self.names.whole)?;
+        if target.part == Part::Module {
+            let src = match target.root.as_str() {
+                "" => "src".to_string(),
+                root => format!("{root}/src"),
+            };
+            let lib = self.text(&format!("{src}/lib.rs"), read);
+            let main = self.text(&format!("{src}/main.rs"), read);
+            target.declared = match (lib, main) {
+                (Some(_), None) => Some(Root::Lib),
+                (None, Some(_)) => Some(Root::Main),
+                (Some(lib), Some(main)) => target.module.first().and_then(|first| {
+                    match (declares_module(&lib, first), declares_module(&main, first)) {
+                        (true, false) => Some(Root::Lib),
+                        (false, true) => Some(Root::Main),
+                        _ => None,
+                    }
+                }),
+                (None, None) => None,
+            };
+        }
+        Some(target)
     }
 
     /// The nearest file of the name `file` at or above the folder of `path`: its
@@ -2614,13 +3224,7 @@ impl<'a> Binder<'a> {
             } else {
                 format!("{dir}/{file}")
             };
-            let text = self
-                .manifests
-                .borrow_mut()
-                .entry(at.clone())
-                .or_insert_with(|| read(&at).map(Rc::from))
-                .clone();
-            if let Some(text) = text {
+            if let Some(text) = self.text(&at, read) {
                 return Some((dir.to_string(), text));
             }
             if dir.is_empty() {
@@ -2744,9 +3348,9 @@ impl<'a> Binder<'a> {
             Row::Jvm => {
                 let classes = id.classes().unwrap_or_default();
                 let top = classes.split('.').next().unwrap_or("");
+                // The full class name counts, never the stem of the file.
                 match &id.package {
-                    _ if family(id.path) == "cs" => self.names.stems.get(top).copied().unwrap_or(0),
-                    Package::Line(p) => self.names.dotted_named(id.path, &format!("{p}.{top}")),
+                    Package::Line(p) => self.names.dotted_ending(id.path, &format!("{p}.{top}")),
                     _ => self
                         .names
                         .dotted_named(id.path, &cn.replace(['$', '+'], ".")),
@@ -2758,7 +3362,15 @@ impl<'a> Binder<'a> {
     }
 
     /// What case `i` is for the identity of the tag: `None` for another test.
-    fn judge(&self, i: usize, id: &Identity, read: Read) -> Option<Judged<'a>> {
+    fn judge(
+        &self,
+        i: usize,
+        id: &Identity,
+        clashes: &mut Clashes<'a>,
+        read: Read,
+    ) -> Option<Judged<'a>> {
+        #[cfg(test)]
+        calls::count(calls::JUDGE);
         let case: &'a Case = &self.cases[i];
         let row = row_of(id.form, case);
         // The file field comes first: it is cheap, and it leaves out most cases
@@ -2767,15 +3379,25 @@ impl<'a> Binder<'a> {
         if file == Field::Differs || !id.names(&case.name) {
             return None;
         }
-        let heads = id.heads(row);
+        // A case of any runner whose `classname` names another file in full is
+        // another test, also where no row pairs it with the form of the tag. The
+        // `classname` of the title of jest-junit names no file.
+        if (file == Field::Unread || row == Row::JestDefaults)
+            && case.file.is_none()
+            && case.classname.as_deref().is_some_and(|cn| {
+                cn != case.name && !id.ties(row, cn) && self.names.names_another_file(cn, id.path)
+            })
+        {
+            return None;
+        }
         let hit = id.hit(row, &case.name);
-        let full_name = !heads.is_empty();
+        let full_name = !id.heads(row).is_empty();
         if full_name && hit.is_none() && !matches!(row, Row::Lines | Row::Unlisted) {
             return None;
         }
         let name = hit.unwrap_or_else(|| {
             let short = without_project(&case.name);
-            if id.form == Form::Call && id.lookups().iter().any(|l| l == short) {
+            if id.form == Form::Call && id.lookups.iter().any(|l| l == short) {
                 short
             } else {
                 &case.name
@@ -2789,8 +3411,10 @@ impl<'a> Binder<'a> {
         } else if file == Field::Unread || !full_name || row == Row::JestDefaults {
             Err(Why::ByName)
         } else if id.groups().is_some_and(|c| c.iter().any(|t| t.partial))
-            || id.twin(&case.name, name)
-            || self.ambiguous(id, row, case, read)
+            || id.twins.builds(&case.name, name)
+            || *clashes
+                .entry((row, case.file.as_deref(), case.classname.as_deref()))
+                .or_insert_with(|| self.ambiguous(id, row, case, read))
         {
             Err(Why::NotUnique)
         } else {
@@ -2800,12 +3424,10 @@ impl<'a> Binder<'a> {
             })
         };
         let mut judged = Judged::new(case, name, result);
-        // Playwright runs one test once for each of its projects. With no
-        // group, only the name of the test shows in its title, as in each other
-        // runner, so a template of the file can be the second case.
-        judged.repeats = matches!(row, Row::PathTitles | Row::FileTitles)
-            && (name.contains(" \u{203a} ")
-                || (!id.templates && id.groups().is_some_and(<[_]>::is_empty)));
+        // Playwright runs one test once for each of its projects. Its title
+        // shows the row: the join with ` \u{203a} `, or the prefix of a project.
+        judged.repeats = row == Row::PathTitles
+            && (name.contains(" \u{203a} ") || name.len() != case.name.len());
         Some(judged)
     }
 
@@ -2823,7 +3445,7 @@ impl<'a> Binder<'a> {
             return Err(Why::ByName);
         };
         if path.ends_with(".rs") {
-            let target = rust_target(path, &self.names.whole).ok_or(Why::ByName)?;
+            let target = self.target(path, read).ok_or(Why::ByName)?;
             let cargo = self.cargo_package(path, read);
             let (package, part) = binary_id(cn);
             let named = match &cargo {
@@ -2916,7 +3538,8 @@ impl<'a> Binder<'a> {
             .map(|c| {
                 let mut judged = Judged::new(c, &c.name, self.tie(&file, c, read));
                 // The projects of Playwright run one test more than once.
-                judged.repeats = judged.own.is_some() && c.name.contains(" \u{203a} ");
+                judged.repeats =
+                    judged.own.is_some() && c.file.is_none() && c.name.contains(" \u{203a} ");
                 judged
             })
             .collect();
@@ -2935,25 +3558,15 @@ impl<'a> Binder<'a> {
         out
     }
 
-    /// The cases that can name the test: the cases with its name, or with the
-    /// last segment of its name, as a key. The index is wide, and
+    /// The cases that can name the test: the cases with its name, with its last
+    /// segment or with its last word as a key. The index is wide, and
     /// `Identity::names` decides.
     fn named_by(&self, test: &TestName) -> Vec<usize> {
-        let name = test.name.as_str();
-        let last = SEPS
+        let mut out: Vec<usize> = name_keys(&test.name)
             .iter()
-            .filter_map(|s| name.rfind(s).map(|i| i + s.len()))
-            .max()
-            .map_or(name, |i| &name[i..]);
-        let mut out: Vec<usize> = self
-            .lookup(name)
-            .iter()
-            .chain(self.lookup(last))
+            .flat_map(|k| self.lookup(k))
             .map(|i| *i as usize)
             .collect();
-        if name.matches(' ').count() >= LONG_SEPS {
-            out.extend(self.wordy.iter().map(|i| *i as usize));
-        }
         out.sort_unstable();
         out.dedup();
         out
@@ -2966,11 +3579,11 @@ impl<'a> Binder<'a> {
         lines: &'p [&'p str],
         scan: &Scan<'p>,
         test: TestName,
-        suites: &dyn Fn(&str, &str) -> Vec<String>,
         read: Read,
     ) -> Identity<'p> {
         let form = form_of(&test, scan.text);
-        let chain = ancestors(lines, scan.line);
+        let facts = self.facts(path, lines);
+        let chain = facts.chain(lines, scan.line);
         let method = form == Form::Method;
         let package = if method {
             package_of(lines, chain.as_deref())
@@ -2982,29 +3595,22 @@ impl<'a> Binder<'a> {
         } else {
             None
         };
+        let folder = (form == Form::Func).then(|| self.go_folder(path, lines, read));
+        // The function that runs a suite is in the test files of the folder.
         let funcs = test
             .recv
             .as_ref()
-            .map(|ty| suites(ty, &test.name))
+            .zip(folder.as_deref())
+            .map(|(ty, folder)| folder.suites.funcs(ty, &test.name))
             .unwrap_or_default();
         let rust = form == Form::Fn && path.ends_with(".rs");
-        let target = rust.then(|| rust_target(path, &self.names.whole)).flatten();
+        let target = rust.then(|| self.target(path, read)).flatten();
         let cargo = rust.then(|| self.cargo_package(path, read)).flatten();
         let go = (form == Form::Func && path.ends_with(".go"))
             .then(|| self.go_module(path, read))
             .flatten();
-        let templates = form == Form::Call
-            && lines.iter().any(|l| {
-                let t = l.trim();
-                !is_comment(t)
-                    && matches!(
-                        classify(strip_modifiers(t), false),
-                        Some(Under::Template(_))
-                    )
-            });
         let mut identity = Identity {
             path,
-            templates,
             pytest: None,
             plain: !test.call || test.bt || plain_call(scan.text, &test.name),
             form,
@@ -3015,11 +3621,9 @@ impl<'a> Binder<'a> {
             target,
             cargo,
             go,
-            others: tests_of(lines)
-                .into_iter()
-                .filter(|f| f.line != scan.line)
-                .collect(),
-            lines,
+            heads: Default::default(),
+            lookups: Vec::new(),
+            twins: Twins::default(),
             test,
         };
         identity.pytest = identity.classes().map(|classes| {
@@ -3030,6 +3634,9 @@ impl<'a> Binder<'a> {
                 format!("{module}.{classes}")
             }
         });
+        identity.heads = Row::ALL.map(|row| identity.build_heads(row));
+        identity.lookups = identity.build_lookups();
+        identity.twins = identity.build_twins(&facts, lines, scan.line, folder.as_deref());
         identity
     }
 
@@ -3037,8 +3644,7 @@ impl<'a> Binder<'a> {
     /// test file, and `tag` is the index of the line of the tag. With `case`,
     /// the tag binds to the cases that have this name. Else it binds to the test
     /// under it (design 0.8.1, D82). It also gives the bind: the test, the fit,
-    /// the strength and the reason for no case. The suite functions of Go are
-    /// those of the file of the tag, and no manifest is read.
+    /// the strength and the reason for no case. It reads no other file.
     #[cfg(test)]
     pub fn bind(
         &self,
@@ -3047,14 +3653,11 @@ impl<'a> Binder<'a> {
         tag: usize,
         case: Option<&str>,
     ) -> (Proof, Bind) {
-        // The suite function is in the file of the tag only.
-        let suites = |ty: &str, method: &str| suite_funcs([lines.join("\n").as_str()], ty, method);
-        self.bind_with(path, lines, tag, case, &suites, &|_| None)
+        self.bind_with(path, lines, tag, case, &|_| None)
     }
 
-    /// Like `bind`. `suites` gives the functions that run the Go suite of a type
-    /// for a method (`suite_funcs` over the test files of the package), and
-    /// `read` gives the text of a manifest.
+    /// Like `bind`. `read` gives the text of another file that the bind reads:
+    /// a manifest, a root file of a crate, or a `_test.go` file of the folder.
     ///
     /// The rule: a case that names the test is another test only when a field
     /// that the report and the built identity both hold in full differs. It is
@@ -3067,7 +3670,6 @@ impl<'a> Binder<'a> {
         lines: &[&str],
         tag: usize,
         case: Option<&str>,
-        suites: &dyn Fn(&str, &str) -> Vec<String>,
         read: &dyn Fn(&str) -> Option<String>,
     ) -> (Proof, Bind) {
         let mut bind = Bind::default();
@@ -3105,16 +3707,17 @@ impl<'a> Binder<'a> {
                     }
                     Under::Test(test) => {
                         bind.test = Some(test.name.clone());
-                        let id = self.identity(path, lines, &scan, test, suites, read);
+                        let id = self.identity(path, lines, &scan, test, read);
                         let mut cand = self.named_by(&id.test);
-                        for key in id.lookups() {
-                            cand.extend(self.lookup(&key).iter().map(|i| *i as usize));
+                        for key in &id.lookups {
+                            cand.extend(self.lookup(key).iter().map(|i| *i as usize));
                         }
                         cand.sort_unstable();
                         cand.dedup();
+                        let mut clashes = Clashes::new();
                         let set = cand
                             .into_iter()
-                            .filter_map(|i| self.judge(i, &id, read))
+                            .filter_map(|i| self.judge(i, &id, &mut clashes, read))
                             .collect();
                         ident = Some(id);
                         set
@@ -3125,10 +3728,12 @@ impl<'a> Binder<'a> {
         if set.is_empty() {
             // A case with a long name has not each key of its name.
             let long = ident.as_ref().is_some_and(|id| {
-                self.long.iter().any(|&i| {
-                    let c = &self.cases[i as usize];
-                    c.name.contains(id.test.name.as_str())
-                        && id.file_field(row_of(id.form, c), c) != Field::Differs
+                name_keys(&id.test.name).iter().any(|key| {
+                    self.long.get(key).iter().any(|&i| {
+                        let c = &self.cases[i as usize];
+                        c.name.contains(id.test.name.as_str())
+                            && id.file_field(row_of(id.form, c), c) != Field::Differs
+                    })
                 })
             });
             let reason = if long {
@@ -3164,17 +3769,23 @@ impl<'a> Binder<'a> {
     /// The names of the cases that have `value` as a key: the cases that a
     /// `case:` with a part of a name meant. At most 3.
     fn near(&self, value: &str) -> Vec<String> {
-        let mut names: Vec<String> = self
+        // A value of more than one word can end a name after a space.
+        let ends = |name: &str| {
+            let head = head_of(without_project(name));
+            !head.contains(" > ")
+                && !head.contains(" \u{203a} ")
+                && head.strip_suffix(value).is_some_and(|p| p.ends_with(' '))
+        };
+        let mut names: Vec<&String> = self
             .lookup(value)
             .iter()
+            .chain(self.lookup(last_word(value)))
             .map(|i| &self.cases[*i as usize].name)
-            .filter(|name| case_keys(name).0.contains(&value))
-            .cloned()
+            .filter(|name| name.contains(value) && (ends(name) || case_keys(name).contains(&value)))
             .collect();
         names.sort();
         names.dedup();
-        names.truncate(3);
-        names
+        names.into_iter().take(3).cloned().collect()
     }
 }
 
@@ -3274,7 +3885,7 @@ pub fn bind_covers(root: &std::path::Path, covers: &mut [Cover], reads: &Reads) 
         }
         return;
     }
-    let binder = Binder::new(&reads.cases, &reads.test_files);
+    let binder = Binder::new(&reads.cases, &reads.paths);
     let mut texts: HashMap<String, Option<String>> = HashMap::new();
     for cv in covers.iter_mut().filter(|c| !c.partial) {
         // The stamp covers the code tree only (design 0.8.1, D85).
@@ -3300,27 +3911,16 @@ pub fn bind_covers(root: &std::path::Path, covers: &mut [Cover], reads: &Reads) 
             .as_deref()
             .map(|t| t.lines().collect())
             .unwrap_or_default();
-        // The functions that run a Go suite are in the test files of the package.
-        let folder = cv.path.rsplit_once('/').map_or("", |(f, _)| f).to_string();
-        let suites = |ty: &str, method: &str| -> Vec<String> {
-            let texts: Vec<String> = reads
-                .test_files
-                .iter()
-                .filter(|f| {
-                    f.ends_with(".go") && f.rsplit_once('/').map_or("", |(d, _)| d) == folder
-                })
-                .filter_map(|f| std::fs::read(root.join(f)).ok())
+        let read = |p: &str| {
+            std::fs::read(root.join(p))
+                .ok()
                 .map(|b| String::from_utf8_lossy(&b).into_owned())
-                .collect();
-            suite_funcs(texts.iter().map(String::as_str), ty, method)
         };
-        let read = |p: &str| std::fs::read_to_string(root.join(p)).ok();
         let (proof, bind) = binder.bind_with(
             &cv.path,
             &lines,
             (cv.line as usize).saturating_sub(1),
             cv.case.as_deref(),
-            &suites,
             &read,
         );
         cv.proof = Some(proof);
@@ -4880,7 +5480,7 @@ mod tests {
     fn the_tests_of_a_file_are_the_definition_lines() {
         let text = "import it\n\ndescribe('Valves', () => {\n  it('closes', () => {\n    expect(1);\n  });\n\n  it('never closes', () => {\n  });\n});\n";
         let lines: Vec<&str> = text.lines().collect();
-        let names: Vec<TestName> = tests_of(&lines).into_iter().map(|f| f.test).collect();
+        let names: Vec<TestName> = tests_of(&lines).0.into_iter().map(|f| f.test).collect();
         assert_eq!(
             names,
             [test_name("closes", true), test_name("never closes", true)]
@@ -5210,7 +5810,7 @@ mod tests {
             cases,
             fresh: 1,
             in_tree: files.iter().cloned().collect(),
-            test_files: files,
+            paths: files,
             ..Reads::default()
         };
         (dir, covers, reads)
@@ -5492,6 +6092,28 @@ mod matrix {
 
     const CARGO: &[(&str, &str)] = &[("Cargo.toml", "[package]\nname = \"app\"\n")];
     const GO_MOD: &[(&str, &str)] = &[("go.mod", "module example.org/app\n")];
+    const CARGO_LIB: &[(&str, &str)] = &[
+        ("Cargo.toml", "[package]\nname = \"app\"\n"),
+        ("src/lib.rs", "mod valves;\nmod pumps;\n"),
+    ];
+
+    /// A case of Vitest that names the test, with its own file in full.
+    fn vitest(name: &'static str) -> Near {
+        near(
+            "other-runner-vitest",
+            (name, Some("web/pumps.test.ts"), None),
+            Some("web/pumps.test.ts"),
+        )
+    }
+
+    /// A case of pytest that names the test, with a dotted `classname`.
+    fn pytest(name: &'static str) -> Near {
+        near(
+            "other-runner-pytest",
+            (name, Some("tools.test_pumps"), None),
+            Some("tools/test_pumps.py"),
+        )
+    }
 
     fn near(label: &'static str, case: Shape, file: Option<&'static str>) -> Near {
         Near { label, case, file }
@@ -5520,6 +6142,7 @@ mod matrix {
                     ("valves::tests::closes", Some("app"), None),
                     Some("src/valves.rs"),
                 ),
+                vitest("Valves > closes"),
             ],
             manifests,
             silent: true,
@@ -5568,6 +6191,7 @@ mod matrix {
                         ("test_closes", Some("tests.test_pumps.TestValves"), None),
                         Some("tests/test_pumps.py"),
                     ),
+                    vitest("Valves > test_closes"),
                 ],
                 manifests: &[],
                 silent: true,
@@ -5633,7 +6257,7 @@ mod matrix {
                         Some("tests/valves.rs"),
                     ),
                 ],
-                manifests: CARGO,
+                manifests: CARGO_LIB,
                 silent: true,
             },
             go("go", GO_MOD),
@@ -5696,6 +6320,7 @@ mod matrix {
                         ("closes", Some("com.other.ValveTest"), None),
                         Some("src/test/java/com/other/ValveTest.java"),
                     ),
+                    vitest("Valves > closes"),
                 ],
                 manifests: &[],
                 silent: true,
@@ -5839,6 +6464,7 @@ mod matrix {
                         ("Valves > closes", Some("tests/pumps.test.ts"), None),
                         Some("tests/pumps.test.ts"),
                     ),
+                    pytest("Valves closes"),
                 ],
                 manifests: &[],
                 silent: true,
@@ -5973,7 +6599,6 @@ mod matrix {
         let lines: Vec<&str> = text.lines().collect();
         let tag = lines.iter().position(|l| l.contains("covers:")).unwrap();
         let files: Vec<String> = files.iter().map(|f| f.to_string()).collect();
-        let suites = |ty: &str, method: &str| suite_funcs([text], ty, method);
         let read = |p: &str| {
             manifests
                 .iter()
@@ -5981,7 +6606,7 @@ mod matrix {
                 .map(|(_, t)| t.to_string())
         };
         // ADAPTER
-        Binder::new(cases, &files).bind_with(path, &lines, tag, case_name, &suites, &read)
+        Binder::new(cases, &files).bind_with(path, &lines, tag, case_name, &read)
     }
 
     fn word(proof: &Proof, bind: &Bind) -> String {
@@ -6045,6 +6670,16 @@ mod matrix {
                         }
                         let (proof, bind) = run(r.path, r.text, None, &cases, &files, r.manifests);
                         binds += 1;
+                        // A6: the step of the other file never removes an own
+                        // case.
+                        if outcome.is_some() {
+                            let mine = &cases[..cases.len() - usize::from(n.is_some())];
+                            let (_, alone) = run(r.path, r.text, None, mine, &files, r.manifests);
+                            if alone.cases != mine.len() {
+                                let label = n.map_or("none", |n| n.label);
+                                red.push(format!("A6 {} near={label}", r.label));
+                            }
+                        }
                         let id = format!(
                             "{}{} own={own:?} near={}/{result:?} -> {}",
                             r.label,
@@ -6111,6 +6746,12 @@ mod matrix {
         files: &'static [&'static str],
         manifests: &'static [(&'static str, &'static str)],
         want: &'static str,
+    }
+
+    /// The case in another report.
+    fn second(mut case: Case) -> Case {
+        case.report = "r2.xml".to_string();
+        case
     }
 
     fn c(name: &str, classname: Option<&str>, file: Option<&str>, outcome: Outcome) -> Case {
@@ -6244,7 +6885,7 @@ mod matrix {
                 ],
                 files: &["tests/v.test.ts"],
                 manifests: &[],
-                want: "skipped",
+                want: "skipped+not-unique",
             },
             Named {
                 id: "a Kotlin name in backticks with no parentheses in the report",
@@ -6343,7 +6984,7 @@ mod matrix {
                     c("closes", Some("app::valves"), None, Pass),
                 ],
                 files: &["src/valves.rs", "tests/valves.rs"],
-                manifests: CARGO,
+                manifests: CARGO_LIB,
                 want: "failed",
             },
             Named {
@@ -6609,14 +7250,381 @@ mod matrix {
                 want: "passed",
             },
         ]);
+        more.extend(trigger_cells());
+        more.extend(crate_cells());
+        more.extend(namespace_cells());
         more
+    }
+
+    /// One cell with the text of a test file and its cases. With no list of
+    /// files, the tag file is the one file.
+    fn cell(
+        id: &'static str,
+        path: &'static str,
+        text: &'static str,
+        cases: Vec<Case>,
+        want: &'static str,
+    ) -> Named {
+        Named {
+            id,
+            path,
+            text,
+            case: None,
+            cases,
+            files: &[],
+            manifests: &[],
+            want,
+        }
+    }
+
+    /// The triggers of step 5: another definition can build the identity.
+    fn trigger_cells() -> Vec<Named> {
+        use Outcome::{Fail, Pass, Skip};
+        const JS: &str = "tests/v.test.js";
+        const RUNIF: &str = "// covers: a#b\ntest.skip('closes', () => {\n});\n\ntest.runIf(true)('closes', () => {\n});\n";
+        const SKIPIF: &str = "// covers: a#b\ntest.skip('closes', () => {\n});\n\ntest.skipIf(false)('closes', () => {\n});\n";
+        const FAILS: &str = "// covers: a#b\ntest.skip('closes', () => {\n});\n\ntest.fails('closes', () => {\n});\n";
+        const SEQ: &str = "// covers: a#b\ntest.skip('closes', () => {\n});\n\ntest.sequential('closes', () => {\n});\n";
+        const TPL: &str = "describe('Valves', () => {\n  // covers: a#b\n  it('closes on timeout', () => {\n  });\n  it(`closes on ${event}`, () => {\n  });\n});\n";
+        const TPL_EACH: &str = "describe('Valves', () => {\n  // covers: a#b\n  it('closes 2', () => {\n  });\n  it.each(rows)('closes %i', () => {\n  });\n});\n";
+        const TPL_OTHER: &str = "describe('Valves', () => {\n  // covers: a#b\n  it('closes', () => {\n  });\n  it(`opens ${event}`, () => {\n  });\n});\ndescribe('Pumps', () => {\n  it(`${event}`, () => {\n  });\n});\n";
+        let jest = |name: &str, o| c(name, Some(name), Some(JS), o);
+        let twice = |id, text| {
+            cell(
+                id,
+                JS,
+                text,
+                vec![jest("closes", Skip), jest("closes", Pass)],
+                "skipped+not-unique",
+            )
+        };
+        let mut out = vec![
+            twice("skip beside runIf, jest-junit with file", RUNIF),
+            twice("skip beside skipIf", SKIPIF),
+            twice("skip beside fails", FAILS),
+            twice("skip beside sequential", SEQ),
+            cell(
+                "skip beside runIf in 2 reports",
+                JS,
+                RUNIF,
+                vec![jest("closes", Skip), second(jest("closes", Pass))],
+                "skipped+not-unique",
+            ),
+        ];
+        const TOP: &str = "// covers: a#b\nit('closes', () => {\n});\n";
+        out.push(cell(
+            "a test with no group 2 times in one report of jest-junit is 2 cases",
+            JS,
+            TOP,
+            vec![jest("closes", Pass), jest("closes", Skip)],
+            "skipped",
+        ));
+        out.push(cell(
+            "a test with no group 2 times in one report of Vitest is 2 cases",
+            "tests/v.test.ts",
+            TOP,
+            vec![
+                c("closes", Some("tests/v.test.ts"), None, Pass),
+                c("closes", Some("tests/v.test.ts"), None, Skip),
+            ],
+            "skipped",
+        ));
+        const PREFIXED: &str = "// covers: a#b\ntest('closes', async () => {\n});\n\ntest('[smoke] closes', async () => {\n});\n";
+        out.push(cell(
+            "a title that looks like a project of Playwright is a twin",
+            "e2e/v.spec.ts",
+            PREFIXED,
+            vec![
+                c("closes", Some("v.spec.ts"), None, Pass),
+                c("[smoke] closes", Some("v.spec.ts"), None, Skip),
+            ],
+            "skipped+not-unique",
+        ));
+        // The chain has no indent, so it is unreadable, and another file has the
+        // dotted name of the namespace.
+        out.push(Named {
+            files: &["tests/ValveTest.cs", "Plant/Cold.cs"],
+            ..cell(
+                "step 2 keeps the case of a .NET test with an unreadable chain",
+                "tests/ValveTest.cs",
+                "namespace Plant.Cold;\npublic class ValveTest {\n// covers: a#b\n[Fact]\npublic void Closes() {\n}\n}\n",
+                vec![c("Closes", Some("Plant.Cold.ValveTest"), None, Fail)],
+                "failed+no-identity",
+            )
+        });
+        let vt = |name: &str, o| c(name, Some("tests/v.test.ts"), None, o);
+        out.push(cell(
+            "a template literal makes the title, in another report",
+            "tests/v.test.ts",
+            TPL,
+            vec![
+                vt("Valves > closes on timeout", Skip),
+                second(vt("Valves > closes on timeout", Pass)),
+            ],
+            "skipped+not-unique",
+        ));
+        out.push(cell(
+            "a table with a placeholder makes the title, in another report",
+            "tests/v.test.ts",
+            TPL_EACH,
+            vec![
+                vt("Valves > closes 2", Skip),
+                second(vt("Valves > closes 2", Pass)),
+            ],
+            "skipped+not-unique",
+        ));
+        for (id, text) in [
+            (
+                "a table on more than one line makes the title",
+                "describe('Valves', () => {\n  // covers: a#b\n  it('closes 2', () => {\n  });\n  it.each([\n    [2],\n  ])('closes %i', () => {\n  });\n});\n",
+            ),
+            (
+                "the title of a table can start on the next line",
+                "describe('Valves', () => {\n  // covers: a#b\n  it('closes 2', () => {\n  });\n  it.each([\n    [2],\n  ])(\n    'closes %i',\n    () => {},\n  );\n});\n",
+            ),
+        ] {
+            out.push(cell(
+                id,
+                "tests/v.test.ts",
+                text,
+                vec![
+                    vt("Valves > closes 2", Skip),
+                    second(vt("Valves > closes 2", Pass)),
+                ],
+                "skipped+not-unique",
+            ));
+        }
+        out.push(cell(
+            "a template that cannot make the title, or of another chain, is silent",
+            "tests/v.test.ts",
+            TPL_OTHER,
+            vec![vt("Valves > closes", Pass)],
+            "passed",
+        ));
+        const GO: &str = "//go:build linux\n\npackage valves\n\n// covers: a#b\nfunc TestClose(t *testing.T) {\n}\n";
+        out.push(Named {
+            files: &["valves/linux_test.go", "valves/other_test.go"],
+            manifests: &[
+                ("go.mod", "module example.org/app\n"),
+                (
+                    "valves/other_test.go",
+                    "//go:build !linux\n\npackage valves\n\nfunc TestClose(t *testing.T) {\n}\n",
+                ),
+            ],
+            ..cell(
+                "Go build tags: one TestX in 2 files of the folder",
+                "valves/linux_test.go",
+                GO,
+                vec![c("TestClose", Some("example.org/app/valves"), None, Pass)],
+                "passed+not-unique",
+            )
+        });
+        let rb = |name: &str, o| {
+            c(
+                name,
+                Some("spec.valve_spec"),
+                Some("./spec/valve_spec.rb"),
+                o,
+            )
+        };
+        for (id, text, name, want) in [
+            (
+                "include_examples in the group of the test",
+                "describe Valve do\n  include_examples 'a valve'\n\n  # covers: a#b\n  it 'closes' do\n  end\nend\n",
+                "Valve closes",
+                "passed+not-unique",
+            ),
+            (
+                "include_context in a group of the chain",
+                "describe Valve do\n  include_context 'cold'\n\n  describe '#shut' do\n    # covers: a#b\n    it 'closes' do\n    end\n  end\nend\n",
+                "Valve#shut closes",
+                "passed+not-unique",
+            ),
+            (
+                "include_examples in another group is silent",
+                "describe Valve do\n  # covers: a#b\n  it 'closes' do\n  end\n\n  describe '#open' do\n    include_examples 'a valve'\n  end\nend\n",
+                "Valve closes",
+                "passed",
+            ),
+        ] {
+            out.push(cell(
+                id,
+                "spec/valve_spec.rb",
+                text,
+                vec![rb(name, Pass)],
+                want,
+            ));
+        }
+        out.push(Named {
+            files: &["src/test/java/ValveTest.java", "web/pumps.test.ts"],
+            ..cell(
+                "a failed case of Vitest is another test for a JVM file with no package",
+                "src/test/java/ValveTest.java",
+                "class ValveTest {\n    // covers: a#b\n    @Test\n    void closes() {\n    }\n}\n",
+                vec![
+                    c("closes", Some("ValveTest"), None, Pass),
+                    c("Valves > closes", Some("web/pumps.test.ts"), None, Fail),
+                ],
+                "passed",
+            )
+        });
+        out
+    }
+
+    /// The crate kinds of a Rust unit test.
+    fn crate_cells() -> Vec<Named> {
+        use Outcome::{Fail, Pass};
+        const RS: &str = "#[cfg(test)]\nmod tests {\n    // covers: a#b\n    #[test]\n    fn closes() {\n    }\n}\n";
+        const PKG: (&str, &str) = ("Cargo.toml", "[package]\nname = \"pump-app\"\n");
+        const LIB: (&str, &str) = ("src/lib.rs", "pub mod valves;\n");
+        const LIB_OTHER: (&str, &str) = ("src/lib.rs", "pub mod pumps;\n");
+        const MAIN: (&str, &str) = ("src/main.rs", "#[cfg(unix)]\nmod valves;\nfn main() {}\n");
+        const MAIN_OTHER: (&str, &str) = ("src/main.rs", "mod cli;\nfn main() {}\n");
+        let unit = |classname: &str, o| c("valves::tests::closes", Some(classname), None, o);
+        let lib = |o| unit("pump-app", o);
+        let bin = |o| unit("pump-app::bin/pump-app", o);
+        let of = |id, manifests, cases, want| Named {
+            manifests,
+            ..cell(id, "src/valves.rs", RS, cases, want)
+        };
+        vec![
+            of("A3 a library only", &[PKG, LIB], vec![lib(Pass)], "passed"),
+            of("A3 a binary only", &[PKG, MAIN], vec![bin(Pass)], "passed"),
+            of(
+                "a binary only has no library case",
+                &[PKG, MAIN],
+                vec![lib(Pass)],
+                "unbound",
+            ),
+            of(
+                "both roots, the library declares the module",
+                &[PKG, LIB, MAIN_OTHER],
+                vec![lib(Pass), bin(Fail)],
+                "passed",
+            ),
+            of(
+                "both roots, the binary declares the module",
+                &[PKG, LIB_OTHER, MAIN],
+                vec![bin(Pass), lib(Fail)],
+                "passed",
+            ),
+            of(
+                "both roots declare the module: the library case",
+                &[PKG, LIB, MAIN],
+                vec![lib(Pass)],
+                "passed+by-name",
+            ),
+            of(
+                "both roots declare the module: a failed binary case stays",
+                &[PKG, LIB, MAIN],
+                vec![lib(Pass), bin(Fail)],
+                "failed+by-name",
+            ),
+        ]
+    }
+
+    /// 2 classes of one name in 2 namespaces are 2 identities.
+    fn namespace_cells() -> Vec<Named> {
+        use Outcome::{Fail, Pass};
+        const CS: &str = "namespace Plant.Cold;\n\npublic class ValveTest\n{\n    // covers: a#b\n    [Fact]\n    public void Closes()\n    {\n    }\n}\n";
+        const JAVA: &str = "package com.cold;\n\nclass ValveTest {\n    // covers: a#b\n    @Test\n    void closes() {\n    }\n}\n";
+        const CS_FILES: &[&str] = &["cold/ValveTest.cs", "hot/ValveTest.cs"];
+        const JAVA_FILES: &[&str] = &[
+            "src/test/java/com/cold/ValveTest.java",
+            "src/test/java/com/hot/ValveTest.java",
+        ];
+        const MODULES: &[&str] = &[
+            "a/src/test/java/com/cold/ValveTest.java",
+            "b/src/test/java/com/cold/ValveTest.java",
+        ];
+        let net = |ns: &str, o| c("Closes", Some(&format!("{ns}.ValveTest")), None, o);
+        let jvm = |ns: &str, o| c("closes", Some(&format!("{ns}.ValveTest")), None, o);
+        let of = |id, text, files: &'static [&'static str], cases, want| Named {
+            files,
+            ..cell(id, files[0], text, cases, want)
+        };
+        vec![
+            of(
+                "A3 .NET: one class name in 2 namespaces, silent",
+                CS,
+                CS_FILES,
+                vec![net("Plant.Cold", Pass), net("Plant.Hot", Fail)],
+                "passed",
+            ),
+            of(
+                ".NET: only the case of the other namespace",
+                CS,
+                CS_FILES,
+                vec![net("Plant.Hot", Pass)],
+                "unbound",
+            ),
+            of(
+                "A3 JVM: one class name in 2 packages, silent",
+                JAVA,
+                JAVA_FILES,
+                vec![jvm("com.cold", Pass), jvm("com.hot", Fail)],
+                "passed",
+            ),
+            of(
+                "one full class name in 2 modules is weak",
+                JAVA,
+                MODULES,
+                vec![jvm("com.cold", Pass)],
+                "passed+not-unique",
+            ),
+        ]
+    }
+
+    /// The same identity 2 times: in one report only the projects of
+    /// Playwright are runs. In 2 reports, a unique identity ran again.
+    #[test]
+    fn the_same_identity_two_times_is_a_run_only_where_the_runner_repeats_a_test() {
+        use Outcome::{Pass, Skip};
+        let mut red = Vec::new();
+        for r in runners() {
+            let skip = case_of(r.own, r.own.0, Skip);
+            let pass = case_of(r.own, r.own.0, Pass);
+            let (proof, bind) = run(
+                r.path,
+                r.text,
+                None,
+                &[pass.clone(), skip.clone()],
+                &[r.path],
+                r.manifests,
+            );
+            if matches!(proof, Proof::Passed(..)) != (r.label == "playwright") {
+                red.push(format!(
+                    "one report: {} -> {}",
+                    r.label,
+                    word(&proof, &bind)
+                ));
+            }
+            let (proof, bind) = run(
+                r.path,
+                r.text,
+                None,
+                &[skip, second(pass)],
+                &[r.path],
+                r.manifests,
+            );
+            if r.silent && !(matches!(proof, Proof::Passed(..)) && !bind.by_name) {
+                red.push(format!("2 reports: {} -> {}", r.label, word(&proof, &bind)));
+            }
+        }
+        assert!(red.is_empty(), "{} red\n{}", red.len(), red.join("\n"));
     }
 
     #[test]
     fn each_named_cell_of_the_rule_has_its_result() {
         let mut red = Vec::new();
         for n in named_cells() {
-            let (proof, bind) = run(n.path, n.text, n.case, &n.cases, n.files, n.manifests);
+            let only = [n.path];
+            let files = if n.files.is_empty() {
+                &only[..]
+            } else {
+                n.files
+            };
+            let (proof, bind) = run(n.path, n.text, n.case, &n.cases, files, n.manifests);
             let got = word(&proof, &bind);
             if got != n.want {
                 red.push(format!("{}: want {}, got {got}", n.id, n.want));
@@ -6632,7 +7640,7 @@ mod index_cost {
     use super::*;
 
     #[test]
-    fn a_name_has_at_most_98_keys() {
+    fn a_name_has_at_most_67_keys() {
         // 256 bytes and 32 separators in each shape, with many spaces.
         for sep in [" > ", "::", "/", ".", "#", "(", "[", " \u{203a} "] {
             for word in ["a ", "ab c d ", "a"] {
@@ -6648,15 +7656,47 @@ mod index_cost {
                     end -= 1;
                 }
                 name.truncate(end);
-                let keys = case_keys(&name).0.len();
-                assert!(keys <= 98, "{keys} keys: {name:?}");
+                let keys = case_keys(&name).len();
+                assert!(keys <= 67, "{keys} keys: {name:?}");
             }
         }
-        // Many spaces: the ends after the last 32 spaces only, and the name is
-        // in the list of the names with more words.
-        let words = "w ".repeat(120);
-        let (keys, wordy) = case_keys(words.trim_end());
-        assert!(keys.len() <= 98 && wordy, "{}", keys.len());
+        // Many spaces: no end after a space is a key, only the last word.
+        let words: String = (0..120).map(|i| format!("w{i} ")).collect();
+        let keys = case_keys(words.trim_end());
+        assert!(keys.len() <= 3, "{} keys", keys.len());
+    }
+
+    /// The guard of the work of a bind (the load L1, scaled): the file is read
+    /// once for all tags, only the definitions with the name of the test get a
+    /// chain, and each case of the union is classified once.
+    #[test]
+    fn the_work_of_a_tag_does_not_grow_with_the_rows_times_the_definitions() {
+        let mut text = String::from("# covers: a#b\n");
+        for i in 0..100 {
+            text.push_str(&format!("def test_closes_{i}():\n    pass\n\n"));
+        }
+        let lines: Vec<&str> = text.lines().collect();
+        let cases: Vec<Case> = (0..10_000)
+            .map(|i| Case {
+                name: format!("test_closes_0[{i}]"),
+                classname: Some("tests.test_a".to_string()),
+                file: None,
+                outcome: Outcome::Pass,
+                report: "r.xml".to_string(),
+            })
+            .collect();
+        let files = ["tests/test_a.py".to_string()];
+        let binder = Binder::new(&cases, &files);
+        calls::reset();
+        for _ in 0..2 {
+            let (proof, bind) = binder.bind(&files[0], &lines, 0, None);
+            assert!(matches!(proof, Proof::Passed(..)) && !bind.by_name);
+            assert_eq!(bind.cases, 10_000);
+        }
+        let [tests_of, ancestors, judged] = calls::get();
+        assert_eq!(tests_of, 1, "tests_of for one file and 2 tags");
+        assert!(ancestors <= 1, "ancestors ran {ancestors} times");
+        assert!(judged <= 20_000, "judged {judged}");
     }
 
     #[test]

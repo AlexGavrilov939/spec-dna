@@ -696,9 +696,9 @@ pub struct Reads {
     pub cases: Vec<Case>,
     /// The number of reports that are fresh.
     pub fresh: usize,
-    /// The test files of the code tree, and the files that git does not track
-    /// yet, for the bind by `classname`.
-    pub test_files: Vec<String>,
+    /// The paths of the code tree, and the test files that git does not track
+    /// yet: the files that the `file` or the `classname` of a case can name.
+    pub paths: Vec<String>,
     /// The test files of the code tree only. A tag in another file binds no case
     /// (design 0.8.1, D85): the stamp does not cover that file.
     pub in_tree: std::collections::HashSet<String>,
@@ -726,17 +726,19 @@ pub fn read(repo: &Repo, config: &Config) -> Result<Reads, Fatal> {
     }
     let (now, paths) = tree::compute(repo, config).map_err(Fatal::Io)?;
     out.tree = now;
-    out.test_files = paths
-        .into_iter()
+    out.in_tree = paths
+        .iter()
         .filter(|p| config.is_test_file(p))
+        .cloned()
         .collect();
-    out.in_tree = out.test_files.iter().cloned().collect();
+    out.paths = paths;
     // A test file that git does not track yet is not in the code tree, but it
     // is a test file: it must name its `classname` as any other test file does.
     // Else a case of a new file would bind to a tag of any file, and a skipped
     // test could count as proven by a passed case of the same name. The tree
-    // hash does not change. More names only narrow a bind. (`--reports` does not
-    // combine with `--staged`, so the read always sees the working tree.)
+    // hash does not change. One more name can only make a bind weak, or show that
+    // a case is of another file. (`--reports` does not combine with `--staged`,
+    // so the read always sees the working tree.)
     let usable = config.evidence_tests.iter().all(|g| {
         let g = g.trim_matches('/');
         !g.is_empty() && !g.split('/').any(|s| s == ".." || s == ".")
@@ -760,7 +762,7 @@ pub fn read(repo: &Repo, config: &Config) -> Result<Reads, Fatal> {
             && tree::is_code_path(config, &p, &intent)
             && repo.root.join(&p).is_file()
         {
-            out.test_files.push(p);
+            out.paths.push(p);
         }
     }
     let tracked = tree::tracked_reports(repo, config).map_err(Fatal::Io)?;
