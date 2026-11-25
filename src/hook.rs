@@ -8,6 +8,7 @@
 //! a path that matches a test glob. `protect-approvals` runs `git` only for a
 //! command that holds the words `git` and `commit` (see its section).
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -416,24 +417,31 @@ fn ends_with_state(report: &str) -> bool {
         .is_some_and(|l| STATES.contains(&l))
 }
 
-/// Returns the `message` of the last handback call of a transcript line.
-fn line_handback(line: &[u8]) -> Option<String> {
-    if !contains(line, HANDBACK.as_bytes()) {
+/// Returns the `message` of the last handback call of a transcript line. The
+/// caller reads the lines from the last one. `text_after` becomes `true` for an
+/// assistant text that is not empty, so it tells if a text follows the call.
+fn line_handback(line: &[u8], text_after: &Cell<bool>) -> Option<String> {
+    if !contains(line, HANDBACK.as_bytes()) && (text_after.get() || !contains(line, br#""text""#)) {
         return None;
     }
     let v = json::parse(std::str::from_utf8(line).ok()?).ok()?;
     if v.get("type").as_str() != Some("assistant") {
         return None;
     }
-    v.get("message")
-        .get("content")
-        .as_arr()
-        .iter()
-        .rev()
-        .filter(|b| {
-            b.get("type").as_str() == Some("tool_use") && b.get("name").as_str() == Some(HANDBACK)
-        })
-        .find_map(|b| b.get("input").get("message").as_str().map(str::to_string))
+    for b in v.get("message").get("content").as_arr().iter().rev() {
+        match b.get("type").as_str() {
+            Some("text") if b.get("text").as_str().is_some_and(|t| !t.trim().is_empty()) => {
+                text_after.set(true);
+            }
+            Some("tool_use") if b.get("name").as_str() == Some(HANDBACK) => {
+                if let Some(message) = b.get("input").get("message").as_str() {
+                    return Some(message.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Handles one SubagentStop event. It returns the JSON that gives the subagent
@@ -446,16 +454,22 @@ pub fn return_state(input: &str) -> Option<String> {
     if v.get("stop_hook_active") != &Value::Bool(false) {
         return None;
     }
+    let text_after = Cell::new(false);
     let sent = v
         .get("agent_transcript_path")
         .as_str()
         .filter(|p| !p.is_empty())
-        .and_then(|p| scan_back(Path::new(p), line_handback));
-    let report = match &sent {
-        Some(message) => message,
-        None => v.get("last_assistant_message").as_str()?,
+        .and_then(|p| scan_back(Path::new(p), |line| line_handback(line, &text_after)));
+    let last = v.get("last_assistant_message").as_str();
+    let has_state = match &sent {
+        // A text after the call is a later report, if it has a state line.
+        // Else the message of the call stays the report.
+        Some(message) => {
+            ends_with_state(message) || (text_after.get() && last.is_some_and(ends_with_state))
+        }
+        None => ends_with_state(last?),
     };
-    if ends_with_state(report) {
+    if has_state {
         return None;
     }
     Some(

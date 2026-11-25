@@ -615,13 +615,15 @@ fn with_transcript(event: &str, transcript: &Path) -> String {
 fn return_state_reads_the_message_of_the_last_handback() {
     let dir = Dir::new();
     let t = dir.0.join("agent-a1.jsonl");
-    // The report is the `message` of the call, and the final text is not.
+    // The report is the `message` of the call. A final text with no state line
+    // does not replace it.
     write_transcript(
         &t,
         &[handback("The work.\nState: BLOCKED"), assistant(10, 5)],
     );
     let input = with_transcript(&stop_event("I handed the report back."), &t);
     assert_eq!(return_state(&dir, &input), "");
+    // No text follows the call in the transcript.
     write_transcript(&t, &[handback("The work.")]);
     let input = with_transcript(&stop_event("State: COMPLETE"), &t);
     assert_eq!(return_state(&dir, &input), block_output());
@@ -641,6 +643,43 @@ fn return_state_reads_the_message_of_the_last_handback() {
     write_transcript(&t, &[handback("State: COMPLETE"), assistant(10, 600_000)]);
     let input = with_transcript(&stop_event("x"), &t);
     assert_eq!(return_state(&dir, &input), "");
+}
+
+/// An assistant line of a transcript with one text.
+fn text_line(text: &str) -> String {
+    format!(
+        r#"{{"type":"assistant","message":{{"role":"assistant","content":[{{"type":"text","text":{}}}]}}}}"#,
+        quoted(text)
+    )
+}
+
+#[test]
+fn return_state_takes_a_later_report_over_an_old_handback() {
+    let dir = Dir::new();
+    let t = dir.0.join("agent-a1.jsonl");
+    let report = "The new report.\nState: COMPLETE";
+    write_transcript(&t, &[handback("old report"), text_line(report)]);
+    let input = with_transcript(&stop_event(report), &t);
+    assert_eq!(return_state(&dir, &input), "");
+    // A later line that names the tool is a later text too.
+    let named = "SubagentHandback came first.\nState: COMPLETE";
+    write_transcript(&t, &[handback("old report"), text_line(named)]);
+    let input = with_transcript(&stop_event(named), &t);
+    assert_eq!(return_state(&dir, &input), "");
+    // A later text with no state line: the call is still the report.
+    write_transcript(&t, &[handback("old report"), text_line("Sent.")]);
+    let input = with_transcript(&stop_event("Sent."), &t);
+    assert_eq!(return_state(&dir, &input), block_output());
+    // An empty text, a text of a user line and a text before the call are not
+    // after the call.
+    for after in [
+        text_line(" \n "),
+        r#"{"type":"user","message":{"content":[{"type":"text","text":"Go on."}]}}"#.to_string(),
+    ] {
+        write_transcript(&t, &[text_line("A start."), handback("old report"), after]);
+        let input = with_transcript(&stop_event("State: COMPLETE"), &t);
+        assert_eq!(return_state(&dir, &input), block_output());
+    }
 }
 
 #[test]

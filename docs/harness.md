@@ -413,7 +413,7 @@ The hooks reference of Claude Code states these facts:
 - The input of `SubagentStop` has `agent_type`, `agent_transcript_path`, `last_assistant_message` and `stop_hook_active`.
 - With the tool `SubagentHandback`, the report is the `message` input of that tool.
 
-After such a call, the hook reads the `message` of the last call in the transcript of the subagent. It reads from the end of the file, 4 MiB at most.
+After such a call, the hook reads the `message` of the last call in the transcript of the subagent. It reads from the end of the file, 4 MiB at most. A subagent can give a later report in plain text. So if an assistant text follows the last call in the transcript, a state line at the end of `last_assistant_message` also passes. A final text with no state line does not replace the message of the call. No live run confirmed this form of the transcript.
 
 The hook cannot prove these things:
 
