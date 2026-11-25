@@ -480,6 +480,189 @@ fn subagent_card_is_silent_with_no_agent_type_and_on_bad_input() {
     }
 }
 
+// ---- return-state ----
+
+const REASON: &str = "spec-dna return state: end your report with one line: `State: COMPLETE`, `State: COMPLETE_WITH_CONCERNS`, `State: NEEDS_CONTEXT` or `State: BLOCKED`.";
+
+fn block_output() -> String {
+    format!("{{\"decision\":\"block\",\"reason\":\"{REASON}\"}}\n")
+}
+
+/// A JSON string of `text`. The test texts hold no other control character.
+fn quoted(text: &str) -> String {
+    let t = text
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t");
+    format!("\"{t}\"")
+}
+
+/// A SubagentStop input of a named subagent that never got the reason.
+fn stop_event(report: &str) -> String {
+    format!(
+        r#"{{"session_id":"s1","hook_event_name":"SubagentStop","agent_id":"a1","agent_type":"general-purpose","stop_hook_active":false,"last_assistant_message":{}}}"#,
+        quoted(report)
+    )
+}
+
+fn return_state(dir: &Dir, input: &str) -> String {
+    let (code, out, err) = hook(dir, &["return-state"], input, &[]);
+    assert_eq!((code, err.as_str()), (0, ""), "{input}");
+    out
+}
+
+#[test]
+fn return_state_passes_each_of_the_4_values() {
+    let dir = Dir::new();
+    for value in [
+        "COMPLETE",
+        "COMPLETE_WITH_CONCERNS",
+        "NEEDS_CONTEXT",
+        "BLOCKED",
+    ] {
+        for report in [
+            format!("The work.\n\nState: {value}"),
+            // Empty lines at the end, and white space around the line.
+            format!("The work.\n  State: {value}  \n\n  \n"),
+            format!("The work.\r\nState: {value}\r\n"),
+            format!("The work.\n**State: {value}**"),
+            format!("The work.\n`State: {value}`"),
+            format!("The work.\n **`State: {value}`** \n"),
+        ] {
+            assert_eq!(return_state(&dir, &stop_event(&report)), "", "{report:?}");
+        }
+    }
+}
+
+#[test]
+fn return_state_asks_once_for_a_report_with_no_state_line() {
+    let dir = Dir::new();
+    assert_eq!(REASON.len(), 149);
+    for report in [
+        "The work is done.",
+        "",
+        "State: COMPLETE\nOne more sentence.",
+        "State: DONE",
+        "state: COMPLETE",
+        "State: complete",
+        "State:  COMPLETE",
+        "State:COMPLETE",
+        "State: COMPLETE.",
+        "**State:** COMPLETE",
+        "The report ends with State: COMPLETE",
+    ] {
+        let input = stop_event(report);
+        assert_eq!(return_state(&dir, &input), block_output(), "{report:?}");
+        // After one block, the same input gives nothing.
+        let again = input.replace("\"stop_hook_active\":false", "\"stop_hook_active\":true");
+        assert_ne!(again, input);
+        assert_eq!(return_state(&dir, &again), "", "{report:?}");
+    }
+}
+
+#[test]
+fn return_state_is_silent_on_input_that_it_does_not_know() {
+    let dir = Dir::new();
+    let good = stop_event("The work.");
+    // The positive control.
+    assert_eq!(return_state(&dir, &good), block_output());
+    for input in [
+        "".to_string(),
+        "not json".to_string(),
+        "{}".to_string(),
+        good.replace("\"agent_type\":\"general-purpose\"", "\"agent_type\":\"\""),
+        good.replace("\"agent_type\":\"general-purpose\",", ""),
+        good.replace("SubagentStop", "Stop"),
+        // A key that is absent or not a boolean never blocks.
+        good.replace("\"stop_hook_active\":false,", ""),
+        good.replace("\"stop_hook_active\":false", "\"stop_hook_active\":\"false\""),
+        good.replace(",\"last_assistant_message\":\"The work.\"", ""),
+        good.replace("\"The work.\"", "null"),
+    ] {
+        assert_ne!(input, good);
+        assert_eq!(return_state(&dir, &input), "", "{input}");
+    }
+}
+
+/// An assistant line of a transcript with one tool call.
+fn tool_call(name: &str, input: &str) -> String {
+    format!(
+        r#"{{"type":"assistant","message":{{"role":"assistant","content":[{{"type":"text","text":"x"}},{{"type":"tool_use","id":"t1","name":"{name}","input":{input}}}]}}}}"#
+    )
+}
+
+fn handback(report: &str) -> String {
+    tool_call(
+        "SubagentHandback",
+        &format!(r#"{{"message":{}}}"#, quoted(report)),
+    )
+}
+
+fn with_transcript(event: &str, transcript: &Path) -> String {
+    let path = quoted(transcript.to_str().unwrap());
+    format!(
+        "{},\"agent_transcript_path\":{path}}}",
+        event.strip_suffix('}').unwrap()
+    )
+}
+
+#[test]
+fn return_state_reads_the_message_of_the_last_handback() {
+    let dir = Dir::new();
+    let t = dir.0.join("agent-a1.jsonl");
+    // The report is the `message` of the call, and the final text is not.
+    write_transcript(
+        &t,
+        &[
+            handback("The work.\nState: BLOCKED"),
+            assistant(10, 5),
+        ],
+    );
+    let input = with_transcript(&stop_event("I handed the report back."), &t);
+    assert_eq!(return_state(&dir, &input), "");
+    write_transcript(&t, &[handback("The work.")]);
+    let input = with_transcript(&stop_event("State: COMPLETE"), &t);
+    assert_eq!(return_state(&dir, &input), block_output());
+    // The last call wins.
+    write_transcript(
+        &t,
+        &[handback("State: COMPLETE"), handback("The second report.")],
+    );
+    let input = with_transcript(&stop_event("State: COMPLETE"), &t);
+    assert_eq!(return_state(&dir, &input), block_output());
+    // No `last_assistant_message`: the call alone is a report.
+    write_transcript(&t, &[handback("State: COMPLETE")]);
+    let input = with_transcript(&stop_event(""), &t).replace(",\"last_assistant_message\":\"\"", "");
+    assert_eq!(return_state(&dir, &input), "");
+    // A far call: the hook reads from the end of the file, past one chunk.
+    write_transcript(&t, &[handback("State: COMPLETE"), assistant(10, 600_000)]);
+    let input = with_transcript(&stop_event("x"), &t);
+    assert_eq!(return_state(&dir, &input), "");
+}
+
+#[test]
+fn return_state_takes_the_final_text_when_no_call_is_a_handback() {
+    let dir = Dir::new();
+    let t = dir.0.join("agent-a1.jsonl");
+    // The name in a text or in another tool call is no handback.
+    write_transcript(
+        &t,
+        &[
+            tool_call("Bash", r#"{"command":"echo SubagentHandback","message":"State: COMPLETE"}"#),
+            r#"{"type":"user","message":{"content":[{"type":"tool_use","name":"SubagentHandback","input":{"message":"State: COMPLETE"}}]}}"#.to_string(),
+        ],
+    );
+    let input = with_transcript(&stop_event("The work."), &t);
+    assert_eq!(return_state(&dir, &input), block_output());
+    let input = with_transcript(&stop_event("State: COMPLETE"), &t);
+    assert_eq!(return_state(&dir, &input), "");
+    // A transcript that does not exist.
+    let input = with_transcript(&stop_event("State: COMPLETE"), &dir.0.join("none.jsonl"));
+    assert_eq!(return_state(&dir, &input), "");
+}
+
 #[test]
 fn hook_help_prints_the_help_of_the_command() {
     let dir = Dir::new();

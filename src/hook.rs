@@ -82,6 +82,7 @@ pub fn run(args: &[String]) {
                 )
             }
             "subagent-card" => subagent_card(&input),
+            "return-state" => return_state(&input),
             _ => None,
         };
         if let Some(text) = out {
@@ -252,9 +253,15 @@ fn remove_stale(dir: &Path) {
     }
 }
 
-/// Returns the context size of the last assistant message of a transcript. It
-/// reads the file backward and stops after `MAX_SCAN` bytes.
+/// Returns the context size of the last assistant message of a transcript.
 fn last_context(path: &Path) -> Option<u64> {
+    scan_back(path, line_context)
+}
+
+/// Reads the lines of a transcript from the last one to the first one, and
+/// returns the first value that `find` gives. It reads the file backward and
+/// stops after `MAX_SCAN` bytes.
+fn scan_back<T>(path: &Path, find: impl Fn(&[u8]) -> Option<T>) -> Option<T> {
     let mut file = File::open(path).ok()?;
     let len = file.metadata().ok()?.len();
     let stop = len.saturating_sub(MAX_SCAN);
@@ -269,7 +276,7 @@ fn last_context(path: &Path) -> Option<u64> {
         buf.extend_from_slice(&carry);
         let mut end = buf.len();
         while let Some(k) = buf[..end].iter().rposition(|&c| c == b'\n') {
-            if let Some(n) = line_context(&buf[k + 1..end]) {
+            if let Some(n) = find(&buf[k + 1..end]) {
                 return Some(n);
             }
             end = k;
@@ -279,7 +286,7 @@ fn last_context(path: &Path) -> Option<u64> {
         pos = from;
     }
     // At the start of the file, the carry is a whole line.
-    if pos == 0 { line_context(&carry) } else { None }
+    if pos == 0 { find(&carry) } else { None }
 }
 
 fn contains(hay: &[u8], needle: &[u8]) -> bool {
@@ -366,6 +373,85 @@ pub fn subagent_card(input: &str) -> Option<String> {
     let agent_type = subagent_type(&v, "SubagentStart")?;
     let card = harness_text::subagent_card(agent_type);
     Some(output("SubagentStart", "additionalContext", &card))
+}
+
+// ---------------------------------------------------------------------------
+// return-state
+// ---------------------------------------------------------------------------
+
+/// The tool with which a subagent can give its report. Its `message` input is
+/// then the report, and `last_assistant_message` is only the text after the
+/// call.
+const HANDBACK: &str = "SubagentHandback";
+
+const RETURN_STATE_REASON: &str = "spec-dna return state: end your report with one line: `State: COMPLETE`, `State: COMPLETE_WITH_CONCERNS`, `State: NEEDS_CONTEXT` or `State: BLOCKED`.";
+
+const STATES: [&str; 4] = [
+    "State: COMPLETE",
+    "State: COMPLETE_WITH_CONCERNS",
+    "State: NEEDS_CONTEXT",
+    "State: BLOCKED",
+];
+
+/// True if the last line of a report that is not empty is a state line. The
+/// white space, `*` and `` ` `` at the 2 ends of the line do not count.
+fn ends_with_state(report: &str) -> bool {
+    report
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .map(|l| l.trim_matches(|c: char| c.is_whitespace() || c == '*' || c == '`'))
+        .is_some_and(|l| STATES.contains(&l))
+}
+
+/// Returns the `message` of the last handback call of a transcript line.
+fn line_handback(line: &[u8]) -> Option<String> {
+    if !contains(line, HANDBACK.as_bytes()) {
+        return None;
+    }
+    let v = json::parse(std::str::from_utf8(line).ok()?).ok()?;
+    if v.get("type").as_str() != Some("assistant") {
+        return None;
+    }
+    v.get("message")
+        .get("content")
+        .as_arr()
+        .iter()
+        .rev()
+        .filter(|b| {
+            b.get("type").as_str() == Some("tool_use") && b.get("name").as_str() == Some(HANDBACK)
+        })
+        .find_map(|b| b.get("input").get("message").as_str().map(str::to_string))
+}
+
+/// Handles one SubagentStop event. It returns the JSON that gives the subagent
+/// one more instruction, if its report has no state line. It blocks only when
+/// `stop_hook_active` is `false`, so a subagent gets one more request at most.
+/// An input with no such key never blocks. It stores nothing.
+pub fn return_state(input: &str) -> Option<String> {
+    let v = json::parse(input).ok()?;
+    subagent_type(&v, "SubagentStop")?;
+    if v.get("stop_hook_active") != &Value::Bool(false) {
+        return None;
+    }
+    let sent = v
+        .get("agent_transcript_path")
+        .as_str()
+        .filter(|p| !p.is_empty())
+        .and_then(|p| scan_back(Path::new(p), line_handback));
+    let report = match &sent {
+        Some(message) => message,
+        None => v.get("last_assistant_message").as_str()?,
+    };
+    if ends_with_state(report) {
+        return None;
+    }
+    Some(
+        Obj::new()
+            .str("decision", "block")
+            .str("reason", RETURN_STATE_REASON)
+            .end(),
+    )
 }
 
 // ---------------------------------------------------------------------------
