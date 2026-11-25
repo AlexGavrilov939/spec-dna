@@ -42,6 +42,7 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | event skill | A skill that an event starts: a failure (`debug`) or an incident (`post-mortem`). `next` does not name it | | [harness](harness.md#the-workflow-pack-and-reviewmd) |
 | evidence | A test with a `covers:` tag, or a `verified-by` path, that proves a requirement | | [config](config.md#evidence) |
 | `finish` | The command that applies the delta of a change, checks the evidence and deletes the intent folder | | [change guide](guides/change.md) |
+| fix limit | The number of failed fixes of one shell command at which the hook `fix-limit` tells an agent to stop. A failed fix is a failure of the command after an edit of the same agent. The key is `[harness] fix-limit` | | [harness](harness.md#spec-dna-hook-fix-limit) |
 | foundation | The layer of the top files `product.md`, `system.md` and `terms.md` | | [concepts](concepts.md#layers-and-the-graph) |
 | front matter | The YAML block at the start of a document, with fields such as `type` and `status` | | [types](types.md) |
 | frontier | The set of items that a roll-up document must pin: each active requirement in its scope, and the summary of the highest sub-area that has one in place of the requirements of that sub-area. A `system` document has the whole layer `requirements` as its scope. A `product` document has the `system` documents that have `rests-on` | | [types](types.md#summary) |
@@ -61,6 +62,7 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | interface | An API, an event or a tool schema, in `interfaces/` | type `contract` | [types](types.md) |
 | invariant | A rule of a `rule` document that a change must keep true. A spec lists it as `<doc-id>#<key>@<hash>` in `Invariants` with `[change] invariants`. The acceptance record answers it | | [types](types.md#invariants) |
 | layer | A named set of document types with a place in the graph of stability | | [concepts](concepts.md#layers-and-the-graph) |
+| lesson | One fact that a rule, an instruction file or a skill of the project does not state yet, with its target file, its text and its evidence. It enters the repository only after the person accepts it | | [harness](harness.md#lessons) |
 | level | The longest `moves-to` path from a layer to a layer with no outgoing edge. Level 0 is the most stable | | [concepts](concepts.md#layers-and-the-graph) |
 | life of a record | An unbroken run of commits of the branch that hold `acceptance.toml` in the folder of a change. A commit with no such file ends the life. A life counts as one rejected record when the record says `rejected` at one or more of its commits. After 2 rejected records, a third run needs the word of the owner (SD941 with `approval = "branch"`, the item of a person in `next` with each mode) | | [diagnostics](diagnostics.md#the-stop-rule) |
 | live section | A section of an accepted decision that can change without an amendment. The default is `Status` | | [config](config.md) |
@@ -84,6 +86,7 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | `requirements` | The type of a document that holds the requirements of one capability | type `spec` | [types](types.md) |
 | research | Material that agents read only on request, in `research/` | types `note`, `reference` | [types](types.md) |
 | `REVIEW.md` | The review policy of the repository, which a code review service reads | | [harness](harness.md) |
+| return state | The last line of the report of a subagent, `State: <state>`, with one of 4 values. It is no input of a gate | | [harness](harness.md#return-states) |
 | role | A job in the harness, such as `verifier`, with its model and its agent file. An entry of `[owners]` also gives a role name: see owner role | | [harness](harness.md#roles) |
 | roll-up document | A `summary`, or a `system` or `product` document that has the field `rests-on`. It stores pins of the items below it. The chain is: the requirements, the summaries of the areas, `system`, then `product` | | [types](types.md#summary) |
 | roll-up pin | One entry of `rests-on`: `<doc-id>#<key>@<16 hex>` for a requirement, or `<doc-id>@<16 hex>` for a document. It records the text that the author read. It is stale when that text changes (SD641). The pin of the version in `spec-dna.toml` is another term: see pin | | [types](types.md#the-field-rests-on-and-its-pins) |
@@ -102,7 +105,9 @@ Each term has one meaning in spec-dna. The pages of this documentation use these
 | stage skill | A skill that `next` names for a step of a change, for example `write-plan`. The workflow pack has 9 stage skills | | [harness](harness.md#the-workflow-pack-and-reviewmd) |
 | standard document | A document form that a team already knows, such as an ADR or a PRD | | [types](types.md) |
 | subagent | An agent with its own context, which the main agent starts. The Claude Code adapter defines them in `.claude/agents/` | | [harness](harness.md) |
+| subagent card | One fixed text of 800 bytes or fewer that the hook `subagent-card` adds to the context of each subagent. The team page prints it | | [harness](harness.md#spec-dna-hook-subagent-card) |
 | summary | A document of the type `summary`: the short text of one area of the requirements, with the pins of the items that it rests on. It has no status and no required section. The gate checks its pins, not its meaning | | [types](types.md#summary) |
+| task brief | The text that the main session writes for a subagent, with the lines `Task`, `Files`, `Out of scope`, `Read first` and `Done when`. It is not the brief of the acceptor | | [harness](harness.md#task-brief) |
 | template | The text that `spec-dna new` writes for a new document | | [types](types.md#templates) |
 | `terms` | The type of `terms.md`: a table of terms, meanings and forbidden synonyms. SD904 reads it | | [types](types.md) |
 | top file | A document of a layer that has a fixed file name, such as `terms.md` or `roadmap.md` | | [types](types.md#place-gives-the-type) |
