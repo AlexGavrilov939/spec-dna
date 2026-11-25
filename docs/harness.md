@@ -429,7 +429,7 @@ An agent can fix a failure by guesses, one after the other, and each try makes i
 - The same problem is the same shell command that fails again. Each run of white space in the command counts as one space.
 - A failed fix is a failure of that command after the same agent made an edit since its last failure. The first failure is the problem and not a fix, so a red test run does not count.
 - One edit counts for one failure only. A run with no edit between 2 failures counts nothing.
-- When the command passes, the hook deletes its count.
+- When the command passes, the hook deletes its count, and the file of its message.
 - An edit below a folder of the layer `intent` is no fix. So the record of the acceptor and an edit of `plan.md` count nothing.
 - The main session and each subagent have counts of their own.
 
@@ -441,7 +441,7 @@ spec-dna fix limit: this command failed after 3 fixes. Stop the fixes of this pr
 
 The command is `spec-dna hook fix-limit --limit <n> --intent '<dir>'...`, with one `--intent` for each folder of the layer `intent`. It has 2 settings entries: `PostToolUseFailure` of `Bash` counts a failure, and `PostToolUse` of `Bash`, `Edit` and `Write` sees a pass or an edit. The hooks reference of Claude Code states that a `Bash` call with an exit code other than 0 gives `PostToolUseFailure` and no `PostToolUse`. It also states that the hook cannot block this event.
 
-The state is one file for each count and one for each edit mark, in `<temporary directory>/spec-dna-fix/`. A count file holds a number, and a mark is empty. The name of a file has the session id and the agent. The name of a count also has the first 8 bytes of SHA-256 of the session id, a zero byte and the command. The files hold no text of a command. The session id salts the hash, but a person who has the session id can test a guess of a short command. The hook removes a file that is older than 3 days ([ADR 0004](adr/0004-harness.md)). It uses the folder only if it is a folder, and no symlink, that your user owns. No write follows a symlink.
+The state is one file for each count, one for each edit mark and one for each message, in `<temporary directory>/spec-dna-fix/`. A count file holds a number, and the other files are empty. The file of a message keeps the message single when calls run at the same time. The name of a file has the session id and the agent. The name of a count also has the first 8 bytes of SHA-256 of the session id, a zero byte and the command. The files hold no text of a command. The session id salts the hash, but a person who has the session id can test a guess of a short command. The hook removes a file that is older than 3 days ([ADR 0004](adr/0004-harness.md)). It uses the folder only if it is a folder, and no symlink, that your user owns. No write follows a symlink.
 
 The hook cannot prove these things:
 

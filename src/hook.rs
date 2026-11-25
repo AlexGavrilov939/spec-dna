@@ -595,14 +595,22 @@ fn replace_file(dir: &Path, path: &Path, text: &str) -> Option<()> {
     done.ok()
 }
 
+/// The file that says that the message of a count is out.
+fn said_file(count: &Path) -> PathBuf {
+    let mut name = count.as_os_str().to_owned();
+    name.push(".said");
+    PathBuf::from(name)
+}
+
 /// Handles one event of `Bash`, `Edit` or `Write`. A failed fix is a failure
 /// of a command after the same agent made an edit since its last failure. At
 /// the limit, the hook returns the JSON that tells the agent to stop, once for
 /// each command. It cannot block.
 ///
-/// `state_dir` holds one file for each count and one for the edit mark of each
-/// agent. The names are `<session>.<agent>.<hash>` and
-/// `<session>.<agent>.edit`. A count file holds a number, and a mark is empty.
+/// `state_dir` holds one file for each count, one for the edit mark of each
+/// agent and one for each message. The names are `<session>.<agent>.<hash>`,
+/// `<session>.<agent>.edit` and `<session>.<agent>.<hash>.said`. A count file
+/// holds a number, and the other files are empty.
 pub fn fix_limit(
     input: &str,
     opts: &FixOpts,
@@ -643,16 +651,20 @@ pub fn fix_limit(
                 Some(_) => return None,
             };
             replace_file(state_dir, &path, &count.to_string())?;
-            // The count goes up by 1, so it equals the limit once.
-            (count == opts.limit).then(|| {
-                let text = MSG_FIX_LIMIT.replace("{n}", &opts.limit.to_string());
-                output("PostToolUseFailure", "additionalContext", &text)
-            })
+            if count != opts.limit {
+                return None;
+            }
+            // Calls at the same time can read the same count. Only the call
+            // that creates this file speaks.
+            create_file(&said_file(&path)).ok()?;
+            let text = MSG_FIX_LIMIT.replace("{n}", &opts.limit.to_string());
+            Some(output("PostToolUseFailure", "additionalContext", &text))
         }
         ("PostToolUse", "Bash") => {
             let path = count_file()?;
             // Most calls pass with no count, and then the folder needs no test.
             if fs::symlink_metadata(&path).is_ok() && own_dir(state_dir) {
+                let _ = fs::remove_file(said_file(&path));
                 let _ = fs::remove_file(path);
             }
             None
@@ -2800,6 +2812,46 @@ mod tests {
         // A run as root owns `/tmp`, and then this test proves nothing.
         if fs::metadata(&shared).unwrap().uid() != fs::metadata(&tmp.0).unwrap().uid() {
             assert!(!own_dir(&shared));
+        }
+    }
+
+    #[test]
+    fn fix_limit_speaks_once_for_calls_at_the_same_time() {
+        let opts = FixOpts {
+            limit: 3,
+            intent: Vec::new(),
+        };
+        let event = |event: &str, tool: &str, input: &str| {
+            format!(
+                r#"{{"session_id":"s1","cwd":"/p","hook_event_name":"{event}","tool_name":"{tool}","tool_input":{input}}}"#
+            )
+        };
+        let fail = event("PostToolUseFailure", "Bash", r#"{"command":"make"}"#);
+        let edit = event("PostToolUse", "Edit", r#"{"file_path":"/p/src/a.c"}"#);
+        for round in 0..50 {
+            let tmp = Tmp::new();
+            let state = tmp.state();
+            let run = |input: &str| fix_limit(input, &opts, None, &state).is_some();
+            // 32 threads make 384 calls, one half edits and one half failures.
+            let mut messages: usize = std::thread::scope(|s| {
+                let threads: Vec<_> = (0..32)
+                    .map(|t| {
+                        let (run, fail, edit) = (&run, &fail, &edit);
+                        s.spawn(move || {
+                            (0..12)
+                                .filter(|i| run(if (t + i) % 2 == 0 { edit } else { fail }))
+                                .count()
+                        })
+                    })
+                    .collect();
+                threads.into_iter().map(|t| t.join().unwrap()).sum()
+            });
+            // Then calls in sequence, so each round reaches the limit.
+            for _ in 0..5 {
+                run(&edit);
+                messages += usize::from(run(&fail));
+            }
+            assert_eq!(messages, 1, "round {round}");
         }
     }
 

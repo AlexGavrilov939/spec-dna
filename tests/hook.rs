@@ -784,6 +784,33 @@ fn fix_limit_speaks_once_at_the_third_failed_fix() {
 }
 
 #[test]
+fn fix_limit_speaks_once_when_the_count_goes_back() {
+    let fix = Fix::new();
+    assert_eq!(fix.fail(), "");
+    let name = fix.state()[0].0.clone();
+    let count = fix.dir.0.join("tmp/spec-dna-fix").join(name);
+    let reach = |fix: &Fix| -> String {
+        (0..5)
+            .map(|_| {
+                fix.edit();
+                fix.fail()
+            })
+            .collect()
+    };
+    assert_eq!(reach(&fix), limit_output(3));
+    // 2 calls at the same time can lose an update, so the count can go back.
+    for old in ["2", "0", ""] {
+        fs::write(&count, old).unwrap();
+        assert_eq!(reach(&fix), "", "{old:?}");
+    }
+    // A pass ends the problem. The next one has its own message.
+    fix.pass(COMMAND);
+    assert!(fix.state().is_empty(), "{:?}", fix.state());
+    assert_eq!(fix.fail(), "");
+    assert_eq!(reach(&fix), limit_output(3));
+}
+
+#[test]
 fn fix_limit_counts_no_run_without_an_edit() {
     let fix = Fix::new();
     // An edit before the first failure is no fix.
