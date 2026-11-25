@@ -1487,10 +1487,13 @@ fn team_page(h: &Harness) -> String {
 }
 
 /// The first version of spec-dna that has each hook that the configuration
-/// writes: `protect-approvals` is new in 0.7.0, `protect-tests` is new in
-/// 0.6.0, the other hooks are in 0.5.0.
+/// writes: `subagent-card`, `return-state` and `fix-limit` are new in 0.8.1,
+/// `protect-approvals` is new in 0.7.0, `protect-tests` is new in 0.6.0, the
+/// other hooks are in 0.5.0.
 pub fn hooks_version(h: &Harness) -> &'static str {
-    if h.approvals_hook_on() {
+    if h.card_hook_on() || h.fix_hook_on() {
+        "0.8.1"
+    } else if h.approvals_hook_on() {
         "0.7.0"
     } else if h.protect_hook_on() {
         "0.6.0"
@@ -1858,6 +1861,9 @@ const CONTEXT_HOOK: &str = "context-meter";
 const FANOUT_HOOK: &str = "fanout-cap";
 const PROTECT_HOOK: &str = "protect-tests";
 const APPROVALS_HOOK: &str = "protect-approvals";
+const CARD_HOOK: &str = "subagent-card";
+const STATE_HOOK: &str = "return-state";
+const FIX_HOOK: &str = "fix-limit";
 
 /// One entry that the harness expects in `.claude/settings.json`.
 #[derive(Clone, Debug, PartialEq)]
@@ -1942,6 +1948,22 @@ fn approvals_command(h: &Harness) -> String {
     c + " 2>/dev/null || true"
 }
 
+/// The command of a hook with no flag.
+fn plain_command(name: &str) -> String {
+    format!("spec-dna hook {name} 2>/dev/null || true")
+}
+
+/// The command of the hook `fix-limit`: the limit, and one `--intent` for each
+/// folder of the `intent` layer. Its 2 entries have this one command.
+fn fix_command(h: &Harness) -> String {
+    let limit = h.fix_limit.unwrap_or(0);
+    let mut c = format!("spec-dna hook fix-limit --limit {limit}");
+    for d in &h.intent_dirs {
+        c += &format!(" --intent {}", shell_quote(d));
+    }
+    c + " 2>/dev/null || true"
+}
+
 fn wants(h: &Harness) -> Vec<Want> {
     let mut w = Vec::new();
     if h.level != Level::None {
@@ -2007,6 +2029,28 @@ fn wants(h: &Harness) -> Vec<Want> {
         name: APPROVALS_HOOK,
         command: h.approvals_hook_on().then(|| approvals_command(h)),
     });
+    // The matcher `.+` skips an internal agent with an empty `agent_type`.
+    for (event, name) in [("SubagentStart", CARD_HOOK), ("SubagentStop", STATE_HOOK)] {
+        w.push(Want::Hook {
+            event,
+            matcher: ".+",
+            name,
+            command: h.card_hook_on().then(|| plain_command(name)),
+        });
+    }
+    // One entry for each event: the merge finds a handler by its event and its
+    // name, so 2 entries of one name on one event would become one.
+    for (event, matcher) in [
+        ("PostToolUseFailure", "Bash"),
+        ("PostToolUse", "Bash|Edit|Write"),
+    ] {
+        w.push(Want::Hook {
+            event,
+            matcher,
+            name: FIX_HOOK,
+            command: h.fix_hook_on().then(|| fix_command(h)),
+        });
+    }
     w
 }
 
@@ -3074,6 +3118,75 @@ opus = "xhigh"
         assert_eq!(command(&none), Some(None));
         assert!(team_page(&h).contains("`protect-approvals` denies a call"));
         assert!(!team_page(&none).contains("protect-approvals"));
+    }
+
+    #[test]
+    fn the_entries_of_the_report_hooks_and_their_version() {
+        let mut h = lean();
+        h.intent_dirs = vec!["docs/intent".into(), "it's/intent".into()];
+        // Each entry as (event, matcher, command), in the order of the table.
+        let entries = |h: &Harness| -> Vec<(&str, &str, Option<String>)> {
+            wants(h)
+                .into_iter()
+                .filter_map(|w| match w {
+                    Want::Hook {
+                        event,
+                        matcher,
+                        name,
+                        command,
+                    } if ["subagent-card", "return-state", "fix-limit"].contains(&name) => {
+                        Some((event, matcher, command))
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        let off = entries(&h);
+        assert_eq!(off.len(), 4, "{off:?}");
+        assert!(off.iter().all(|e| e.2.is_none()), "{off:?}");
+        h.subagent_card = Some(true);
+        h.fix_limit = Some(4);
+        let fix = "spec-dna hook fix-limit --limit 4 --intent 'docs/intent' --intent 'it'\\''s/intent' 2>/dev/null || true";
+        let want = [
+            (
+                "SubagentStart",
+                ".+",
+                "spec-dna hook subagent-card 2>/dev/null || true",
+            ),
+            (
+                "SubagentStop",
+                ".+",
+                "spec-dna hook return-state 2>/dev/null || true",
+            ),
+            ("PostToolUseFailure", "Bash", fix),
+            ("PostToolUse", "Bash|Edit|Write", fix),
+        ];
+        let got = entries(&h);
+        let got: Vec<(&str, &str, &str)> = got
+            .iter()
+            .map(|e| (e.0, e.1, e.2.as_deref().unwrap_or("")))
+            .collect();
+        assert_eq!(got, want);
+        // With no folder of the `intent` layer, the hook still counts.
+        h.intent_dirs.clear();
+        assert_eq!(
+            entries(&h)[2].2.as_deref(),
+            Some("spec-dna hook fix-limit --limit 4 2>/dev/null || true")
+        );
+        // The first version with the 3 hooks, with either key on.
+        assert_eq!(hooks_version(&h), "0.8.1");
+        h.protect_approvals = Some(true);
+        h.intent_dirs = vec!["docs/intent".into()];
+        for (card, limit) in [(Some(true), Some(0)), (Some(false), Some(1))] {
+            (h.subagent_card, h.fix_limit) = (card, limit);
+            assert_eq!(hooks_version(&h), "0.8.1", "{card:?} {limit:?}");
+        }
+        (h.subagent_card, h.fix_limit) = (Some(false), Some(0));
+        assert_eq!(hooks_version(&h), "0.7.0");
+        // Level `none` writes no handler.
+        (h.subagent_card, h.fix_limit) = (Some(true), Some(3));
+        h.level = Level::None;
+        assert!(entries(&h).iter().all(|e| e.2.is_none()));
     }
 
     #[test]
