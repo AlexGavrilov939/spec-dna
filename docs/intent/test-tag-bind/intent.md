@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: draft
 class: higher-risk
 ---
 # A tag binds the test under it
@@ -15,6 +15,6 @@ In a real project, a tag above an import line bound a case of another file throu
 ## Out of scope
 
 - The place of the tag in the text of the skill `tdd` (slice A7 of the design). A change of that text needs a paid rerun of the skill evals (ADR 0016), so a later change does it.
-- A bind of a group (`describe`, `class`) to each of its cases, and a read of the `package` or `namespace` line of a test file.
+- A bind of a group (`describe`, `class`) to each of its cases.
 - A new field or a new format of the acceptance record: the format stays 2.
 - The source layers of the roll-up (D84) and the note of an old plan (D86).

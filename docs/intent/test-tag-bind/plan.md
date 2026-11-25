@@ -1,5 +1,5 @@
 ---
-status: approved
+status: draft
 ---
 # A tag binds the test under it: plan
 
@@ -7,7 +7,7 @@ status: approved
 
 - `docs/design/0.8.1-a-evidence-and-context.md` The design of the bind (D82) and of the code tree (D85).
 - `docs/design/0.8.1-a-lifecycle-and-harness.md` The design of the hook of the tests (D89).
-- `docs/adr/0024-test-report-as-evidence.md` The amendment of 2026-11-24 (slice A0 of the design).
+- `docs/adr/0024-test-report-as-evidence.md` The amendment of 2026-11-24 (slice A0 of the design), and the amendment of 2026-11-25 with the rule of the identity.
 - `src/evidence.rs` The test under a tag, the forms of a test and of a name, the file rule, the shared cases, the strength of a bind and the reasons of a tag with no passed case.
 - `src/report.rs` The paths of the code tree for the bind, and the text of SD614 for changed bytes.
 - `src/diag.rs` The code SD621.
@@ -43,8 +43,8 @@ status: approved
 
 ## Order
 
-- [x] t1: Bind a tag to the test directly under it: the scan, the forms of a test, the name forms, a case that names 2 tests, and the reasons no-test, group and template (D82 items 1 to 5). Add the test of the defect and the proof state of the skeleton of accept. Files: `src/evidence.rs`, `tests/evidence_reports.rs`, `tests/accept_cmd.rs`. Verify: `cargo test --bin spec-dna evidence::` and `cargo test --test evidence_reports --test accept_cmd`. Hours: 6.
-- [x] t2: Fit a case to the file of the tag by its file or classname, with the precedence, the shared cases, the exact `case:` and the strength of a bind (D82 items 6 to 10). Add the fixtures of the runners and their twins. The Jest case of the shared runner list takes the form with a file. Files: `src/evidence.rs`, `tests/evidence_reports.rs`. Verify: `cargo test --bin spec-dna evidence::` and `cargo test --test evidence_reports`. Hours: 8.
+- [x] t1: Bind a tag to the test directly under it: the scan, the forms of a test, the name forms, a case that names 2 tests (it is a case of both), and the reasons no-test, group and template (D82 items 1 to 5, as its amendment of the build changes them). Add the test of the defect and the proof state of the skeleton of accept. Files: `src/evidence.rs`, `tests/evidence_reports.rs`, `tests/accept_cmd.rs`. Verify: `cargo test --bin spec-dna evidence::` and `cargo test --test evidence_reports --test accept_cmd`. Hours: 6.
+- [x] t2: Bind each case by its own full identity, with no case that takes the place of another: the file field and the row of a case, a case of another file, a unique identity with the class index, the worst case of the set, the exact `case:` and the strength of a bind (D82 items 6 to 10, as its amendment of the build changes them). Add the fixtures of the runners and their twins. The Jest case of the shared runner list takes the form with a file. Files: `src/evidence.rs`, `tests/evidence_reports.rs`. Verify: `cargo test --bin spec-dna evidence::` and `cargo test --test evidence_reports`. Hours: 8.
 - [x] t3: Bind no case to a tag in a file outside the code tree, with the reason outside-tree (D85). Change the text of SD614 for changed bytes so that it names the hook, and test the setup of the hook (D89). Files: `src/evidence.rs`, `src/report.rs`, `tests/evidence_reports.rs`. Verify: `cargo test --test evidence_reports`. Hours: 3.
 - [x] t4: Add the code SD621, its profile row in the group reports and its row in the profiles page. Files: `src/diag.rs`, `src/config.rs`, `docs/profiles.md`. Verify: `cargo test --bin spec-dna diag::` and `cargo test --bin spec-dna config::`. Hours: 1.
 - [x] t5: Report SD621 as a state code in `check --reports`, and keep the bind of each full tag in the report of check. Test the defaults of jest-junit, the form with a file and the exact `case:`. Files: `src/check.rs`, `tests/evidence_reports.rs`. Verify: `cargo test --test evidence_reports`. Hours: 3.
@@ -61,23 +61,23 @@ status: approved
 
 ## Risks
 
-- A layout of a runner that the design did not read binds by name only, or gives no-case. SD621 and the reasons make each such tag visible, and `case:` is the escape.
+- A layout of a runner that the design did not read binds by name only, or gives no-case. SD621 and the reasons make each such tag visible, and `case:` is the escape for a layout that the scanner cannot read.
 - The new rule leaves requirements of a current corpus unproven. That is the fix of a false proof. The entry of `CHANGELOG.md` gives the steps, and only the `finish` of a change that touches such a requirement stops.
 - 3 changes of wave 1 edit `src/lifecycle.rs`, `src/finish.rs`, `src/check.rs`, `src/diag.rs`, `src/context.rs`, `src/upgrade.rs` and some pages. The change that merges second rebases and runs each check again.
-- The name forms of item 4 can give a false bind, for example a parameter part that holds the name of another test. The shared set of item 7 and the unit tests of the table limit it.
+- The name forms of item 4 can give a false bind, for example a parameter part that holds the name of another test. The rule of the identity and the unit tests of the table limit it.
 
 ## Proof
 
 Each test fails before the fix, unless it says "guard". The design pages give the fixtures, and `tests/evidence_reports.rs` holds the fixtures of 7 runners.
 
 - `tests/evidence_reports.rs`, the defect: a tag on line 1 of a Vitest file above an import line, and only the passed case `Pumps > stops it` of another file. `check --reports` gives SD617 with the reason no-test. Before the fix: no finding, measured (E22).
-- A `classname` that is the path of another file: SD617 no-case. The precedence: a skipped case of the file of the tag and a passed line with no file give SD617 "was skipped".
+- A `classname` that is the path of another file: SD617 no-case. No precedence: a skipped case of the file of the tag and a passed line with no file give SD617 "was skipped" and SD621, because the line stays in the set as a weak link and the worst case decides.
 - The runners pytest `xunit2`, cargo-nextest (`app::valves`), Vitest, Go (go-junit-report), JUnit 5 (Surefire) and PHPUnit: a passed case proves the requirement with no SD621 (guard), and a skipped case gives SD617 "was skipped" (guard). A passed twin of the same name in a second file gives SD617: it fails before the fix for nextest, Vitest and Go, and it is a guard for pytest, JUnit 5 and PHPUnit.
-- jest-junit with its defaults: the bind counts and gives SD621, a warning in `standard` and an error in `strict`. The same report with `file`, and an exact `case:` with one such case: no SD621 (guard).
-- Shared names in one file (2 classes), and jest-junit twins in 2 files: SD617 with the shared reason.
+- jest-junit with its defaults: the bind counts and gives SD621, a warning in `standard` and an error in `strict`. The same report with `file`: no SD621 (guard). An exact `case:` with one such case: SD621 with the cause by-name, also for one case, because no full field ties the case to the file of the tag.
+- One name in 2 classes of one file: the class chain is a full field, so a skipped case of the class of the tag gives SD617 "was skipped", not the shared reason, and a failed case of the other class does not touch the tag. jest-junit twins in 2 files: SD617 with the shared reason.
 - `case:closes` with the case `Valves closes`: SD617 no-case, and the message names `Valves closes`. `case:"TestTimeout/no_reply"` and `case:"testOne with data set #0"`: bound, and no SD105.
 - A tag above `describe(...)`: the reason group. A tag above `it.each(rows)(...)`: the reason template.
-- Guards: a multi-line `@pytest.mark.parametrize(...)`, the attributes `#[test]` and `#[should_panic(...)]`, the annotations `@Test` and `@DisplayName(...)`, a Kotlin and a C# test on one line, and a tag on the line of the definition are bound. A tag in the body of a test gives no-test.
+- Guards: a multi-line `@pytest.mark.parametrize(...)`, the attributes `#[test]` and `#[should_panic(...)]`, the annotations `@Test` and `@Tag(...)`, a Kotlin and a C# test on one line, and a tag on the line of the definition are bound. A tag in the body of a test gives no-test. The annotations `@Test` and `@DisplayName(...)`: bound, with SD621 of the cause no-identity, whose message names `case:`.
 - The code tree: an untracked test file with a passed case and a stamp gives SD617 outside-tree. An edit of that file after the stamp still gives SD617 (issue 113). A tracked file that `tree-exclude` matches gives SD617 outside-tree. After `git add`, a new report and a stamp: no SD617 (guard). An untracked twin keeps its own file (guard).
 - The hook: a report written again after the stamp gives SD614 with "one hook entry". The entry of the setup keeps the stamp fresh (guard).
 - `tests/accept_cmd.rs`: the skeleton for the tag of the defect has the state tagged and no case.
@@ -85,4 +85,4 @@ Each test fails before the fix, unless it says "guard". The design pages give th
 - `tests/init_change.rs` and `tests/upgrade_cli.rs`: the note names the id of a test hook that does not stamp. A hook with `evidence stamp` in its entry gives no note (guard).
 - The unit tests of `src/evidence.rs` hold the table of the name forms: each example of item 4 names its test, and `test_x_slow` does not name `test_x`.
 
-`pre-commit run --all-files`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test` pass, `checker` reports no open blocker, and the record of the acceptor has the result accepted.
+`pre-commit run --all-files`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test` pass, `checker` reports no open blocker other than B2, B3 and B4 of the check of 2026-11-25, which stay open by the owner's answer of that day, and the record of the acceptor has the result accepted.
