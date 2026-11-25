@@ -2090,7 +2090,7 @@ pub fn by_name_texts(ev: &Evidence, di: u32, ri: usize) -> Vec<String> {
                     "make the runner write it (jest-junit: `addFileAttribute: \"true\"`; pytest: `junit_family = xunit1`; gotestsum: `--junitfile-testcase-classname=relative`), or keep the `Cargo.toml` or `go.mod` above the test file".to_string(),
                 ),
                 Why::NotUnique => (
-                    "the identity of the test is not unique: another definition of the test file builds it, or its `file` or `classname` names more than one test file",
+                    "the identity of the test is not unique: another definition can build it too, or its `file` or `classname` names more than one file of the code tree",
                     "rename one of the tests or files, or set the runner so that its report tells them apart".to_string(),
                 ),
                 Why::NoIdentity => (

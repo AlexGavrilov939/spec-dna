@@ -154,7 +154,7 @@ pub enum Why {
     /// groups, the title or the layout of the file.
     NoIdentity,
     /// The identity is not unique: another definition builds it, or its file
-    /// field names more than one test file.
+    /// field names more than one file of the code tree.
     NotUnique,
     /// No full field ties the case to the test: the report or the project does
     /// not hold the field.
