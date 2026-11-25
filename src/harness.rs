@@ -1451,7 +1451,20 @@ fn team_page(h: &Harness) -> String {
         }
         s += "\n";
     }
-    if h.context_hook_on() || h.fanout_hook_on() || h.protect_hook_on() || h.approvals_hook_on() {
+    // The page prints the card, so a pull request shows each change of it.
+    if h.card_hook_on() {
+        s += &format!(
+            "\n## Subagent card\n\nThe hook `subagent-card` gives each subagent this card when it starts. The agent file and the brief of the subagent have priority over it. The agent `acceptor` gets another line 3: commit only `acceptance.toml`, and do not push.\n\n```text\n{}\n```\n",
+            harness_text::SUBAGENT_CARD
+        );
+    }
+    if h.context_hook_on()
+        || h.fanout_hook_on()
+        || h.protect_hook_on()
+        || h.approvals_hook_on()
+        || h.card_hook_on()
+        || h.fix_hook_on()
+    {
         s += "\n## Hooks\n\n";
         if h.context_hook_on() {
             s += "`context-meter` tells an agent the size of its context once at each level. ";
@@ -1469,6 +1482,14 @@ fn team_page(h: &Harness) -> String {
         }
         if h.approvals_hook_on() {
             s += "`protect-approvals` denies a call that runs `spec-dna approve`, and a `git commit` that sets the status of an artifact of a change to `accepted` or `approved`. Only a person approves. ";
+        }
+        if h.card_hook_on() {
+            s += "`subagent-card` gives each subagent the card above when it starts. `return-state` asks a subagent once for the last line `State: <state>` when its report has none. ";
+        }
+        if let (true, Some(n)) = (h.fix_hook_on(), h.fix_limit) {
+            s += &format!(
+                "`fix-limit` tells an agent to stop after {n} failed fixes of one shell command. "
+            );
         }
         s += &format!(
             "Each teammate needs spec-dna {} or later on `PATH`. Without it, the hooks do nothing.\n",
