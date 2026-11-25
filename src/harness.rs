@@ -509,6 +509,13 @@ pub struct Harness {
     /// that a file sets, and it writes `true` for `strict` in a file that has
     /// no key.
     pub protect_approvals: Option<bool>,
+    /// `[harness] subagent-card`: the hooks `subagent-card` and `return-state`.
+    /// `None`: the file has no such key, and the hooks are off. `init` writes
+    /// the key in a new configuration only.
+    pub subagent_card: Option<bool>,
+    /// `[harness] fix-limit`: the limit of the hook `fix-limit`, and 0 turns it
+    /// off. `None`: as for `subagent_card`.
+    pub fix_limit: Option<u32>,
     /// The folders of the `intent` layer, from the repository root, one for
     /// each root. `Config::parse` sets them, as it sets `tests`. `parse`
     /// leaves the list empty, and `toml_section` does not write it.
@@ -604,6 +611,8 @@ impl Harness {
             review_md: false,
             protect_tests: Protect::Off,
             protect_approvals: None,
+            subagent_card: None,
+            fix_limit: None,
             intent_dirs: Vec::new(),
             tests: Vec::new(),
             no_change_class: false,
@@ -684,6 +693,18 @@ impl Harness {
         self.level != Level::None
             && self.protect_approvals == Some(true)
             && !self.intent_dirs.is_empty()
+    }
+
+    /// True if the configuration writes the hooks `subagent-card` and
+    /// `return-state`: the key is `true`.
+    pub fn card_hook_on(&self) -> bool {
+        self.level != Level::None && self.subagent_card == Some(true)
+    }
+
+    /// True if the configuration writes the hook `fix-limit`: the key is above
+    /// 0.
+    pub fn fix_hook_on(&self) -> bool {
+        self.level != Level::None && self.fix_limit.is_some_and(|n| n > 0)
     }
 
     /// Reads the `[harness]` table. With level `none`, it still reads the other
@@ -768,6 +789,12 @@ impl Harness {
             Some(Toml::Boolean(b)) => h.protect_approvals = Some(*b),
             Some(_) => return Err("`harness.protect-approvals` must be true or false".into()),
         }
+        match f.take("subagent-card") {
+            None => {}
+            Some(Toml::Boolean(b)) => h.subagent_card = Some(*b),
+            Some(_) => return Err("`harness.subagent-card` must be true or false".into()),
+        }
+        h.fix_limit = f.opt_u32("fix-limit")?;
         if let Some(v) = f.take("roles") {
             let roles = v.as_table().ok_or("`harness.roles` must be a table")?;
             // A role of 0.5 gives its own error, before any other key is read.
@@ -887,6 +914,12 @@ impl Harness {
         s += &format!("protect-tests = {}\n", quote(self.protect_tests.name()));
         if let Some(b) = self.protect_approvals {
             s += &format!("protect-approvals = {b}\n");
+        }
+        if let Some(b) = self.subagent_card {
+            s += &format!("subagent-card = {b}\n");
+        }
+        if let Some(n) = self.fix_limit {
+            s += &format!("fix-limit = {n}\n");
         }
         s += "\n[harness.roles]\n";
         for r in Role::ALL
@@ -3091,6 +3124,63 @@ opus = "xhigh"
     }
 
     #[test]
+    fn the_keys_of_the_report_hooks_parse_and_turn_the_hooks_on() {
+        // No key: off, and no line in the section.
+        let h = parse("level = \"lean\"").unwrap();
+        assert_eq!((h.subagent_card, h.fix_limit), (None, None));
+        assert!(!h.card_hook_on() && !h.fix_hook_on());
+        let text = h.toml_section();
+        assert!(
+            !text.contains("subagent-card") && !text.contains("fix-limit"),
+            "{text}"
+        );
+        let on = parse("level = \"lean\"\nsubagent-card = true\nfix-limit = 3").unwrap();
+        assert_eq!((on.subagent_card, on.fix_limit), (Some(true), Some(3)));
+        assert!(on.card_hook_on() && on.fix_hook_on());
+        // A key that is off stays in the section.
+        let off = parse("level = \"lean\"\nsubagent-card = false\nfix-limit = 0").unwrap();
+        assert_eq!((off.subagent_card, off.fix_limit), (Some(false), Some(0)));
+        assert!(!off.card_hook_on() && !off.fix_hook_on());
+        // Level `none` writes no hook.
+        let none = parse("level = \"none\"\nsubagent-card = true\nfix-limit = 3").unwrap();
+        assert!(!none.card_hook_on() && !none.fix_hook_on());
+        // A wrong type names the key.
+        for (extra, want) in [
+            (
+                "subagent-card = \"yes\"",
+                "`harness.subagent-card` must be true or false",
+            ),
+            (
+                "fix-limit = true",
+                "`harness.fix-limit` must be a non-negative integer",
+            ),
+            (
+                "fix-limit = -1",
+                "`harness.fix-limit` must be a non-negative integer",
+            ),
+        ] {
+            assert_eq!(
+                parse(&format!("level = \"lean\"\n{extra}")).unwrap_err(),
+                want,
+                "{extra}"
+            );
+        }
+        // A table of 0.8.0 renders the bytes of 0.8.0.
+        assert!(
+            parse("level = \"lean\"")
+                .unwrap()
+                .toml_section()
+                .contains("protect-tests = \"off\"\n\n[harness.roles]")
+        );
+        assert!(
+            on.toml_section()
+                .contains("protect-tests = \"off\"\nsubagent-card = true\nfix-limit = 3\n\n[harness.roles]"),
+            "{}",
+            on.toml_section()
+        );
+    }
+
+    #[test]
     fn writes_doc_names_the_files_of_the_new_keys() {
         let mut h = parse("level = \"lean\"\nskills = [\"specify\"]\nreview-md = true").unwrap();
         assert!(h.writes_doc("REVIEW.md"));
@@ -3137,6 +3227,19 @@ opus = "xhigh"
                 let mut h = lean();
                 h.skills = vec![Skill::WritePlan];
                 h.protect_tests = Protect::FixBranches;
+                h
+            },
+            // The keys of the 3 hooks of 0.8.1: both on, and both off.
+            {
+                let mut h = lean();
+                h.subagent_card = Some(true);
+                h.fix_limit = Some(3);
+                h
+            },
+            {
+                let mut h = full();
+                h.subagent_card = Some(false);
+                h.fix_limit = Some(0);
                 h
             },
             // The key `advisor` of the acceptor: absent, true and false (D81).
