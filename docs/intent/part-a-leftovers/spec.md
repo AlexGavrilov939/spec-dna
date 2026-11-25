@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 ---
 # The open points of part A of 0.8.1: spec
 
