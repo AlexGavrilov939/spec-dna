@@ -780,6 +780,14 @@ The base is the merge base of `--base` (default: `origin/HEAD`, then `[change] b
 
 `rollup` is `{"repinned":["<id>",...],"held":["<id>",...],"stale":[{"id":"<id>","pins":["<pin>",...]}]}`. The output has the key only if the tree has a roll-up document. A stop has no `rollup`.
 
+In the profiles `standard` and `strict`, a success that writes also prints this note on stderr, in the text output only:
+
+```text
+note: list the lessons of this change for the person: the target file, the text and the evidence of each; edit no target file before the person accepts the lesson
+```
+
+A stop, `--dry-run`, `--json` and the profile `lite` print no such note. [harness.md](harness.md#lessons) says what a lesson is and how an accepted lesson enters the repository.
+
 `finish` is the one command that deletes documents. It deletes only the files of the intent folder, and only after the steps. Git is the archive.
 
 ## status
@@ -1250,9 +1258,12 @@ spec-dna hook context-meter [--levels <a,b,...>] [--subagent <n>]
 spec-dna hook fanout-cap [--cap <n>]
 spec-dna hook protect-tests [--mode <fix-branches|always>] [--test <glob>]...
 spec-dna hook protect-approvals [--intent <dir>]...
+spec-dna hook subagent-card
+spec-dna hook return-state
+spec-dna hook fix-limit [--limit <n>] [--intent <dir>]...
 ```
 
-The hooks use the event names of Claude Code, so they belong to its adapter ([agents.md](agents.md)). A coding agent runs `hook`. The agent starts it on each tool call and sends one JSON object on stdin. spec-dna reads at most 1 MiB of it.
+The hooks use the event names of Claude Code, so they belong to its adapter ([agents.md](agents.md)). A coding agent runs `hook`. The agent starts it on an event, such as a tool call or the start of a subagent, and sends one JSON object on stdin. spec-dna reads at most 1 MiB of it.
 
 A hook never reads `spec-dna.toml`, never checks the pin and never scans the repository. It reads at most one more file. `protect-tests` reads no file, and runs `git` at most 2 times, only for a path that matches a test glob. `protect-approvals` runs `git` only for a command whose `git` has the subcommand `commit`, and then 3 times, and 2 more times for each artifact file that the working tree changes.
 
@@ -1304,6 +1315,25 @@ The hook joins a line that ends with a backslash to the next line. It splits the
 5. Rule D. The event has `agent_type` `acceptor` (a subagent of that name, or a session that starts with `claude --agent acceptor`), and a segment has `git commit` that commits more than the record `acceptance.toml` of a change: deny. The rule runs before rule 3. It reads the text of the command and the index, and it cannot enforce a limit on a write of a file ([harness.md](harness.md#spec-dna-hook-protect-approvals) gives the cases and the limits).
 
 A deny is `permissionDecision: "deny"` with a reason. The reason of rule 3 names the path and the status, and tells the agent to set the status back and to ask the person to run `spec-dna approve <slug> <artifact>` in a terminal of their own. Bad JSON, no git, a git error and a path that the hook cannot read give no output. [harness.md](harness.md#spec-dna-hook-protect-approvals) gives the limits.
+
+`subagent-card` runs when a subagent starts (the `SubagentStart` event). With a non-empty `agent_type`, it prints `hookSpecificOutput` with `hookEventName` `SubagentStart` and the [card](harness.md#spec-dna-hook-subagent-card) as `additionalContext`. The agent `acceptor` gets another line 3. With an empty or absent `agent_type`, bad JSON or another event, it prints nothing. It reads no file, and it takes no flag.
+
+`return-state` runs when a subagent stops (the `SubagentStop` event). It reads `hook_event_name`, `agent_type`, `agent_transcript_path`, `last_assistant_message` and `stop_hook_active`. The report is the `message` of the last call of the tool `SubagentHandback` in the transcript. With no such call, it is `last_assistant_message`. The hook reads the transcript from its end, 4 MiB at most. If the last line of the report is no [state line](harness.md#spec-dna-hook-return-state), it prints `{"decision":"block","reason":"<reason>"}`. It prints this only when `stop_hook_active` is the boolean `false`. With a state line, an empty `agent_type`, no report or bad input, it prints nothing. It stores nothing, and it takes no flag.
+
+`fix-limit` runs after a call of `Bash`, `Edit` or `Write` (the events `PostToolUse` and `PostToolUseFailure`). It counts the [failed fixes](harness.md#spec-dna-hook-fix-limit) of one shell command for each agent.
+
+| Flag | Meaning |
+| --- | --- |
+| `--limit <n>` | The number of failed fixes at which the hook speaks. `0`, or no `--limit`, turns the hook off |
+| `--intent <dir>` | A folder from the root of the project. An edit below it is no fix. The root is `CLAUDE_PROJECT_DIR`, else the `cwd` of the event. `init` writes one flag for each folder of the layer `intent` |
+
+| Event | Tool | What the hook does |
+| --- | --- | --- |
+| `PostToolUseFailure` | `Bash` | The first failure of a command makes a count of 0. A later failure adds 1 if the agent has an edit mark. Each failure removes the mark. When the count reaches the limit, the hook prints the message as `additionalContext` of `PostToolUseFailure`, once for the count |
+| `PostToolUse` | `Bash` | Deletes the count of the command |
+| `PostToolUse` | `Edit` or `Write` | Sets the edit mark of the agent, except for a `file_path` below an `--intent` folder |
+
+The key of a count has 3 parts. They are the session id, the agent (`main`, else `agent_id`) and a hash. The hash is the first 8 bytes of SHA-256 of the session id, a zero byte and the command, in hexadecimal. In the command, each run of white space counts as one space. The hook removes no space at the start or the end. The state is one file for each count and one for each mark, in `<temporary directory>/spec-dna-fix/`. A count file holds a number, and a mark is empty. No file holds text of a command. The hook removes a file that is older than 3 days. The `session_id` and the `agent_id` must have 1 to 64 characters of `A-Za-z0-9_-`.
 
 ## upgrade
 
