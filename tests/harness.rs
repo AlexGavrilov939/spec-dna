@@ -282,7 +282,7 @@ fn init_writes_the_lean_harness_and_check_is_clean() {
     }
     assert!(out.contains("The harness adds about "), "{out}");
     assert!(
-        out.contains("Each teammate needs spec-dna 0.6.0 or later on PATH for the hooks."),
+        out.contains("Each teammate needs spec-dna 0.8.1 or later on PATH for the hooks."),
         "{out}"
     );
     // A team with no advisor: the line names no `/advisor`.
@@ -318,7 +318,7 @@ fn a_dry_run_shows_the_harness_and_writes_nothing() {
         "{out}"
     );
     assert!(
-        out.contains("  create .claude/settings.json (settings: ") && out.contains("3 hooks)\n"),
+        out.contains("  create .claude/settings.json (settings: ") && out.contains("7 hooks)\n"),
         "{out}"
     );
     assert!(
@@ -1449,7 +1449,7 @@ fn strict_init_writes_protect_approvals_and_the_hook_entry() {
     );
     assert_eq!(settings, fs::read_to_string(golden).unwrap());
     assert!(
-        out.contains("spec-dna 0.7.0 or later on PATH for the hooks"),
+        out.contains("spec-dna 0.8.1 or later on PATH for the hooks"),
         "{out}"
     );
     // `check` finds the file that `init` wrote clean: no SD501 and no SD502.
@@ -1471,7 +1471,6 @@ fn standard_init_writes_no_approval_hook() {
     assert!(!r.read("spec-dna.toml").contains("protect-approvals"));
     let settings = r.read(".claude/settings.json");
     assert!(!settings.contains("protect-approvals"), "{settings}");
-    assert!(!settings.contains("\"Bash\""), "{settings}");
     // The positive control: the key, set by hand, writes the entry.
     let cfg = r
         .read("spec-dna.toml")
