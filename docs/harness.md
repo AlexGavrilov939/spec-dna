@@ -390,6 +390,14 @@ For the agent `acceptor`, line 3 is ``3. Commit only `acceptance.toml`, and do n
 
 The hooks reference of Claude Code states that the input of `SubagentStart` has `agent_type`, and that the hook cannot block. The hook gives no output for an empty or absent `agent_type`.
 
+The hook cannot prove these things:
+
+- That a subagent obeys the card. The card is text in its context.
+- That an agent other than Claude Code gets the card. That agent gets it only when the main session pastes it into the task brief.
+- That it skips each internal agent of Claude Code. The hooks reference states that an internal agent has an empty `agent_type`, which the matcher `.+` skips, or the name of `--agent` of the session. An internal agent of a session that starts with `--agent <name>` can thus get the card, and one block from `return-state`.
+
+Each subagent gets 800 bytes or fewer in its context, and each of its requests sends them again from the cache. The request of the main session gets no byte.
+
 ### `spec-dna hook return-state`
 
 The hook runs on `SubagentStop`. It reads the last line of the report that is not empty. A state line is that line, after the removal of white space and of `*` and `` ` `` at its 2 ends. It is the word `State:`, one space and one of the [4 return states](#return-states), with this case. If the line is no state line, the hook gives `decision: "block"` with this reason, and the subagent gets it as its next instruction:
@@ -406,6 +414,13 @@ The hooks reference of Claude Code states these facts:
 - With the tool `SubagentHandback`, the report is the `message` input of that tool.
 
 After such a call, the hook reads the `message` of the last call in the transcript of the subagent. It reads from the end of the file, 4 MiB at most.
+
+The hook cannot prove these things:
+
+- That the state is true. A subagent can write `COMPLETE` for work that fails. The verifier and the acceptance record stay the controls.
+- That one more request is useful. A subagent with a structured output, such as an agent of a workflow with a schema, can get it, because its last text has no state line.
+
+`Explore`, `verifier`, `fallback-advisor` and `acceptor` keep the report form of their agent files, which have priority over the card. Line 6 of the card still asks each of them for a state line. A report with no state line costs one more request over the whole context of the subagent.
 
 ### `spec-dna hook fix-limit`
 
@@ -427,6 +442,15 @@ spec-dna fix limit: this command failed after 3 fixes. Stop the fixes of this pr
 The command is `spec-dna hook fix-limit --limit <n> --intent '<dir>'...`, with one `--intent` for each folder of the layer `intent`. It has 2 settings entries: `PostToolUseFailure` of `Bash` counts a failure, and `PostToolUse` of `Bash`, `Edit` and `Write` sees a pass or an edit. The hooks reference of Claude Code states that a `Bash` call with an exit code other than 0 gives `PostToolUseFailure` and no `PostToolUse`. It also states that the hook cannot block this event.
 
 The state is one file for each count and one for each edit mark, in `<temporary directory>/spec-dna-fix/`. A count file holds a number, and a mark is empty. The name of a file has the session id and the agent. The name of a count also has the first 8 bytes of SHA-256 of the session id, a zero byte and the command. The files hold no text of a command. The session id salts the hash, but a person who has the session id can test a guess of a short command. The hook removes a file that is older than 3 days ([ADR 0004](adr/0004-harness.md)).
+
+The hook cannot prove these things:
+
+- That the agent stops. The message is context, and the hook cannot block.
+- That it sees each fix. A fix through `Bash`, such as `sed -i`, sets no edit mark.
+- That it sees each failure. A command in a pipe, such as `cargo test | tail`, has the exit code of the last command.
+- That 2 commands are 2 problems. A changed command, such as `pytest -x` after `pytest`, starts a new count.
+- That a project stops at 3 fixes in total. 3 fixes by 3 subagents in sequence count as 1 fix for each. The text rule of the skill `debug` covers this case.
+- That one count is one problem. A command that runs the whole test suite counts different defects as one problem, until the command passes once.
 
 ## Task brief, return states and lessons
 
@@ -487,6 +511,12 @@ The person accepts or rejects each lesson in the chat. No lesson enters the repo
 | An instruction file or a skill that a person writes | `AGENTS.md`, the text of `CLAUDE.md` outside the generated lines, a skill of the project | The agent edits the file in a commit of its own, after the word of the person in the chat |
 | A document with a status | A rule or a decision | The change process of the project: `spec-dna new intent <slug>` |
 | A generated file | A file with a spec-dna marker line | No edit, because `check` reports SD501. The person sends the lesson to the maintainers of spec-dna |
+
+The lessons cannot prove these things:
+
+- That a lesson is true or general. The person decides.
+- That an agent writes its lessons. The note and the card ask for them, and no check reads a report.
+- That a lesson stays. A lesson that the person does not answer stays only in the pull request.
 
 ## Check
 
