@@ -1,5 +1,5 @@
 ---
-status: approved
+status: draft
 ---
 # A tag binds the test under it: spec
 
@@ -18,7 +18,7 @@ None. This change adds, changes or removes no requirement, because this reposito
 ## Concerns
 
 - [x] A tag that bound by the rule of 0.8.0 and binds no test now leaves its requirement unproven, so a current corpus with `[evidence] reports` can need edits. Resolved: SD616 is a state code, and SD617 stops only the `finish` of a change that touches the requirement. Each message names the reason and the fix, and `CHANGELOG.md` gives the steps of the upgrade. The owner accepted the amendment of ADR 0024 on 2026-11-24.
-- [x] The forms of a test read lines, not a syntax tree. A line that matches no form gives the reason `no-test`. A test whose chain or title the scanner cannot read gives a weak bind (SD621, cause `no-identity`). Resolved: `case:"<name>"` is the escape for both, and the message of each names it. It is no escape for the causes `by-name` and `not-unique`, and their messages do not offer it.
+- [x] The forms of a test read lines, not a syntax tree. A line that matches no form gives the reason `no-test`. A test whose chain or title the scanner cannot read gives a weak bind (SD621, cause `no-identity`), or it binds no case (`no-case`), as a Vitest `describe` with a variable as the title can do. Resolved: `case:"<name>"` is the escape for both, and the message of each names it. It is no escape for the causes `by-name` and `not-unique`, and their messages do not offer it.
 - [x] jest-junit with its defaults writes no `file`, so each bind of such a project is a bind by name. Resolved: SD621 is a warning in `standard`, and its message names `addFileAttribute: "true"`. It is an error in `strict`, as D82 decides.
 - [x] The slice table of the design does not list `src/lifecycle.rs` and `src/finish.rs` for SD621. Resolved: SD621 is new where SD617 runs, in the diff that deletes the folder of a change and at step 5.4 of `finish`, so the plan lists both files.
 - [x] D92 of the change `lifecycle-fixes` says that its text on `stats` goes into the page of the test reports. Resolved: the rule of `stats` is a detail of one command, so it goes into the section `stats` of `docs/commands.md`, and the new page links that section. Thus neither change waits for the other.

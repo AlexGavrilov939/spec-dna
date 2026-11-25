@@ -100,6 +100,8 @@ The title of a group of a call is a literal with nothing added, with no escape a
 - a title is not such a literal or constant: a variable, `Valves::Valve`, a second title or `describe.each`;
 - the file has no indent: a group at the indent of the definition stays open above it.
 
+An unreadable chain does not always give a weak bind. For example, a Vitest `describe(TITLE, ...)` with a variable as the title can bind no case (`no-case`). Then `case:"<name>"` binds the case by its whole name.
+
 The kinds of the groups must fit the form. The form `def` takes classes, `fn` takes `mod` blocks, `func` takes no group, and call takes the groups of a call. The form method needs a class, and it also takes namespaces. For the form method, spec-dna reads the line `package` or a file-scoped `namespace` too. The scanner reads lines, not a syntax tree, so it needs no language detection.
 
 ### The row of a case
@@ -116,7 +118,7 @@ The form of the definition and the shape of the case give the row. The extension
 | JUnit and xUnit | method; a dotted `classname`, no `file` | `classname`: the full class name, that is the package or namespace and the class chain. 2 classes of one name in 2 namespaces are 2 identities. `$` and `+` read as `.`. With no `package` or `namespace` line, the class chain ends the `classname`, and the `classname` names the tag file. Name: `M`, `C.M` or `N.C.M` (`MethodFormat`), then `(...)` or `[...]` | `classname`, name | a method with `@DisplayName` or `DisplayName =`. A test of a nested class whose case has the outer class as its `classname`. No `package` or `namespace` line, and a `classname` that does not name the tag file |
 | PHPUnit | method; `file` and `classname` | the `file`. The `classname` ends with the class chain. Name: the method, then the words `with data set` and the data set | `file`, `classname`, name | the chain is unreadable |
 | RSpec, jest-junit with `addFileAttribute` | call; `file` and `classname` | the `file`. Name: the titles of the groups and the literal, joined with a space. RSpec writes no space between a group of a bare constant and a group below it whose title starts with `#`, `.` or `::`. The joins of Vitest and Playwright count too | `file`, name | a title is not a plain literal |
-| Vitest, Playwright | call; a `classname` that is a path of a script | `classname`: the path. Name: the titles and the literal, joined with ` > ` (Vitest) or ` › ` (Playwright). A `[<project>]` prefix of Playwright goes | `classname`, name | a title is not a plain literal |
+| Vitest, Playwright | call; a `classname` that is a path of a script | `classname`: the path. Name: the titles and the literal, joined with ` > ` (Vitest) or ` › ` (Playwright). A `[<project>]` prefix of Playwright goes | `classname`, name | a title is not a plain literal; some such titles bind no case |
 | jest-junit, the defaults | call; a `classname` that is no path of a script | the name is the join with a space | name | always: with no `file`, no field names the test file |
 | Line format | any form; no `classname` | the name | none | always |
 | Another pair | for example `fn` with a dotted `classname` that is no package name | none | none | always |
