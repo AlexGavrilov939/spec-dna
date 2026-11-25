@@ -40,7 +40,7 @@ status: approved
 - [x] t10: Document the keys turns and segments, the limit of the turns for each segment, the stop disk-space, one arm, the comparison of files and the floor, and change the sentence on the records of 0.8.0. Files: `docs/evals.md`. Verify: `pre-commit run --all-files` and `cargo run --quiet -- check --all` with no SD102 and no SD602. Hours: 2.
 - [x] t11: Document the key in the table of the keys, and the forms of `--arms` and `--compare` and the 2 new causes of exit code 3 in the section eval. Files: `docs/config.md`, `docs/commands.md`. Verify: `pre-commit run --all-files` and `cargo run --quiet -- check --all` with no SD102 and no SD602. Hours: 1.
 - [x] t12: Write the entry of the change. Files: `CHANGELOG.md`. Verify: `pre-commit run --all-files`. Hours: 1.
-- [ ] t13: Run the independent review and the acceptance pass, and finish the change. Files: none: finish deletes the folder of the change. Verify: `spec-dna finish eval-runner --dry-run`. Hours: 3.
+- [x] t13: Run the independent review and the acceptance pass, and finish the change. Files: none: finish deletes the folder of the change. Verify: `spec-dna finish eval-runner --dry-run`. Hours: 3.
 
 ## Risks
 
