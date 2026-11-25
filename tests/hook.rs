@@ -978,6 +978,95 @@ fn fix_limit_removes_a_state_file_that_is_older_than_3_days() {
     assert_eq!(fix.state().len(), 1);
 }
 
+/// A file outside the state folder that no write of the hook may change.
+#[cfg(unix)]
+fn victim(fix: &Fix, name: &str) -> PathBuf {
+    let path = fix.dir.0.join(name);
+    fs::write(&path, "keep this data").unwrap();
+    path
+}
+
+#[cfg(unix)]
+#[test]
+fn fix_limit_writes_no_mark_through_a_symlink() {
+    let fix = Fix::new();
+    let target = victim(&fix, "victim");
+    let state = fix.dir.0.join("tmp/spec-dna-fix");
+    fs::create_dir_all(&state).unwrap();
+    std::os::unix::fs::symlink(&target, state.join("s1.main.edit")).unwrap();
+    fix.edit();
+    assert_eq!(fs::read_to_string(&target).unwrap(), "keep this data");
+}
+
+#[cfg(unix)]
+#[test]
+fn fix_limit_writes_no_count_through_a_symlink() {
+    let fix = Fix::new();
+    let target = victim(&fix, "victim");
+    assert_eq!(fix.fail(), "");
+    let name = fix.state()[0].0.clone();
+    let count = fix.dir.0.join("tmp/spec-dna-fix").join(name);
+    fs::remove_file(&count).unwrap();
+    std::os::unix::fs::symlink(&target, &count).unwrap();
+    fix.edit();
+    assert_eq!(fix.fail(), "");
+    assert_eq!(fs::read_to_string(&target).unwrap(), "keep this data");
+    // A regular file with the new count replaced the link.
+    assert!(fs::symlink_metadata(&count).unwrap().is_file());
+}
+
+#[cfg(unix)]
+#[test]
+fn fix_limit_uses_no_state_folder_that_is_a_symlink() {
+    // The name of the count of `COMMAND` in the session `s1`.
+    let first = Fix::new();
+    assert_eq!(first.fail(), "");
+    let count = first.state()[0].0.clone();
+
+    let fix = Fix::new();
+    let other = fix.dir.0.join("other");
+    fs::create_dir_all(&other).unwrap();
+    for name in ["s1.main.edit", count.as_str(), "old"] {
+        fs::write(other.join(name), "2").unwrap();
+    }
+    let past = std::time::SystemTime::now() - std::time::Duration::from_secs(4 * 24 * 3600);
+    fs::File::options()
+        .write(true)
+        .open(other.join("old"))
+        .unwrap()
+        .set_modified(past)
+        .unwrap();
+    fs::create_dir_all(fix.dir.0.join("tmp")).unwrap();
+    std::os::unix::fs::symlink(&other, fix.dir.0.join("tmp/spec-dna-fix")).unwrap();
+    let before = fix.state();
+    assert_eq!(before.len(), 3);
+    // A pass, a failure and an edit: no one deletes or writes a file there.
+    fix.pass(COMMAND);
+    assert_eq!(fix.state(), before, "pass");
+    assert_eq!(fix.fail(), "");
+    assert_eq!(fix.state(), before, "failure");
+    fix.edit();
+    assert_eq!(fix.state(), before, "edit");
+}
+
+#[test]
+fn fix_limit_writes_no_count_in_place() {
+    // A second name of the count file keeps the old text, so a reader never
+    // sees a count file that is empty or half written.
+    let fix = Fix::new();
+    assert_eq!(fix.fail(), "");
+    let name = fix.state()[0].0.clone();
+    let count = fix.dir.0.join("tmp/spec-dna-fix").join(name);
+    let witness = fix.dir.0.join("witness");
+    fs::hard_link(&count, &witness).unwrap();
+    fix.edit();
+    assert_eq!(fix.fail(), "");
+    assert_eq!(fs::read_to_string(&count).unwrap(), "1");
+    assert_eq!(fs::read_to_string(&witness).unwrap(), "0");
+    // No temporary file stays.
+    assert_eq!(fix.state().len(), 1);
+}
+
 #[test]
 fn fix_limit_is_off_at_0_and_silent_on_input_that_it_does_not_know() {
     for args in [

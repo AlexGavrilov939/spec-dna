@@ -13,6 +13,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
 use sha2::{Digest, Sha256};
@@ -534,6 +535,66 @@ fn below_intent(v: &Value, opts: &FixOpts, project: Option<&Path>, file: &str) -
         .any(|d| below(d.trim_end_matches('/'), &rel).is_some())
 }
 
+/// A path in `dir` for a short-lived file. No other call that runs now has it.
+fn temp_path(dir: &Path) -> PathBuf {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    dir.join(format!(".tmp-{}-{n}", std::process::id()))
+}
+
+/// Creates a file that is not there. It never writes through a symlink.
+fn create_file(path: &Path) -> std::io::Result<File> {
+    OpenOptions::new().write(true).create_new(true).open(path)
+}
+
+/// True if `dir` is a folder, and no symlink, that the user of this process
+/// owns. The temporary directory can be a shared one, where another user can
+/// make the folder first.
+fn own_dir(dir: &Path) -> bool {
+    fs::symlink_metadata(dir).is_ok_and(|m| m.is_dir() && same_owner(dir, &m))
+}
+
+/// std gives no id of the user. A new file has the user of the process as its
+/// owner, so the owner of a new file in the folder is the test.
+#[cfg(unix)]
+fn same_owner(dir: &Path, meta: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let probe = temp_path(dir);
+    let Ok(file) = create_file(&probe) else {
+        return false;
+    };
+    let same = file.metadata().is_ok_and(|m| m.uid() == meta.uid());
+    let _ = fs::remove_file(&probe);
+    same
+}
+
+#[cfg(not(unix))]
+fn same_owner(_dir: &Path, _meta: &fs::Metadata) -> bool {
+    true
+}
+
+/// Makes the state folder of `fix-limit`, if it is not there. It returns `None`
+/// for a folder that the hook must not use. Then the hook reads, writes and
+/// deletes nothing there.
+fn state_folder(dir: &Path) -> Option<()> {
+    fs::create_dir_all(dir).ok()?;
+    own_dir(dir).then_some(())
+}
+
+/// Puts a new file with `text` at `path` in one step. A reader sees the old
+/// file or the new one. The rename replaces a symlink at `path`, and does not
+/// write to its target.
+fn replace_file(dir: &Path, path: &Path, text: &str) -> Option<()> {
+    let temp = temp_path(dir);
+    let done = create_file(&temp)
+        .and_then(|mut f| f.write_all(text.as_bytes()))
+        .and_then(|()| fs::rename(&temp, path));
+    if done.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    done.ok()
+}
+
 /// Handles one event of `Bash`, `Edit` or `Write`. A failed fix is a failure
 /// of a command after the same agent made an edit since its last failure. At
 /// the limit, the hook returns the JSON that tells the agent to stop, once for
@@ -569,7 +630,7 @@ pub fn fix_limit(
     match (event, v.get("tool_name").as_str()?) {
         ("PostToolUseFailure", "Bash") => {
             let path = count_file()?;
-            fs::create_dir_all(state_dir).ok()?;
+            state_folder(state_dir)?;
             remove_stale(state_dir);
             // Each failure uses up the mark, so one edit counts once.
             let edited = fs::remove_file(&mark).is_ok();
@@ -581,7 +642,7 @@ pub fn fix_limit(
                 Some(n) if edited => n.saturating_add(1),
                 Some(_) => return None,
             };
-            fs::write(&path, count.to_string()).ok()?;
+            replace_file(state_dir, &path, &count.to_string())?;
             // The count goes up by 1, so it equals the limit once.
             (count == opts.limit).then(|| {
                 let text = MSG_FIX_LIMIT.replace("{n}", &opts.limit.to_string());
@@ -589,15 +650,20 @@ pub fn fix_limit(
             })
         }
         ("PostToolUse", "Bash") => {
-            let _ = fs::remove_file(count_file()?);
+            let path = count_file()?;
+            // Most calls pass with no count, and then the folder needs no test.
+            if fs::symlink_metadata(&path).is_ok() && own_dir(state_dir) {
+                let _ = fs::remove_file(path);
+            }
             None
         }
         ("PostToolUse", "Edit" | "Write") => {
             let file = v.get("tool_input").get("file_path").as_str()?;
             if !below_intent(&v, opts, project, file) {
-                fs::create_dir_all(state_dir).ok()?;
+                state_folder(state_dir)?;
                 remove_stale(state_dir);
-                fs::write(&mark, "").ok()?;
+                // A mark that is there already is the same mark.
+                let _ = create_file(&mark);
             }
             None
         }
@@ -2717,6 +2783,23 @@ mod tests {
     impl Drop for Tmp {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    // ----- fix-limit state -----
+
+    /// `/tmp` belongs to root, and each user can write into it. So it is a
+    /// folder of another user for each test run that is not root.
+    #[cfg(unix)]
+    #[test]
+    fn fix_limit_takes_no_folder_of_another_user() {
+        use std::os::unix::fs::MetadataExt;
+        let tmp = Tmp::new();
+        assert!(own_dir(&tmp.0));
+        let shared = fs::canonicalize("/tmp").unwrap();
+        // A run as root owns `/tmp`, and then this test proves nothing.
+        if fs::metadata(&shared).unwrap().uid() != fs::metadata(&tmp.0).unwrap().uid() {
+            assert!(!own_dir(&shared));
         }
     }
 

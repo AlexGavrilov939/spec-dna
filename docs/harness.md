@@ -441,10 +441,11 @@ spec-dna fix limit: this command failed after 3 fixes. Stop the fixes of this pr
 
 The command is `spec-dna hook fix-limit --limit <n> --intent '<dir>'...`, with one `--intent` for each folder of the layer `intent`. It has 2 settings entries: `PostToolUseFailure` of `Bash` counts a failure, and `PostToolUse` of `Bash`, `Edit` and `Write` sees a pass or an edit. The hooks reference of Claude Code states that a `Bash` call with an exit code other than 0 gives `PostToolUseFailure` and no `PostToolUse`. It also states that the hook cannot block this event.
 
-The state is one file for each count and one for each edit mark, in `<temporary directory>/spec-dna-fix/`. A count file holds a number, and a mark is empty. The name of a file has the session id and the agent. The name of a count also has the first 8 bytes of SHA-256 of the session id, a zero byte and the command. The files hold no text of a command. The session id salts the hash, but a person who has the session id can test a guess of a short command. The hook removes a file that is older than 3 days ([ADR 0004](adr/0004-harness.md)).
+The state is one file for each count and one for each edit mark, in `<temporary directory>/spec-dna-fix/`. A count file holds a number, and a mark is empty. The name of a file has the session id and the agent. The name of a count also has the first 8 bytes of SHA-256 of the session id, a zero byte and the command. The files hold no text of a command. The session id salts the hash, but a person who has the session id can test a guess of a short command. The hook removes a file that is older than 3 days ([ADR 0004](adr/0004-harness.md)). It uses the folder only if it is a folder, and no symlink, that your user owns. No write follows a symlink.
 
 The hook cannot prove these things:
 
+- That it runs. In a shared temporary directory, another user can make the folder `spec-dna-fix` first. Then the hook counts nothing, and it gives no message.
 - That the agent stops. The message is context, and the hook cannot block.
 - That it sees each fix. A fix through `Bash`, such as `sed -i`, sets no edit mark.
 - That it sees each failure. A command in a pipe, such as `cargo test | tail`, has the exit code of the last command.
