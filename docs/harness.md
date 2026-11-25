@@ -373,6 +373,8 @@ To remove the entry, set `protect-approvals = false` and run `spec-dna init --re
 | SD502 | `CLAUDE.md` has a second model-team line. Delete it. A generated file, the line or a settings entry differs from what this version generates for the configuration. This includes a second `spec-dna hook <name>` handler with another command. A file with a marker that the configuration does not generate, and that has no edit, also gives SD502. Run `spec-dna init --reconfigure` to remove it. The scan covers `.claude/agents/`, `.claude/skills/` and `REVIEW.md`, but not the adapter skill |
 | SD505 | `.claude/settings.json` is not valid JSON, or a key that spec-dna writes into has a value of the wrong type |
 
+The entries of the hooks `subagent-card`, `return-state` and `fix-limit` follow the same rules. An absent entry, a changed command, or a second handler of the name with another command gives SD502. The message names the event and the hook. `check` reports nothing for the entry of a key that is off.
+
 As for the other adapters, only findings that are new against the base fail the gate. The check of the base uses the `[harness]` table of the base. Thus a change of the table, without a change of the files, gives new findings. To change the team, change `[harness]` and run `spec-dna init --reconfigure`. Do not edit the generated files.
 
 ## Evals
