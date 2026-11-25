@@ -80,3 +80,12 @@ ADR 0017, ADR 0025 and ADR 0027 are accepted and locked, so this ADR does not ed
 ### 2026-11-23: the advisor of the acceptor
 
 The answer to Q54 adds the key `advisor` to the entry `acceptor` of `[harness.roles]`. Its default is `false` in `standard` and `true` in `strict`, and `init` writes it. With `false`, `acceptor.md` has one more line: do not consult the advisor. A subagent gets the advisor of its session, and no setting of an agent file removes it, so the line is a soft rule. The profile thus selects a third thing, also for ADR 0017. [D81](../design/0.8.0.md#d81-the-advisor-of-the-acceptor-q54) gives the detail.
+
+### 2026-11-25: a team with no advisor
+
+Status: accepted under the owner's word of 2026-11-25 for "ADR amendments that the fixes below need".
+
+Since the amendment of 2026-11-24 of [ADR 0004](0004-harness.md), a new project of `lite` or `standard` has no advisor. 2 rules follow. ADR 0004 is 42 characters under its hard budget, so this ADR holds the second rule. The change `part-a-leftovers` makes the fix.
+
+- "`lite`": in the team page of a `lite` team with no advisor, the section "Check after a restart" has no step on the advisor, as in `standard`. 0.7.1 wrote the steps `/advisor` and `Advising` for each team. The other text of each generated file of `lite` keeps the bytes of 0.7.1, and a `lite` team with the advisor keeps the team page of 0.7.1.
+- ADR 0004, "`.claude/settings.json` is a merge": when `init --reconfigure` turns the role `advisor` off (the model `none`, or the level `none`), it removes `advisorModel` if the value is the advisor model of the old configuration. The preview shows the removal. Another value stays, with its `kept` line. With the key, Claude Code keeps an advisor that the configuration and the model-team line no longer name.
