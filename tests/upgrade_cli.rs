@@ -2713,3 +2713,52 @@ fn a_plan_of_0_7_1_on_the_base_needs_no_record_after_the_upgrade() {
         }
     }
 }
+
+fn test_hook_note(id: &str) -> String {
+    format!(
+        "note: the pre-commit hook `{id}` runs the tests. If it writes a report that `[evidence] reports` matches, each commit writes the report again after `spec-dna evidence stamp`, and `check --reports` gives SD614. Run the stamp in the same hook: entry: sh -c '<test command> && spec-dna evidence stamp' (docs/test-report.md#a-hook-that-runs-the-tests)"
+    )
+}
+
+const TESTS_HOOK: &str = "repos:\n  - repo: local\n    hooks:\n      - id: tests\n        name: tests\n        entry: pytest -q\n        language: system\n";
+
+#[test]
+fn upgrade_names_a_test_hook_that_does_not_stamp() {
+    let hook = |pre_commit: &str| {
+        let repo = project_0_6_1("[]");
+        repo.write(".pre-commit-config.yaml", pre_commit);
+        repo.commit("hook");
+        let (code, out, err) = upgrade(&repo, &["--dry-run"]);
+        assert_eq!(code, 0, "{out}{err}");
+        out
+    };
+    let out = hook(TESTS_HOOK);
+    assert_eq!(out.matches(&test_hook_note("tests")).count(), 1, "{out}");
+    // Guard: a hook with `evidence stamp` in its entry gives no note.
+    let out =
+        hook(&TESTS_HOOK.replace("pytest -q", "sh -c 'pytest -q && spec-dna evidence stamp'"));
+    assert!(
+        !out.contains("runs the tests. If it writes a report"),
+        "{out}"
+    );
+    // A hook that is not about tests gives no note.
+    let out = hook("repos:\n  - repo: x\n    hooks:\n      - id: codespell\n");
+    assert!(
+        !out.contains("runs the tests. If it writes a report"),
+        "{out}"
+    );
+    // It names the hook also when there is nothing to change.
+    let repo = project_0_6_1("[]");
+    repo.write(".pre-commit-config.yaml", TESTS_HOOK);
+    repo.commit("hook");
+    let (code, out, err) = upgrade(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    repo.commit("upgrade");
+    let (code, out, err) = upgrade(&repo, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.starts_with("spec-dna upgrade: nothing to change\n"),
+        "{out}"
+    );
+    assert_eq!(out.matches(&test_hook_note("tests")).count(), 1, "{out}");
+}

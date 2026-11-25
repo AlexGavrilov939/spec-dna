@@ -742,82 +742,11 @@ The word `partial` comes first after `covers:` (in any ASCII case, with or witho
 
 ### Test reports
 
-A tag is a claim of the author. With `[evidence] reports`, a tag proves a requirement only when a test case that binds to it passed in a report. Without the key, nothing changes: a tag alone is evidence, as in 0.7.1. An empty list is the same as no key. The `lite` profile turns the codes of the reports off. `[evidence] reports` and the group `reports` of `[rules]` are the only switches.
-
-How it works:
-
-1. The tests write a report. spec-dna reads 2 formats. `junit` is a subset of JUnit XML: the elements `testsuites`, `testsuite` and `testcase`, the attributes `name`, `classname` and `file`, and the children `failure`, `error`, `skipped`, `flakyFailure`, `flakyError`, `rerunFailure` and `rerunError`. spec-dna reads UTF-8 only, and it rejects a DTD. `lines` is a format for any runner: the first line is `spec-dna-report 1`, and each other line is `pass`, `fail` or `skip`, a tab, a path from the repository root or `-`, a tab and the name of the case. A blank line and a line that starts with `#` do not count.
-2. `spec-dna evidence stamp` writes `<report>.stamp` next to each report. The stamp holds the hash of the code tree and the hash of the report bytes. Run it after the tests, in the same job.
-3. `check --reports` and `finish` read the reports from the disk, also when git ignores them. A report counts when it is readable, git does not track it, it has a stamp, and the stamp names the current code tree and the bytes of the report.
-
-The code tree is one hash of the code as it was when the tests ran. It covers each file that git tracks, with the bytes on the disk. A symbolic link counts with the text that it names, as git stores it, and a submodule counts with its entry in the git index (the tree does not look into it). It leaves out these paths: the files that `tree-exclude` matches (default: each Markdown file), the folders of the `intent` layer, `.spec-dna/`, the files that `init` writes with `spec-dna.toml` and the report files with their stamps. Thus a change of documents never makes a report stale, and a change of code does.
-
-An untracked file does not count. A file that git does not track yet is not in the tree, so a `git add` of a new file after the stamp makes the report stale. A test file that git does not track yet is not in the tree hash, but `check`, `finish` and `accept` read it for its `classname`. A test file that git ignores and does not track stays unread, as before. Stage new files before the stamp.
-
-Limit: a test file that git does not track can still prove a requirement, because the report binds the tag through its `classname`. The file is outside the tree hash, so an edit of it after the stamp does not make the report stale. Stage each test file that a tag uses. The rule for 0.8.1 is open ([issue 113](https://github.com/AlexGavrilov939/spec-dna/issues/113)).
-
-A tag binds to a test case in these ways:
-
-- The tag names the case: `# covers: loans#renew case:test_renew_on_time`, or `case:"renew on time"` when the name has spaces. `case:` comes after the ids, and its value is the `name` of the case as the report writes it. Do not use a name with a `#`. A binary before 0.8.0 reads `case:X#y` as an id, so it reports SD105 for it. Use the name without its part before the `#`, or the full name from the report when it has no `#`.
-- Else the tag binds to the first word or string literal of the first code block after the tag that names a case of the reports. A string literal and a name come before a keyword that starts a test (`it`, `test`, `fn`, `def`, `func` and similar), so `it('closes on timeout', ...)` binds to the case "closes on timeout" and not to a case that ends with the word `it`. The block starts at the first line after the tag that is not blank and not a comment. It ends before the first later line whose indent is not deeper than the indent of its first line, after a deeper line. It also ends before a line with less indent than the tag, before the next `covers:` line, and after 20 lines. A tag in the lines of a doc comment (the lines `/**`, `* covers: ...` and `*/`) binds to the test below the comment: the line that opens the comment (`/**`) gives the indent of the tag. A comment in the body of a test does not bind to the next test. A case name matches a word when, without a final `[...]` or `(...)`, it equals the word, ends with the word after `.`, `::`, `/`, `#`, a space, `>` or `›`, or starts with the word and `/`.
-- A case that has a `file` binds only a tag of that file. A runner that starts in a subfolder writes a shorter path, so the path of the tag can also end with `/` and the `file` of the case. A case with no `file` and a `classname` binds only a tag of a test file whose dotted path (the path without its extension, with `.` for `/`) ends with the `classname`, or with its part before the last `.`, in whole segments. The pytest `classname` `tests.test_valves.TestValves` names `tests/test_valves.py`. When no test file has such a path, the case binds a tag of any test file.
-- A tag with no case is not bound. It proves nothing, and the message names the fix.
-
-A requirement passes when at least one case that binds to it passed, and no such case failed. A skipped case is no pass and no fail. A case that passed after a rerun (`flakyFailure`, `rerunFailure`) counts as a fail. A `verified-by` record is a check by a person: the report does not apply to it.
-
-The bind can be wrong in 4 cases. An unrelated case that passes shares a word of the block. A test is in a comment after the tag, so the block starts at the next real test. One case name is in 2 files, in a report with no `file` and no `classname` that names a file. A test is on one line with no deeper line, so the block runs on. `case:` removes each doubt. The messages of SD616 and SD617 name the case, so a reviewer can see the bind.
-
-With no fresh report, each full tag is unbound, so SD616 or SD617 still tell that the requirement is unproven, also when a setting makes SD613 to SD615 a warning or turns them off. A report that is in no root (its path is below no `[[roots]]` path) takes the severity of the project for SD613 to SD615, but the requirement keeps the severity of its own root.
-
-A glob of `reports` is a path from the repository root: an absolute path, a drive letter and a `..` segment are errors of the configuration (exit code 3). A folder that does not exist has no report (SD613). A folder that exists and cannot be read is an input error (exit code 4), because it must not look like a project with no report.
-
-A report is unreadable (SD615) in these cases: an unknown format, a parse error (also a `testcase` inside a `testcase`), a `testsuite` whose `tests` count is not its number of `testcase` elements (a cut file), a file over 64 MiB, a `<!DOCTYPE`, and a report or a stamp that git tracks. A report in git can be a hand-written one. Add the reports to `.gitignore`.
-
-What the reports do not prove. A test can pass and still not check the requirement: the tag is a claim of the author. A person or an agent can write a report by hand, because the stamp binds bytes to a tree, not to a run. A copy of a report, with its stamp, counts as one more pass of the level `reliable`. `check --reports` reads files outside git. Without `--reports`, `check` keeps the rule of 0.7.1, so the hook `check --staged` needs no report.
-
-[Diagnostics](diagnostics.md#test-reports-sd613-to-sd617) lists the codes. [The change guide](guides/change.md#test-reports-in-ci) gives the steps for CI.
+With `[evidence] reports`, a tag proves a requirement only when a test case that binds to it passed in a fresh report. [Test reports](test-report.md) gives the bind rule, the code tree and the stamp, the report formats and the setup of a hook.
 
 ### Proof levels and the proof debt
 
-Each requirement of an active document has one proof state. The states go from the best to the worst:
-
-| State | Meaning |
-| --- | --- |
-| `reliable` | The state `passed-once`, and each bound case that passed has at least `reliable-runs` passes in the reports of the current code tree, with no fail |
-| `passed-once` | A bound case passed in a fresh report, and no bound case failed |
-| `verified` | A `verified-by` record. A person checked the requirement |
-| `tagged` | A full `covers:` tag that no fresh report proves: no `reports` key, no fresh report, or a case that failed, was skipped or was not found |
-| `owed` | A proof debt and no evidence |
-| `none` | No evidence and no debt |
-
-A tag that a bound case proves is above a `verified-by` record. `status` and `stats` show the states ([status](commands.md#status), [stats](commands.md#stats)). In `lite`, they show no line of the proof and `stats` reads no report, unless a rule turns a code of the group `proof` on.
-
-The level `reliable`. The runner runs the tests `reliable-runs` times, and it writes one report for each run. Each report has its stamp (`spec-dna evidence stamp`). A pass of a case is one report in which it passed. A case that appears twice in one report counts once. spec-dna keeps no ledger and no retry. With `reliable-for` set, `finish` and `check --reports` stop on a requirement of a covered change that passed fewer times than `reliable-runs` (SD620). A requirement that no bound case proves gives SD617. When SD617 is off, it gives SD620, because 0 passes is fewer than `reliable-runs`. The values of `reliable-for` are:
-
-- `none`: no change needs `reliable`. This is the default.
-- `higher-risk`: a change of the class `higher-risk` needs it.
-- `all`: each change needs it.
-
-`reliable-for` needs `reports`. A value other than `none` with an empty or absent `reports` is an error of the configuration (exit code 3): ``[evidence] reliable-for needs [evidence] reports: set reports, or set reliable-for = "none"``. The `lite` profile turns SD620 off. A requirement that has only a `verified-by` record, with no tag, is `verified`, and SD620 does not apply to it. A requirement that has a tag is still below `reliable` when its bound case failed, was skipped or passed fewer times than `reliable-runs`, also when it has a `verified-by` record. The record does not replace the passes of a tag.
-
-The proof debt. A requirement can end with the marker `<!-- proof-owed: <reason> -->`. The reason is one word of a closed list:
-
-| Reason | Use it when |
-| --- | --- |
-| `manual` | A person must look |
-| `environment` | CI has no such device, account or data |
-| `external` | A third party must act |
-| `pending` | The test is not written yet |
-
-The marker is an act of the author on one requirement, as `verified-by` is. It has no key and no profile switch: in `lite` its codes are off, in `standard` they are warnings, and in `strict` SD618 is a warning and SD619 is an error. The hash of the requirement does not cover the marker, so a marker gives no SD914 and no SD921. The marker can stand next to `aliases` and `verified-by` markers. A debt never counts as proof:
-
-- An active requirement with a debt and no evidence gives SD618, in place of SD608. SD618 is a state code, so `check --all` shows it.
-- A marker with a reason that is not in the list, or a marker on a requirement that has evidence, gives SD619. A requirement with an invalid marker keeps SD608.
-- `finish` and `check --reports` stop on a requirement with a debt and no tag with SD916, as they stop on a requirement with no evidence. A debt does not clear SD617 and SD620 either.
-
-A debt has no date and no expiry, because a check reads no clock. `status` and `stats` show the count. The reason is a claim of the author: a person reads it in the review. A copy of a report counts as one more pass. The stamp binds bytes to a tree, not to a run, so the level `reliable` does not prove that the runs were real.
-
-[Diagnostics](diagnostics.md#proof-levels-and-the-proof-debt-sd618-to-sd620) lists the codes.
+Each requirement of an active document has one proof state: `reliable`, `passed-once`, `verified`, `tagged`, `owed` or `none`. A marker `<!-- proof-owed: <reason> -->` records a proof debt. [Proof levels and the proof debt](test-report.md#proof-levels-and-the-proof-debt) gives the states, the level `reliable` and the reasons of a debt. The rows of `reliable-runs`, `reliable-for` and `reports` stay in the table [Keys](#keys).
 
 ## Patterns and globs
 

@@ -28,6 +28,7 @@ This page lists each page of the documentation. The [README](../README.md) gives
 - [Document types](types.md): the types, their places, statuses and templates.
 - [Diagnostics](diagnostics.md): each diagnostic code and its fix.
 - [Profiles](profiles.md): the severity of each code in each profile.
+- [Test reports](test-report.md): the bind of a `covers:` tag to a test case, the code tree and the stamp, the setup of a hook, the report formats and the proof levels.
 - [init](init.md): what `init` detects and asks.
 - [Agents](agents.md): how spec-dna works with each coding agent, and what each adapter adds.
 - [Claude Code harness](harness.md): the roles, skills, hooks and `REVIEW.md` of the Claude Code adapter.

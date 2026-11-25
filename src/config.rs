@@ -1124,7 +1124,7 @@ impl Profile {
             // The test reports (design 0.8.0, D1). Off in `lite`. The codes run
             // only with a `[evidence] reports` key that is not empty.
             "SD613" | "SD614" | "SD615" | "SD617" => (None, Some(E), Some(E)),
-            "SD616" => (None, Some(W), Some(E)),
+            "SD616" | "SD621" => (None, Some(W), Some(E)),
             // The proof levels and the proof debt (design 0.8.0, D2). Off in
             // `lite`. SD618 and SD619 run on a marker, and SD620 on the key
             // `reliable-for`.
@@ -1177,7 +1177,10 @@ pub const GROUPS: [(&str, &[&str]); 13] = [
     ("area-budget", &["SD705", "SD706", "SD707"]),
     ("drift", &["SD606", "SD607"]),
     ("evidence", &["SD103", "SD105", "SD608"]),
-    ("reports", &["SD613", "SD614", "SD615", "SD616", "SD617"]),
+    (
+        "reports",
+        &["SD613", "SD614", "SD615", "SD616", "SD617", "SD621"],
+    ),
     ("proof", &["SD618", "SD619", "SD620"]),
     (
         "acceptance",
@@ -4091,7 +4094,33 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
                 .collect();
             assert_eq!(groups, ["reports"], "{}", code.code());
         }
-        assert_eq!(Code::REPORT_CODES.len(), 5);
+        // SD613 to SD617, and SD621 (its row has a test of its own).
+        assert_eq!(Code::REPORT_CODES.len(), 6);
+    }
+
+    #[test]
+    fn the_profile_row_of_sd621_is_in_the_group_reports() {
+        use Severity::{Error as E, Warning as W};
+        // Design 0.8.1, D82: off in `lite`, a warning in `standard`, an error in
+        // `strict`. It is in the group `reports` and in no other group.
+        let code = Code::from_code("SD621").expect("the code SD621 exists");
+        for (profile, want) in [("lite", None), ("standard", Some(W)), ("strict", Some(E))] {
+            let c = with(&format!("profile = \"{profile}\""), "").unwrap();
+            assert_eq!(c.severity(code, None), want, "{profile}");
+        }
+        let groups: Vec<&str> = GROUPS
+            .iter()
+            .filter(|g| g.1.contains(&"SD621"))
+            .map(|g| g.0)
+            .collect();
+        assert_eq!(groups, ["reports"]);
+        assert!(Code::REPORT_CODES.contains(&code));
+        // A rule for the group sets it, and a rule for the code sets it alone.
+        let c = with("profile = \"strict\"", "[rules]\nreports = \"off\"\n").unwrap();
+        assert_eq!(c.severity(code, None), None);
+        let c = with("profile = \"strict\"", "[rules]\nSD621 = \"warning\"\n").unwrap();
+        assert_eq!(c.severity(code, None), Some(W));
+        assert_eq!(c.severity(Code::RequirementUnproven, None), Some(E));
     }
 
     #[test]

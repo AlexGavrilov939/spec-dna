@@ -5,7 +5,7 @@
 use crate::config::{Config, Evals};
 use crate::diag::{Code, Diag};
 use crate::evals;
-use crate::evidence::{Evidence, OWED_REASONS, is_owed_reason, needs_evidence};
+use crate::evidence::{By, Evidence, OWED_REASONS, Why, is_owed_reason, needs_evidence};
 use crate::layer::Keep;
 use crate::lint::Phrases;
 use crate::model::{Corpus, Doc, DocType, LinkRes, Res, canonical};
@@ -706,6 +706,19 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc, facts: &Facts) -> Vec<Diag> {
                 r.key.clone(),
                 format!("`{}#{}` is active, and {why}", d.id, r.key),
             ));
+        }
+        // SD621: a tag has a weak bind. The bind counts, so this does not depend
+        // on the result. A state code.
+        if needs_evidence(d) {
+            for why in by_name_texts(ev, di, ri) {
+                out.push(diag(
+                    d,
+                    r.line,
+                    Code::CaseBoundByName,
+                    r.key.clone(),
+                    format!("`{}#{}` is active, and {why}", d.id, r.key),
+                ));
+            }
         }
     }
     for t in &p.placeholders {
@@ -2044,6 +2057,48 @@ pub fn skill_unproven(
                 s.key()
             ),
             severity: Code::SkillUnproven.severity(),
+        })
+        .collect()
+}
+
+/// The texts of SD621 for requirement `ri` of document `di`: one for each full
+/// tag whose bound cases fit by their name only (design 0.8.1, D82 item 9). The
+/// text names the tag, the test, the case and the fix. It is empty when the
+/// reports are not read.
+pub fn by_name_texts(ev: &Evidence, di: u32, ri: usize) -> Vec<String> {
+    let (Some(proofs), Some(binds)) = (ev.proofs.get(&(di, ri)), ev.binds.get(&(di, ri))) else {
+        return Vec::new();
+    };
+    proofs
+        .iter()
+        .zip(binds)
+        .filter(|(_, b)| b.by_name && b.cases > 0)
+        .map(|((at, _), b)| {
+            let case = b.case.as_deref().unwrap_or("");
+            let test = b.test.as_deref().unwrap_or(case);
+            let why = b.why.unwrap_or(Why::ByName);
+            let link = if b.by == By::Case {
+                format!("the tag at {at} names the case `{test}`, and the bind is weak")
+            } else {
+                format!("the tag at {at} binds the case `{case}` to the test `{test}` by a weak link")
+            };
+            // Only a layout that the scanner cannot read has `case:` as its fix:
+            // `case:` cannot tell 2 equal names apart.
+            let (cause, fix) = match why {
+                Why::ByName => (
+                    "no full field of a case ties it to the test: the report or the project does not hold the field",
+                    "make the runner write it (jest-junit: `addFileAttribute: \"true\"`; pytest: `junit_family = xunit1`; gotestsum: `--junitfile-testcase-classname=relative`), or keep the `Cargo.toml` or `go.mod` above the test file".to_string(),
+                ),
+                Why::NotUnique => (
+                    "the identity of the test is not unique: another definition can build it too, or its `file` or `classname` names more than one file of the code tree",
+                    "rename one of the tests or files, or set the runner so that its report tells them apart".to_string(),
+                ),
+                Why::NoIdentity => (
+                    "spec-dna cannot read the identity of the test from the lines of the test file",
+                    format!("add `case:\"{case}\"` if the case is the test under the tag"),
+                ),
+            };
+            format!("{link} (cause `{key}`): {cause}; {fix}", key = why.key())
         })
         .collect()
 }

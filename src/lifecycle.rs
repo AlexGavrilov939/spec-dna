@@ -2752,11 +2752,14 @@ fn finished_checks(
         if on(Code::FinishIncomplete) {
             out.extend(finish_incomplete(ctx, ch, sole, nc.on));
         }
-        if on(Code::DeltaEvidenceMissing) || on(Code::ChangeUnproven) || on(Code::ProofNotReliable)
+        if on(Code::DeltaEvidenceMissing)
+            || on(Code::ChangeUnproven)
+            || on(Code::ProofNotReliable)
+            || on(Code::CaseBoundByName)
         {
             let mine = |path: &str| sole || change::in_scope(&ch.files, path);
-            // SD916, SD617 and SD620 are 3 checks of one function. A code that
-            // is off gives no diagnostic, so each stays as the profile sets it.
+            // SD916, SD617, SD620 and SD621 are 4 checks of one function. A code
+            // that is off gives no diagnostic, so each stays as the profile sets it.
             // The class is the class of the acceptance (D70 item 3), so a branch
             // cannot lower the class of the base to skip SD620. It is read only when
             // the key `reliable-for` asks for the class.
@@ -3345,7 +3348,8 @@ fn req_index(c: &Corpus, id: &str, key: &str) -> Option<(u32, usize)> {
 /// a report. It runs only when the tags carry a result of the bind. SD620 is
 /// the third check: with `reliable` (the passes that `[evidence] reliable-for`
 /// needs for this change), a requirement that passed fewer times is below the
-/// level `reliable`. A debt (`proof-owed`) is no evidence for any of them.
+/// level `reliable`. SD621 is the fourth: a tag that binds a case by its name
+/// only. A debt (`proof-owed`) is no evidence for any of them.
 ///
 /// - With a delta, the requirements are the targets of the `ADD` and `CHANGE`
 ///   lines that `head` applies. A line that `head` does not apply gives no
@@ -3442,6 +3446,20 @@ pub fn evidence_missing(
                 doc,
                 req.line,
                 Code::ProofNotReliable,
+                format!("{}#{}", doc.id, req.key),
+                format!(
+                    "the change `{}` adds or changes the requirement `{}#{}`, and {why}",
+                    ch.slug, doc.id, req.key
+                ),
+            ));
+        }
+        // SD621 is new where SD617 runs: a tag of the change binds a case by its
+        // name only (design 0.8.1, D82). It does not depend on the result.
+        for why in crate::check::by_name_texts(&ev, di, ri) {
+            out.push(crate::check::diag(
+                doc,
+                req.line,
+                Code::CaseBoundByName,
                 format!("{}#{}", doc.id, req.key),
                 format!(
                     "the change `{}` adds or changes the requirement `{}#{}`, and {why}",
