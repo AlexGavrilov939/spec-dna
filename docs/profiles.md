@@ -101,6 +101,8 @@ In `standard`, a mature corpus that links no tests yet gets one SD608 for each a
 | `[harness] protect-tests` | `off` | `fix-branches` (`off` for the link style `verified-by`) | as `standard` |
 | `[evals]` (question 14) | `none` | `skeleton` | `skeleton`, and a note on `eval pack` |
 | `[harness] protect-approvals` | not written | not written | `true` |
+| `[harness] subagent-card` | `false` | `true` | `true` |
+| `[harness] fix-limit` | `0` | `3` | `3` |
 | `[evidence] reports` | not written | `[]`, with a comment | `[]`, with a comment |
 | `[evidence] reliable-for` | not written | not written | `# reliable-for = "higher-risk"`, as a comment |
 | `[change] acceptance-for` | not written | not written | not written |
@@ -110,6 +112,7 @@ In `standard`, a mature corpus that links no tests yet gets one SD608 for each a
 | `[harness.roles]` `advisor` (question 13) | `none` | `none` | `fable` |
 | `[budgets.area]` | not written | `soft = 60000`, `hard = 120000` | `soft = 40000`, `hard = 80000` |
 
+- `init` writes `subagent-card` and `fix-limit` in a new configuration only. `--reconfigure` and `upgrade` add none, and keep the keys of the file. A key that is on writes its [hooks](harness.md#spec-dna-hook-subagent-card) in each profile, also in `lite`. In a new `lite` project, only `spec-dna.toml` has the 2 more lines.
 - `[budgets.area]` scales with the budget level of question 9. The level `relaxed` doubles the 2 values, the level `tight` halves them, and the level `off` writes no table. This applies to a new project only. `--reconfigure` keeps the table of the file at each budget level, and writes none for a file that has none ([config.md](config.md#area-budget)).
 - The profile also sets the default of `[change] acceptance-for` at run time: `all` in `strict`, and `higher-risk` in `standard` and `lite` ([config.md](config.md#the-acceptance-record)). `init` writes nothing, so a change of `profile` moves the default. In `standard`, only a `higher-risk` change needs an acceptance record. In `strict`, each change that has a plan needs one. In `lite` the codes are off, so the key has an effect only with a rule for the group `acceptance`. A key in the file replaces the default.
 - The key `advisor` of the entry `acceptor` has a default for each profile: `false` in `standard` and `true` in `strict`. `init` writes it only where the role `acceptor` is on, and `lite` has no such role. A file with the entry and no key gets the default of its profile at run time. With `false`, `acceptor.md` has a line that asks the agent not to consult the advisor ([config.md](config.md#the-key-advisor-of-the-entry-acceptor)).
@@ -118,7 +121,8 @@ In `standard`, a mature corpus that links no tests yet gets one SD608 for each a
 - A skill is on by default when `spec-dna skill list` says so. The rule of [ADR 0023](adr/0023-default-skills-from-the-release-table.md) reads the 7 skills of the design (D2), the verdict of the skill in the table of the release, and a constant of the release. A skill outside the 7 can be on by default when its verdict is `on`. `full` ignores the verdicts: a person chooses it.
 - The profile `lite` also selects the text of the generated files. Each skill file and `model-team.md` of `lite` has the text of 0.7.1 above the marker line, and `lite` writes no agent `acceptor`. `standard` and `strict` have the text of this release ([harness.md](harness.md#the-workflow-pack-and-reviewmd)).
 - With the policy `none`, `init` writes no skill.
-- `lite`, `standard` and `strict` differ in the approval, the hook, the severities and the advisor, and `strict` also reads the verdicts. `standard` and `strict` have the same rule for the skills. They differ in the default of the role `advisor` and of the key `advisor` of the entry `acceptor`.
+- `finish` prints [a note on the lessons](commands.md#finish) of a change in `standard` and `strict`, and not in `lite`. This is an effect of the profile at run time ([ADR 0004](adr/0004-harness.md#2026-11-25-the-subagent-card-the-return-state-the-fix-limit-and-the-price-table)).
+- `lite`, `standard` and `strict` differ in the approval, the hooks, the severities and the advisor, and `strict` also reads the verdicts. `standard` and `strict` have the same rule for the skills. They differ in the default of the role `advisor` and of the key `advisor` of the entry `acceptor`.
 - With the role `advisor` at `none`, `init` writes no `advisorModel` and no `fallback-advisor.md`. A table with no row `advisor` still reads as `fable`. For a new configuration only, a detected `advisorModel` of `.claude/settings.json` wins over the value of the table. A harness that the file already has keeps its role ([init.md](init.md#the-preset-of-a-profile)).
 - `strict` writes no eval pack: the pack has 62 evals in 932 files. `init` prints a note with the command `spec-dna eval pack`, which writes the pack before `spec-dna eval run --ab`.
 - An answer to question 4, 5, 12, 13 or 14 replaces the value of the table.
