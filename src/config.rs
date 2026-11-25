@@ -4957,12 +4957,14 @@ required-sections = { incident = [["Summary", "Zusammenfassung"], ["Root cause"]
                 "deny",
                 "efforts",
                 "fanout-cap",
+                "fix-limit",
                 "level",
                 "protect-approvals",
                 "protect-tests",
                 "review-md",
                 "roles",
                 "skills",
+                "subagent-card",
                 "subagent-meter",
             ]
         );
