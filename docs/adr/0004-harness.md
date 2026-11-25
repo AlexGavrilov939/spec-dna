@@ -137,3 +137,26 @@ After protocol 2 of the model-team measurement ([ADR 0033](0033-protocol-2-of-th
 - The gate of the section "Rejected" that stops work until the advisor reads the changes is not planned. The data now exist: `lean` against `lean-no-advisor` gave -0.10 on the main measure (90% interval -0.20 to 0.00) at 1.49 times the cost (1.33 to 1.65), `no-gain-at-cost` on all runs, and `inconclusive` by the rule of ADR 0033. In both readings, no run shows a gain that a gate could protect. Claude Code 2.1.330 also runs no hook on the advisor tool, so a gate cannot see a call.
 
 The design is D97 to D99 of [part A of 0.8.1](../design/0.8.1-a-lifecycle-and-harness.md).
+
+### 2026-11-25: the subagent card, the return state, the fix limit and the price table
+
+Status: accepted by the owner's word of 2026-11-25, which covers "the amendment of ADR 0004 that items 18-22 need".
+
+The owner chose the recommended option of each of Q1 to Q16 of [the harness additions of 0.8.1](../design/0.8.1-harness-additions.md).
+
+- `spec-dna hook subagent-card` (`SubagentStart`) adds one fixed card of 800 bytes or fewer to the context of each subagent. The agent file and the brief have priority over it. It adds nothing to `accept --brief`. It is not the hook that [ADR 0032](0032-acceptance-in-one-pass.md) rejected: the card needs no slug and binds nothing.
+- `spec-dna hook return-state` (`SubagentStop`) returns `decision: "block"` once when the last line of a report is no state line, and no output when `stop_hook_active` is true. A state is never an input of a gate.
+- Both entries have the matcher `.+`, so a subagent with an empty `agent_type` gets neither. An internal agent can have the name of `--agent` of the session. The build records the case.
+- `spec-dna hook fix-limit` (`PostToolUseFailure` of `Bash`, and `PostToolUse` of `Bash`, `Edit` and `Write`) counts, for each agent, the failures of one shell command after an edit of that agent. At the limit it adds one message as context.
+- `[harness] subagent-card` (boolean) writes the first 2 entries, and `[harness] fix-limit` (integer, `0` is off) the others. `init` writes `true` and `3` in a new configuration of `standard` and `strict`, and `false` and `0` in `lite`. A file with no key has the effect of off, so `upgrade` changes no project. The harness arms of `eval run` write neither key.
+- `lite` keeps the bytes of each generated file (ADR 0032), and its `finish` prints no note on lessons.
+- The 3 hooks need spec-dna 0.8.1 or later on `PATH`.
+
+This rule refines "No hook stores prompt, command or tool text". `fix-limit` keeps one file for each count in `<temporary directory>/spec-dna-fix/`, with numbers only, and removes it after 3 days. The file name has the session id, the agent and the first 8 bytes of SHA-256 of the session id and the command (white space runs as one space). The session id salts the hash, but a person with the session id can test a guess of a short command. `return-state` reads the report in memory, and stores and prints none of it.
+
+The price table of `spec-dna transcript --cost` is in the binary, beside the table of model ids. A row gives the USD for 1 million tokens of input, output, 2 cache writes (5 minutes and 1 hour) and a cache read. The table has a date and the address of its source. It belongs to a release: `release-engineer` compares it with the public price page, and the owner accepts each changed row in the release pull request. `--prices <file>` replaces the rows of its models. The result is a list price, not an invoice, and a lower limit for the advisor.
+
+Consequences:
+
+- Bad: each request of a subagent carries up to 800 more bytes. A report with no state line costs one more request.
+- Bad: no hook makes an agent obey the card or stop at the limit, or checks a state. The verifier and the acceptance record stay the controls.
