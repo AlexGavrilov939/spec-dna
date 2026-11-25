@@ -130,3 +130,9 @@ See ADR 0018 and ADR 0023.
 ### 2026-11-21
 
 See ADR 0032.
+
+### 2026-11-25: SD646 in `strict`
+
+Status: accepted under the owner's word of 2026-11-25 for "ADR amendments that the fixes below need".
+
+SD646 (`summary-rests-on-nothing`) is a warning in `strict`, as in `standard`, and it stays off in `lite`. This replaces the severity of SD646 in the amendment of 2026-11-24 of [ADR 0028](0028-roll-up-and-summaries.md), which is 13 characters under its hard budget. A change that removes the last requirement of an area leaves the summary of the area with no pin. The level above must still pin that summary (SD642), and a layer with `keep = "forever"` keeps its id (SD202). As an error, SD646 thus stopped `finish` in `strict`, and no edit could clear it. The change `part-a-leftovers` makes the fix.
