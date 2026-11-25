@@ -781,7 +781,10 @@ fn the_line_format_is_a_report_for_any_runner() {
     stamp(&r);
     let (code, out) = check(&r, &[]);
     assert!(!has(&out, "SD617"), "{out}");
-    assert_eq!(code, 0, "{out}");
+    // Changed: the line format has no full field, so its bind is weak (SD621,
+    // an error in `strict`).
+    assert!(out.contains("(cause `by-name`)"), "{out}");
+    assert_eq!(code, 1, "{out}");
     // A case of another file does not bind.
     r.write(
         "reports/cases.txt",
@@ -2050,7 +2053,9 @@ fn a_tag_binds_the_test_under_its_attributes_and_annotations() {
         // Java annotations.
         (
             "src/test/java/com/example/ValveTest.java",
-            "class ValveTest {\n    // covers: requirements/valves#flush\n    @Test\n    @DisplayName(\"closes\")\n    void flushesFirst() {\n        assertTrue(true);\n    }\n}\n",
+            // Changed: `@Tag` takes the place of `@DisplayName`, which makes a
+            // bind weak. The case below the table has it.
+            "class ValveTest {\n    // covers: requirements/valves#flush\n    @Test\n    @Tag(\"closes\")\n    void flushesFirst() {\n        assertTrue(true);\n    }\n}\n",
             "com.example.ValveTest",
             "flushesFirst",
         ),
@@ -2086,6 +2091,18 @@ fn a_tag_binds_the_test_under_its_attributes_and_annotations() {
         assert!(found[0].contains("was skipped"), "{path}: {out}");
         assert_eq!(code, 1, "{path}: {out}");
     }
+    // A runner can write the display name in place of the method name, so the
+    // scanner cannot build the identity: `case:` is the way out.
+    let named = "package com.example;\n\nclass ValveTest {\n    // covers: requirements/valves#flush\n    @Test\n    @DisplayName(\"closes\")\n    void flushesFirst() {\n    }\n}\n";
+    let (code, out) = bind_check(
+        "src/test/java/com/example/ValveTest.java",
+        named,
+        &[("com.example.ValveTest", "flushesFirst", "")],
+    );
+    assert!(!has(&out, "SD617"), "{out}");
+    assert!(out.contains("(cause `no-identity`)"), "{out}");
+    assert!(out.contains("add `case:\"flushesFirst\"`"), "{out}");
+    assert_eq!(code, 1, "{out}");
 }
 
 // The file of a case, the shared cases and the exact `case:` (design 0.8.1, D82
@@ -2130,10 +2147,9 @@ fn a_classname_that_is_the_path_of_another_file_binds_no_case() {
 }
 
 #[test]
-fn a_skipped_case_of_the_file_hides_a_passed_case_of_no_file() {
-    // The precedence: the case of `tests.test_a` fits the file by its
-    // `classname`, so the line of the line format, which fits by its name only,
-    // does not bind.
+fn a_passed_case_of_no_file_does_not_hide_a_skipped_case_of_the_file() {
+    // Changed: the drop of the cases that fit by name only went. The line of
+    // the line format stays as a weak link, and the worst case decides.
     let tag = "# covers: requirements/valves#flush\ndef test_init():\n    assert True\n";
     let r = pr("strict", REPORTS, &[("tests/test_a.py", tag)]);
     r.write(
@@ -2148,46 +2164,37 @@ fn a_skipped_case_of_the_file_hides_a_passed_case_of_no_file() {
     let (code, out) = check(&r, &[]);
     let found = lines(&out, "SD617");
     assert_eq!(found.len(), 1, "{out}");
+    assert!(has(&out, "SD621"), "{out}");
     assert!(found[0].contains("`test_init` was skipped"), "{out}");
     assert_eq!(code, 1, "{out}");
 }
 
 #[test]
-fn two_tests_of_one_name_in_one_file_share_their_cases() {
+fn a_test_of_the_same_name_in_another_class_does_not_share_the_tag() {
     // `test_init` is in 2 classes. The tag is above the first, whose case was
     // skipped. The case of the second passed.
     let text = "class TestA:\n    # covers: requirements/valves#flush\n    def test_init(self):\n        assert True\n\n\nclass TestB:\n    def test_init(self):\n        assert True\n";
-    let (code, out) = bind_check(
-        "tests/test_valves.py",
-        text,
-        &[
-            ("tests.test_valves.TestA", "test_init", SKIPPED),
-            ("tests.test_valves.TestB", "test_init", ""),
-        ],
-    );
+    let run = |a: &str, b: &str| {
+        bind_check(
+            "tests/test_valves.py",
+            text,
+            &[
+                ("tests.test_valves.TestA", "test_init", a),
+                ("tests.test_valves.TestB", "test_init", b),
+            ],
+        )
+    };
+    // Changed: the class chain is a full field, so the reason is the skip of
+    // the one case, not a shared set.
+    let (code, out) = run(SKIPPED, "");
     let found = lines(&out, "SD617");
     assert_eq!(found.len(), 1, "{out}");
-    assert!(
-        found[0].contains(
-            "the tests of the name `test_init` in tests/test_valves.py share their cases"
-        ),
-        "{out}"
-    );
-    assert!(
-        found[0].contains("the case `test_init` was skipped"),
-        "{out}"
-    );
+    assert!(found[0].contains("`test_init` was skipped"), "{out}");
+    assert!(!found[0].contains("share their cases"), "{out}");
     assert_eq!(code, 1, "{out}");
-    // Each case passed: the requirement is proven.
-    let (code, out) = bind_check(
-        "tests/test_valves.py",
-        text,
-        &[
-            ("tests.test_valves.TestA", "test_init", ""),
-            ("tests.test_valves.TestB", "test_init", ""),
-        ],
-    );
-    assert!(!has(&out, "SD617"), "{out}");
+    // A failed case of the other class does not touch the tag.
+    let (code, out) = run("", FAILED);
+    assert!(!has(&out, "SD617") && !has(&out, "SD621"), "{out}");
     assert_eq!(code, 0, "{out}");
 }
 
@@ -2252,8 +2259,9 @@ fn case_binds_a_name_with_a_slash_a_space_and_a_hash() {
     );
     assert!(!has(&out, "SD617") && !has(&out, "SD105"), "{out}");
     assert_eq!(code, 0, "{out}");
-    let php =
-        "<?php\n// covers: requirements/valves#flush case:\"testOne with data set #0\"\n$x = 1;\n";
+    // Changed: the file has its namespace and its class. A `case:` is silent
+    // only when a full field ties the case to the file.
+    let php = "<?php\nnamespace Tests;\n\nclass ValveTest {\n    // covers: requirements/valves#flush case:\"testOne with data set #0\"\n}\n";
     let (code, out) = bind_check(
         "tests/ValveTest.php",
         php,
@@ -2475,10 +2483,10 @@ fn jest_junit_with_its_defaults_binds_by_name_and_gives_sd621() {
             "{out}"
         );
         assert!(found[0].contains("the test `closes on timeout`"), "{out}");
-        assert!(
-            found[0].contains("case:\"Valves closes on timeout\""),
-            "{out}"
-        );
+        // Changed: the cause `by-name` names the runner config and never
+        // `case:`, which does not end this SD621.
+        assert!(found[0].contains("(cause `by-name`)"), "{out}");
+        assert!(!found[0].contains("add `case:"), "{out}");
         assert!(found[0].contains("addFileAttribute: \"true\""), "{out}");
         assert_eq!(exit, code, "{profile}: {out}");
         assert!(!has(&out, "SD616") && !has(&out, "SD617"), "{out}");
@@ -2509,44 +2517,30 @@ fn the_report_of_jest_junit_with_the_file_gives_no_sd621() {
 }
 
 #[test]
-fn an_exact_case_name_that_one_case_has_gives_no_sd621() {
+fn case_with_jest_junit_defaults_gives_sd621_also_for_one_case() {
+    // Changed: jest-junit defaults hold no full field of the tag file, so the
+    // case of the tag can be absent and another one can take its place.
     let test =
         "// covers: requirements/valves#flush case:\"Valves closes on timeout\"\nVALUE = 1\n";
-    let r = pr("strict", REPORTS, &[("tests/valves.test.js", test)]);
-    r.write("reports/r.xml", &junit("jest", &JEST_DEFAULTS));
-    stamp(&r);
-    let (code, out) = check(&r, &["--all"]);
-    assert!(!has(&out, "SD621") && !has(&out, "SD617"), "{out}");
-    assert_eq!(code, 0, "{out}");
-    // The same name in 2 cases (2 files with the same titles): a bind by name,
-    // and a shared set.
-    let r = pr("strict", REPORTS, &[("tests/valves.test.js", test)]);
-    r.write(
-        "reports/r.xml",
-        &junit(
-            "jest",
-            &[
-                ("Valves closes on timeout", "Valves closes on timeout", ""),
-                ("Valves closes on timeout", "Valves closes on timeout", ""),
-            ],
-        ),
-    );
-    stamp(&r);
-    let (code, out) = check(&r, &["--all"]);
-    let found = state_lines(&out, "SD621");
-    assert_eq!(found.len(), 1, "{out}");
-    // The tag has `case:` already, so the message does not tell the author to
-    // add it.
-    assert!(
-        found[0].contains("names the case `Valves closes on timeout`"),
-        "{out}"
-    );
-    assert!(
-        found[0].contains("more than one case of that name"),
-        "{out}"
-    );
-    assert!(!found[0].contains("add `case:"), "{out}");
-    assert_eq!(code, 1, "{out}");
+    let two = [JEST_DEFAULTS[0], JEST_DEFAULTS[0]];
+    for cases in [&JEST_DEFAULTS[..], &two[..]] {
+        let r = pr("strict", REPORTS, &[("tests/valves.test.js", test)]);
+        r.write("reports/r.xml", &junit("jest", cases));
+        stamp(&r);
+        let (code, out) = check(&r, &["--all"]);
+        assert!(!has(&out, "SD617"), "{out}");
+        let found = state_lines(&out, "SD621");
+        assert_eq!(found.len(), 1, "{out}");
+        // The tag has `case:` already, so the message does not tell the author
+        // to add it.
+        assert!(
+            found[0].contains("names the case `Valves closes on timeout`"),
+            "{out}"
+        );
+        assert!(found[0].contains("(cause `by-name`)"), "{out}");
+        assert!(!found[0].contains("add `case:"), "{out}");
+        assert_eq!(code, 1, "{out}");
+    }
 }
 
 #[test]
@@ -2603,8 +2597,7 @@ fn a_bind_by_name_of_a_requirement_that_no_change_touches_shows_only_with_all() 
 
 #[test]
 fn finish_stops_on_sd621_in_strict_and_goes_on_in_standard() {
-    // The report names a `classname` that names no test file, so the case fits
-    // the tag by its name only.
+    // A line of the line format with no path: a weak bind.
     let setup = |profile: &str| {
         let r = Repo::with_config(&config(profile, REPORTS));
         r.write(".gitignore", "reports/\n");
@@ -2627,9 +2620,10 @@ fn finish_stops_on_sd621_in_strict_and_goes_on_in_standard() {
         r.git(&["checkout", "-q", "-b", "feature"]);
         r.write("tests/test_valves.py", PY_TEST);
         r.commit("test");
+        // Changed: a `classname` of another module is another test now.
         r.write(
             "reports/junit.xml",
-            &junit("pytest", &[("pytest.valves", "test_closes_on_timeout", "")]),
+            "spec-dna-report 1\npass\t-\ttest_closes_on_timeout\n",
         );
         stamp(&r);
         r
@@ -2640,9 +2634,9 @@ fn finish_stops_on_sd621_in_strict_and_goes_on_in_standard() {
     assert!(err.contains("step 5"), "{err}");
     // Step 5.4 names the cause, as it does for SD617 and SD620.
     assert!(err.contains("SD621"), "{err}");
-    assert!(err.contains("binds a case by its name only"), "{err}");
+    assert!(err.contains("a tag with a weak bind"), "{err}");
     assert!(out.contains("SD621"), "{out}");
-    assert!(out.contains("by its name only"), "{out}");
+    assert!(out.contains("(cause `by-name`)"), "{out}");
     assert!(r.dir.join(FOLDER).exists());
     // In `standard` SD621 is a warning, and it never stops `finish`.
     let r = setup("standard");
@@ -2917,12 +2911,17 @@ fn a_template_of_the_file_takes_part_in_the_worst_case_of_the_test() {
             unproven("tests/valves.test.js", &text, &report),
             "{template}"
         );
-        // The report has no case of the skipped test: the one case that ends
-        // with the name binds by its name only (SD621), and it passed.
+        // Changed: the report has no case of the skipped test, and a case with
+        // another full title is another test, so the tag has no case.
         let report = [(cl, "Valves fast opens", "")];
         let (code, out) = bind_check("tests/valves.test.js", &text, &report);
-        assert!(!has(&out, "SD617"), "{template}: {out}");
-        assert!(has(&out, "SD621"), "{template}: {out}");
+        let found = lines(&out, "SD617");
+        assert_eq!(found.len(), 1, "{template}: {out}");
+        assert!(
+            found[0].contains("names the test `opens`"),
+            "{template}: {out}"
+        );
+        assert!(!has(&out, "SD621"), "{template}: {out}");
         assert_eq!(code, 1, "{template}: {out}");
     }
     let text = "describe('Valves', () => {\n  // covers: requirements/valves#flush\n  it('opens', () => {\n  });\n});\n";
@@ -2931,14 +2930,15 @@ fn a_template_of_the_file_takes_part_in_the_worst_case_of_the_test() {
 }
 
 #[test]
-fn a_shared_example_of_rspec_is_a_case_of_the_set() {
+fn a_shared_example_of_rspec_is_another_example() {
     let text = "describe Valve do\n  it_behaves_like 'closable'\n\n  # covers: requirements/valves#flush\n  it 'closes' do\n  end\nend\n";
     let run = |cases: &str| {
         let r = pr("strict", REPORTS, &[("spec/valve_spec.rb", text)]);
+        let n = cases.matches("<testcase ").count();
         r.write(
             "reports/r.xml",
             &format!(
-                "<?xml version=\"1.0\"?><testsuite name=\"rspec\" tests=\"2\">{cases}</testsuite>"
+                "<?xml version=\"1.0\"?><testsuite name=\"rspec\" tests=\"{n}\">{cases}</testsuite>"
             ),
         );
         stamp(&r);
@@ -2949,24 +2949,35 @@ fn a_shared_example_of_rspec_is_a_case_of_the_set() {
             "<testcase classname=\"spec.valve_spec\" name=\"{name}\" file=\"./spec/valve_spec.rb\">{child}</testcase>"
         )
     };
-    // The shared example fails: its case ends with the name of the test, so the
-    // worst case decides.
-    let (code, out) = run(&format!(
-        "{}{}",
-        case("Valve closes", ""),
-        case("Valve behaves like closable closes", FAILED)
-    ));
-    assert!(has(&out, "SD617"), "{out}");
+    // Changed: the full title of the shared example is another name, so it is
+    // another example: it does not touch the tag, and it cannot prove it.
+    for child in [FAILED, ""] {
+        let (code, out) = run(&format!(
+            "{}{}",
+            case("Valve closes", ""),
+            case("Valve behaves like closable closes", child)
+        ));
+        assert!(!has(&out, "SD617") && !has(&out, "SD621"), "{out}");
+        assert_eq!(code, 0, "{out}");
+    }
+    let (code, out) = run(&case("Valve behaves like closable closes", ""));
+    assert_eq!(lines(&out, "SD617").len(), 1, "{out}");
     assert_eq!(code, 1, "{out}");
-    // Each case passed: the tag proves, and SD621 says that a case binds by
-    // the end of its name.
-    let (code, out) = run(&format!(
-        "{}{}",
-        case("Valve closes", ""),
-        case("Valve behaves like closable closes", "")
-    ));
+    // A tag inside `shared_examples`: the scanner cannot build the full title
+    // of the cases that include it, so the bind is weak.
+    let inside = "shared_examples 'closable' do\n  # covers: requirements/valves#flush\n  it 'closes' do\n  end\nend\n";
+    let r = pr("strict", REPORTS, &[("spec/valve_spec.rb", inside)]);
+    r.write(
+        "reports/r.xml",
+        &format!(
+            "<?xml version=\"1.0\"?><testsuite name=\"rspec\" tests=\"1\">{}</testsuite>",
+            case("Valve behaves like closable closes", "")
+        ),
+    );
+    stamp(&r);
+    let (code, out) = check(&r, &[]);
     assert!(!has(&out, "SD617"), "{out}");
-    assert!(has(&out, "SD621"), "{out}");
+    assert!(out.contains("(cause `no-identity`)"), "{out}");
     assert_eq!(code, 1, "{out}");
 }
 
@@ -3200,12 +3211,13 @@ fn an_rspec_example_with_the_name_inside_another_name_never_hides_the_failed_exa
         );
         assert!(has(&out, "SD617"), "{head}: {out}");
         assert_eq!(code, 1, "{head}: {out}");
-        // Each case passed: proven. SD621 says that a case binds by its name.
-        let (_, out) = rspec_check(
+        // Changed: each example has its own full title, so the bind is silent.
+        let (code, out) = rspec_check(
             &nested,
             &[("Valve#flush works", ""), ("Valve#flush also works", "")],
         );
-        assert!(!has(&out, "SD617"), "{head}: {out}");
+        assert!(!has(&out, "SD617") && !has(&out, "SD621"), "{head}: {out}");
+        assert_eq!(code, 0, "{head}: {out}");
     }
 }
 
@@ -3285,14 +3297,20 @@ fn a_go_test_a_suite_method_and_a_subtest_of_one_name_all_take_part() {
 }
 
 #[test]
-fn a_test_of_the_same_name_twice_in_a_file_is_proven_by_the_worst_of_its_cases() {
+fn a_test_of_the_same_name_in_another_describe_is_another_test() {
     let path = "tests/valves.test.js";
     let cl = "tests/valves.test.js";
     let text = "describe('Valves', () => {\n  // covers: requirements/valves#flush\n  it('closes', () => {\n  });\n});\n\ndescribe('Pumps', () => {\n  it('closes', () => {\n  });\n});\n";
-    let report = [(cl, "Valves > closes", ""), (cl, "Pumps > closes", SKIPPED)];
+    // Changed: `Pumps > closes` has another title chain, so it is another test.
+    let (code, out) = bind_check(
+        path,
+        text,
+        &[(cl, "Valves > closes", ""), (cl, "Pumps > closes", SKIPPED)],
+    );
+    assert!(!has(&out, "SD617") && !has(&out, "SD621"), "{out}");
+    assert_eq!(code, 0, "{out}");
+    let report = [(cl, "Valves > closes", SKIPPED), (cl, "Pumps > closes", "")];
     assert!(unproven(path, text, &report));
-    let report = [(cl, "Valves > closes", ""), (cl, "Pumps > closes", "")];
-    assert!(proven(path, text, &report));
 }
 
 #[test]
@@ -3361,69 +3379,113 @@ fn a_case_with_a_very_long_name_gives_the_reason_long_name_and_does_not_stall() 
     assert_eq!(code, 1, "{out}");
 }
 
+// Changed: a segment of a longer name was a weak link (`Why::NotWhole`). The
+// name is a full field now, so such a case is another test.
 #[test]
-fn a_case_that_is_not_the_whole_name_of_the_test_gives_sd621_with_its_cause() {
-    let sd621 = |path: &str, text: &str, cases: &[(&str, &str, &str)]| {
-        let (_, out) = bind_check(path, text, cases);
-        assert!(!has(&out, "SD617"), "{out}");
-        let found = lines(&out, "SD621");
-        assert_eq!(found.len(), 1, "{out}");
-        found[0].to_string()
+fn a_case_that_only_holds_the_name_of_the_test_is_another_test() {
+    let silent = |path: &str, text: &str, cases: &[(&str, &str, &str)]| {
+        let (code, out) = bind_check(path, text, cases);
+        assert!(!has(&out, "SD617") && !has(&out, "SD621"), "{out}");
+        assert_eq!(code, 0, "{out}");
     };
-    // A case of another test names the test as a segment: it proves the tag,
-    // and SD621 says that no case has the whole name.
+    let unbound = |path: &str, text: &str, cases: &[(&str, &str, &str)]| {
+        let (code, out) = bind_check(path, text, cases);
+        let found = lines(&out, "SD617");
+        assert_eq!(found.len(), 1, "{out}");
+        assert!(found[0].contains("names the test"), "{out}");
+        assert_eq!(code, 1, "{out}");
+    };
     let cs = "public class ValveTest {\n    // covers: requirements/valves#flush\n    [Theory(Skip = \"later\")] public void Closes(int n) {\n    }\n}\n";
-    let text = sd621(
+    unbound(
         "Valves/Tests/ValveTest.cs",
         cs,
         &[("Valves.Tests.ValveTest", "Closes.WhenCold", "")],
     );
-    assert!(
-        text.contains("no case has the whole name of the test"),
-        "{text}"
-    );
     let pkg = "example.org/app/valves";
     let go = "package valves\n\n// covers: requirements/valves#flush\nfunc TestClose(t *testing.T) {\n}\n\nfunc TestTable(t *testing.T) {\n\tt.Run(\"TestClose\", func(t *testing.T) {\n\t})\n}\n";
-    let text = sd621(
+    unbound(
         "valves/valve_test.go",
         go,
         &[(pkg, "TestTable/TestClose", "")],
     );
-    assert!(
-        text.contains("no case has the whole name of the test"),
-        "{text}"
-    );
-    // 2 tests fit: both cases are whole names, and the cause is the number.
+    // A function and a suite method of one name are 2 tests.
     let go = "package valves\n\ntype VSuite struct{ suite.Suite }\n\nfunc TestV(t *testing.T) {\n\tsuite.Run(t, new(VSuite))\n}\n\n// covers: requirements/valves#flush\nfunc TestOpen(t *testing.T) {\n}\n\nfunc (s *VSuite) TestOpen() {\n}\n";
-    let text = sd621(
+    silent(
         "valves/valve_test.go",
         go,
-        &[(pkg, "TestOpen", ""), (pkg, "TestV/TestOpen", "")],
-    );
-    assert!(
-        text.contains("more than one test of the reports fits"),
-        "{text}"
+        &[(pkg, "TestOpen", ""), (pkg, "TestV/TestOpen", FAILED)],
     );
     // The subtests and the rows of one test are one test: no SD621.
     let go = "package valves\n\n// covers: requirements/valves#flush\nfunc TestOpen(t *testing.T) {\n\tt.Run(\"fast\", func(t *testing.T) {})\n}\n";
-    let (code, out) = bind_check(
+    silent(
         "valves/valve_test.go",
         go,
         &[(pkg, "TestOpen", ""), (pkg, "TestOpen/fast", "")],
     );
-    assert!(!has(&out, "SD621") && !has(&out, "SD617"), "{out}");
-    assert_eq!(code, 0, "{out}");
-    // `strict` stops on an ordinary file with `closes` beside `never closes`,
-    // when the names of the cases join the titles with a space (jest-junit).
+    // `closes` beside `never closes`, with the titles joined with a space.
     let js = "describe('Valves', () => {\n  // covers: requirements/valves#flush\n  it('closes', () => {\n  });\n\n  it('never closes', () => {\n  });\n});\n";
-    let (code, out) = bind_check(
+    silent(
         "tests/valves.test.js",
         js,
         &[
             ("tests/valves.test.js", "Valves closes", ""),
-            ("tests/valves.test.js", "Valves never closes", ""),
+            ("tests/valves.test.js", "Valves never closes", FAILED),
         ],
     );
-    assert!(!has(&out, "SD617") && has(&out, "SD621"), "{out}");
+}
+
+/// A strict pull request with the tag in `path`, the other files and one
+/// report: the exit code and the output of `check --reports`.
+fn manifest_check(files: &[(&str, &str)], cases: &[(&str, &str, &str)]) -> (i32, String) {
+    let r = pr("strict", REPORTS, files);
+    r.write("reports/r.xml", &junit("runner", cases));
+    stamp(&r);
+    check(&r, &[])
+}
+
+#[test]
+fn the_package_of_cargo_toml_tells_2_crates_of_a_workspace_apart() {
+    let tag = "// covers: requirements/valves#flush\n#[test]\nfn runs() {\n}\n";
+    let files = [
+        ("Cargo.toml", "[workspace]\nmembers = [\"crates/*\"]\n"),
+        ("crates/a/Cargo.toml", "[package]\nname = \"a-cli\"\n"),
+        ("crates/b/Cargo.toml", "[package]\nname = \"b-cli\"\n"),
+        ("crates/a/tests/cli.rs", tag),
+        ("crates/b/tests/cli.rs", "#[test]\nfn runs() {\n}\n"),
+    ];
+    // The own case passed and the case of the other crate failed: silent.
+    let (code, out) = manifest_check(
+        &files,
+        &[("a-cli::cli", "runs", ""), ("b-cli::cli", "runs", FAILED)],
+    );
+    assert!(!has(&out, "SD617") && !has(&out, "SD621"), "{out}");
+    assert_eq!(code, 0, "{out}");
+    // The case of the other crate alone proves nothing.
+    let (code, out) = manifest_check(&files, &[("b-cli::cli", "runs", "")]);
+    assert_eq!(lines(&out, "SD617").len(), 1, "{out}");
+    assert_eq!(code, 1, "{out}");
+}
+
+#[test]
+fn the_module_line_of_go_mod_tells_2_folders_of_one_name_apart() {
+    let tag = "package server\n\n// covers: requirements/valves#flush\nfunc TestServe(t *testing.T) {\n}\n";
+    let files = [
+        ("go.mod", "module example.org/app\n\ngo 1.22\n"),
+        ("server/serve_test.go", tag),
+        (
+            "cmd/server/serve_test.go",
+            "package server\n\nfunc TestServe(t *testing.T) {\n}\n",
+        ),
+    ];
+    let own = "example.org/app/server";
+    let other = "example.org/app/cmd/server";
+    let (code, out) = manifest_check(
+        &files,
+        &[(own, "TestServe", ""), (other, "TestServe", FAILED)],
+    );
+    assert!(!has(&out, "SD617") && !has(&out, "SD621"), "{out}");
+    assert_eq!(code, 0, "{out}");
+    let (code, out) = manifest_check(&files, &[(other, "TestServe", "")]);
+    assert_eq!(lines(&out, "SD617").len(), 1, "{out}");
     assert_eq!(code, 1, "{out}");
 }

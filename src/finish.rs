@@ -677,7 +677,7 @@ pub fn plan(cx: &Ctx) -> Result<Plan, Failure> {
             } else if only(&[Code::ProofNotReliable]) {
                 "a requirement that the change adds or changes passed fewer times than `[evidence] reliable-runs` in the reports (the lines are lines of the result of `finish`)"
             } else if only(&[Code::CaseBoundByName]) {
-                "a requirement that the change adds or changes has a tag that binds a case by its name only (SD621); add `case:\"<name>\"` to the tag, or make the runner write the file of each case (the lines are lines of the result of `finish`)"
+                "a requirement that the change adds or changes has a tag with a weak bind (SD621); each line of SD621 names its cause and its fix (the lines are lines of the result of `finish`)"
             } else if only(&[Code::ChangeUnproven, Code::ProofNotReliable]) {
                 "a requirement that the change adds or changes has a tag that no bound test case proves (SD617), or its bound case passed fewer times than `[evidence] reliable-runs` in the reports (SD620); the lines are lines of the result of `finish`"
             } else if only(&[
@@ -685,7 +685,7 @@ pub fn plan(cx: &Ctx) -> Result<Plan, Failure> {
                 Code::ProofNotReliable,
                 Code::CaseBoundByName,
             ]) {
-                "a requirement that the change adds or changes has a tag that no bound test case proves (SD617), a bound case that passed fewer times than `[evidence] reliable-runs` in the reports (SD620), or a tag that binds a case by its name only (SD621); the lines are lines of the result of `finish`"
+                "a requirement that the change adds or changes has a tag that no bound test case proves (SD617), a bound case that passed fewer times than `[evidence] reliable-runs` in the reports (SD620), or a tag with a weak bind (SD621); the lines are lines of the result of `finish`"
             } else {
                 "a requirement that the change adds or changes has no evidence (the lines are lines of the result of `finish`)"
             },

@@ -707,8 +707,8 @@ fn doc_diags(config: &Config, c: &Corpus, d: &Doc, facts: &Facts) -> Vec<Diag> {
                 format!("`{}#{}` is active, and {why}", d.id, r.key),
             ));
         }
-        // SD621: a tag binds a case by its name only. The bind counts, so this
-        // does not depend on the result. A state code.
+        // SD621: a tag has a weak bind. The bind counts, so this does not depend
+        // on the result. A state code.
         if needs_evidence(d) {
             for why in by_name_texts(ev, di, ri) {
                 out.push(diag(
@@ -2076,21 +2076,29 @@ pub fn by_name_texts(ev: &Evidence, di: u32, ri: usize) -> Vec<String> {
         .map(|((at, _), b)| {
             let case = b.case.as_deref().unwrap_or("");
             let test = b.test.as_deref().unwrap_or(case);
-            if b.by == By::Case {
-                // The tag has `case:` already: the reports have more than one case
-                // of that name, so a case of another file can take its place.
-                return format!(
-                    "the tag at {at} names the case `{test}`, and the reports have more than one case of that name that fits the test file by its name only; make the runner write the file of each case (jest-junit: `addFileAttribute: \"true\"`)"
-                );
-            }
-            let cause = match b.why {
-                Some(Why::Many) => "more than one test of the reports fits the test (the cases differ before the end of the name, or in their `classname` or `file`), and the worst of them decides",
-                Some(Why::NotWhole) => "no case has the whole name of the test: a case only ends with it, or it is a segment of a longer name",
-                _ => "the case has no `file` and its `classname` names no test file",
+            let why = b.why.unwrap_or(Why::ByName);
+            let link = if b.by == By::Case {
+                format!("the tag at {at} names the case `{test}`, and the bind is weak")
+            } else {
+                format!("the tag at {at} binds the case `{case}` to the test `{test}` by a weak link")
             };
-            format!(
-                "the tag at {at} binds the case `{case}` to the test `{test}` by a weak link: {cause}; add `case:\"{case}\"` if the case is the test under the tag, or make the runner write the file and the whole name of each case (jest-junit: `addFileAttribute: \"true\"`)"
-            )
+            // Only a layout that the scanner cannot read has `case:` as its fix:
+            // `case:` cannot tell 2 equal names apart.
+            let (cause, fix) = match why {
+                Why::ByName => (
+                    "no full field of a case ties it to the test: the report or the project does not hold the field",
+                    "make the runner write it (jest-junit: `addFileAttribute: \"true\"`; pytest: `junit_family = xunit1`; gotestsum: `--junitfile-testcase-classname=relative`), or keep the `Cargo.toml` or `go.mod` above the test file".to_string(),
+                ),
+                Why::NotUnique => (
+                    "the identity of the test is not unique: another definition of the test file builds it, or its `file` or `classname` names more than one test file",
+                    "rename one of the tests or files, or set the runner so that its report tells them apart".to_string(),
+                ),
+                Why::NoIdentity => (
+                    "spec-dna cannot read the identity of the test from the lines of the test file",
+                    format!("add `case:\"{case}\"` if the case is the test under the tag"),
+                ),
+            };
+            format!("{link} (cause `{key}`): {cause}; {fix}", key = why.key())
         })
         .collect()
 }

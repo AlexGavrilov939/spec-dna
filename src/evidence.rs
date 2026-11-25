@@ -21,7 +21,11 @@ use crate::diag::{Code, Diag};
 use crate::model::{Corpus, Doc, Res, canonical};
 use crate::repo::{Fatal, Repo};
 use crate::report::{Case, Outcome, Reads};
+use std::cell::RefCell;
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
+use std::hash::{BuildHasher, RandomState};
+use std::rc::Rc;
 
 /// The text that starts a tag in a test file.
 pub const TAG: &str = "covers:";
@@ -142,17 +146,30 @@ pub struct Bind {
     pub near: Vec<String>,
 }
 
-/// Why a bind is weak (SD621). The first cause that applies decides.
+/// Why a bind is weak (SD621). When the weak cases of a tag have more than one
+/// cause, the first one of this order is the cause of the bind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Why {
-    /// More than one test of the reports fits: the cases differ before the end
-    /// of the name of the test, or in their `classname` or `file`.
-    Many,
-    /// A case fits the test file by its name only.
+    /// The scanner cannot build the identity of the test: it cannot read the
+    /// groups, the title or the layout of the file.
+    NoIdentity,
+    /// The identity is not unique: another definition builds it, or its file
+    /// field names more than one test file.
+    NotUnique,
+    /// No full field ties the case to the test: the report or the project does
+    /// not hold the field.
     ByName,
-    /// No case has the whole name of the test: a case only ends with it, or it
-    /// is a segment of a longer name.
-    NotWhole,
+}
+
+impl Why {
+    /// The name of the cause in the message of SD621 and in the docs.
+    pub fn key(self) -> &'static str {
+        match self {
+            Why::NoIdentity => "no-identity",
+            Why::NotUnique => "not-unique",
+            Why::ByName => "by-name",
+        }
+    }
 }
 
 /// How the bound cases fit the test file of the tag (design 0.8.1, D82 item 6).
@@ -876,6 +893,10 @@ fn classify(text: &str, annotated: bool) -> Option<Under> {
     let body = strip_modifiers(text);
     let n = ident_end(body);
     let (word, rest) = body.split_at(n);
+    // `RSpec.describe`, and `test.describe` of Playwright, open a group.
+    if body.starts_with("RSpec.describe") || body.starts_with("test.describe") {
+        return Some(Under::Group);
+    }
     if matches!(word, "describe" | "context" | "suite") && rest.starts_with(['(', ' ', '.']) {
         return Some(Under::Group);
     }
@@ -970,11 +991,31 @@ fn before_tag(prefix: &str) -> &str {
 /// definition line with less indent than the tag ends the scope of the tag, so
 /// a tag in the body of a test stands above no test.
 pub fn under_tag(lines: &[&str], tag: usize) -> Under {
-    under_tag_line(lines, tag).0
+    under_tag_line(lines, tag).under
 }
 
-/// Like `under_tag`. It also gives the index of the definition line.
-fn under_tag_line(lines: &[&str], tag: usize) -> (Under, usize) {
+/// What the scan below a tag found: with the index of the definition line, the
+/// first line of its items and its text after the items.
+struct Scan<'a> {
+    under: Under,
+    line: usize,
+    first: usize,
+    text: &'a str,
+}
+
+impl Scan<'_> {
+    fn none(tag: usize) -> Scan<'static> {
+        Scan {
+            under: Under::NoTest(None),
+            line: tag,
+            first: tag,
+            text: "",
+        }
+    }
+}
+
+/// Like `under_tag`. It also gives the definition line.
+fn under_tag_line<'a>(lines: &[&'a str], tag: usize) -> Scan<'a> {
     let tag_indent =
         comment_open(lines, tag).map_or_else(|| indent(lines[tag]), |k| indent(lines[k]));
     let mut annotated = false;
@@ -985,88 +1026,252 @@ fn under_tag_line(lines: &[&str], tag: usize) -> (Under, usize) {
         .find(TAG)
         .filter(|&pos| !is_comment(lines[tag][..pos].trim()))
     {
-        let own = [before_tag(&lines[tag][..pos]).trim_start_matches('\u{feff}')];
+        let line: &'a str = lines[tag];
+        let before: &'a str = before_tag(&line[..pos]).trim_start_matches('\u{feff}');
         let (mut off, mut any) = (0, false);
-        while let Some((_, o)) = skip_item(&own, 0, off, 1) {
+        while let Some((_, o)) = skip_item(&[before], 0, off, 1) {
             (off, any) = (o, true);
         }
         annotated = any;
-        let text = own[0][off..].trim();
+        let text = before[off..].trim();
         if !text.is_empty() {
             let under = classify(text, annotated).unwrap_or(Under::NoTest(Some(tag + 1)));
-            return (under, tag);
+            return Scan {
+                under,
+                line: tag,
+                first: tag,
+                text,
+            };
         }
     }
-    match definition(lines, tag + 1, annotated) {
-        None => (Under::NoTest(None), tag),
-        Some(d) if indent(lines[d.first]) < tag_indent => (Under::NoTest(Some(d.line + 1)), d.line),
-        Some(d) => (
-            classify(d.text, d.annotated).unwrap_or(Under::NoTest(Some(d.line + 1))),
-            d.line,
-        ),
+    let Some(d) = definition(lines, tag + 1, annotated) else {
+        return Scan::none(tag);
+    };
+    let below = Under::NoTest(Some(d.line + 1));
+    let under = if indent(lines[d.first]) < tag_indent {
+        below
+    } else {
+        classify(d.text, d.annotated).unwrap_or(below)
+    };
+    Scan {
+        under,
+        line: d.line,
+        first: d.first,
+        text: d.text,
     }
 }
 
-/// The title of the group that a line opens: `Some(Some(title))` for
-/// `describe('Valves'`, `Some(None)` for a class or a module, and `None` for a
-/// line that is no group.
-fn group_title(body: &str) -> Option<Option<String>> {
+/// The kind of a group that holds a test.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GroupKind {
+    /// `describe`, `context` or `suite`.
+    Describe,
+    /// `class` or `object`.
+    Class,
+    /// `mod` of Rust.
+    Module,
+    /// `module` or `namespace`.
+    Namespace,
+}
+
+/// One group around a definition.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Title {
+    kind: GroupKind,
+    text: String,
+    /// A bare constant of Ruby (`describe Valve do`).
+    constant: bool,
+    /// A `partial` class of C#.
+    partial: bool,
+}
+
+/// True for a literal that a runner writes as the source does: no escape and no
+/// interpolation. `quoted` starts at the quote.
+fn is_plain(quoted: &str, text: &str) -> bool {
+    !text.contains('\\')
+        && !(quoted.starts_with('`') && text.contains("${"))
+        && !(quoted.starts_with('"') && text.contains("#{"))
+}
+
+/// True if the text after a literal does not add to the title: no `+`, and no
+/// second title.
+fn ends_title(after: &str) -> bool {
+    let a = after.trim_start();
+    if let Some(rest) = a.strip_prefix(',') {
+        return !rest.trim_start().starts_with(['"', '\'']);
+    }
+    a.is_empty()
+        || a.starts_with([')', '{', '#'])
+        || a == "do"
+        || a.starts_with("do ")
+        || a.starts_with("//")
+}
+
+/// True if the literal of a call is the whole title of the test, as the runner
+/// writes it. `text` is the definition line.
+fn plain_call(text: &str, name: &str) -> bool {
+    let quoted = text
+        .match_indices(name)
+        .find(|(i, _)| text[..*i].ends_with(['"', '\'', '`']));
+    quoted.is_some_and(|(i, _)| {
+        let from = &text[i - 1..];
+        literal(from) == Some(name) && is_plain(from, name) && ends_title(&from[name.len() + 2..])
+    })
+}
+
+/// The group that a line opens: `None` for a line that is no group, and
+/// `Some(None)` for a group with a title that the scanner cannot read.
+fn group_title(line: &str) -> Option<Option<Title>> {
+    // `#[cfg(test)] mod tests {`: the items come first.
+    let one = [line];
+    let mut off = 0;
+    while let Some((_, o)) = skip_item(&one, 0, off, 1) {
+        off = o;
+    }
+    let after_items = line[off..].trim_start();
+    let body = strip_modifiers(after_items);
+    let partial = after_items[..after_items.len() - body.len()]
+        .split_whitespace()
+        .any(|w| w == "partial");
     let body = body.strip_prefix("RSpec.").unwrap_or(body);
+    let body = match body.strip_prefix("test.") {
+        // Playwright: `test.describe('Valves', ...)`.
+        Some(r) if r.starts_with("describe") => r,
+        _ => body,
+    };
     let n = ident_end(body);
     let (word, rest) = body.split_at(n);
-    if matches!(
-        word,
-        "class" | "object" | "mod" | "impl" | "module" | "namespace"
-    ) && rest.starts_with(' ')
-    {
-        return Some(None);
+    let title = |kind, text: &str, constant| Title {
+        kind,
+        text: text.to_string(),
+        constant,
+        partial,
+    };
+    let kind = match word {
+        "class" | "object" => Some(GroupKind::Class),
+        "mod" => Some(GroupKind::Module),
+        "module" | "namespace" => Some(GroupKind::Namespace),
+        "impl" => return rest.starts_with([' ', '<']).then_some(None),
+        "describe" | "context" | "suite" => None,
+        _ => return None,
+    };
+    if let Some(kind) = kind {
+        let r = rest.strip_prefix(' ')?.trim_start();
+        let end = r
+            .find(|c: char| {
+                !(c.is_alphanumeric()
+                    || c == '_'
+                    || c == '$'
+                    || (kind == GroupKind::Namespace && matches!(c, '.' | '\\' | ':')))
+            })
+            .unwrap_or(r.len());
+        return Some((end > 0).then(|| title(kind, &r[..end], false)));
     }
-    if !matches!(word, "describe" | "context" | "suite") {
+    if !(rest.is_empty() || rest.starts_with(['(', ' ', '.'])) {
         return None;
     }
     let mut s = rest;
     while let Some(r) = s.strip_prefix('.') {
-        s = &r[ident_end(r)..];
+        let m = ident_end(r);
+        if !matches!(
+            &r[..m],
+            "only"
+                | "skip"
+                | "todo"
+                | "concurrent"
+                | "sequential"
+                | "shuffle"
+                | "serial"
+                | "parallel"
+                | "fixme"
+        ) {
+            // `describe.each` and its relatives make many titles.
+            return Some(None);
+        }
+        s = &r[m..];
     }
+    let s = s.trim_start();
     let s = s.strip_prefix('(').unwrap_or(s).trim_start();
-    if let Some(title) = literal(s) {
-        return Some(Some(title.to_string()));
+    if let Some(text) = literal(s) {
+        let whole = is_plain(s, text) && ends_title(&s[text.len() + 2..]);
+        return Some(whole.then(|| title(GroupKind::Describe, text, false)));
     }
-    // `describe Valve do`
+    // A bare constant of Ruby: `describe Valve do`.
     let m = ident_end(s);
-    (m > 0).then(|| Some(s[..m].to_string()))
+    let after = s[m..].trim_start();
+    let bare = s.starts_with(char::is_uppercase)
+        && (after == "do"
+            || after.starts_with("do ")
+            || after.starts_with(')')
+            || after
+                .strip_prefix(',')
+                .is_some_and(|a| !a.trim_start().starts_with(['"', '\''])));
+    Some(bare.then(|| title(GroupKind::Describe, &s[..m], true)))
 }
 
-/// The titles of the groups that hold the definition at `lines[def]`, the
-/// outermost first (`describe('Valves'` gives `Valves`). `None` when a line with
-/// less indent is no group: the chain is not readable, and the name of the case
-/// then stays a weak match.
-fn ancestors(lines: &[&str], def: usize) -> Option<Vec<String>> {
+/// The groups that hold the definition at `lines[def]`, the outermost first.
+/// `None` when the scanner cannot read them: a line with less indent is no
+/// group or has a title that is not a literal or a bare constant, or a group at
+/// the indent of the definition stays open above it (no indent).
+fn ancestors(lines: &[&str], def: usize) -> Option<Vec<Title>> {
     let mut want = indent(lines[def]);
     let mut out = Vec::new();
+    // The closers at the indent `want` that wait for their opener.
+    let mut closed = 0usize;
+    // A line `{` at the indent `want`: the line above it opens the block.
+    let mut brace = false;
     for k in (0..def).rev() {
-        if want == 0 {
-            break;
-        }
-        let t = lines[k].trim();
+        let t = lines[k].trim().trim_start_matches('\u{feff}');
         if t.is_empty() || is_comment(t) {
             continue;
         }
         let ind = indent(lines[k]);
-        if ind >= want {
+        if ind > want {
             continue;
         }
-        if let Some(title) = group_title(strip_modifiers(t))? {
-            out.push(title);
+        if t == "{" {
+            brace |= ind == want;
+            continue;
         }
-        want = ind;
+        // The end of a head on more than one line: `):`.
+        if t.starts_with(')') {
+            continue;
+        }
+        if ind < want {
+            out.push(group_title(t)??);
+            want = ind;
+            closed = 0;
+            brace = false;
+            continue;
+        }
+        let closes = t.starts_with('}') || t == "end" || t.starts_with("end ");
+        let opens = std::mem::take(&mut brace) || t.ends_with('{') || t.ends_with(" do");
+        if closes && !opens {
+            closed += 1;
+        } else if opens && !closes {
+            if closed > 0 {
+                closed -= 1;
+            } else if group_title(t).is_some() {
+                return None;
+            }
+        }
     }
     out.reverse();
     Some(out)
 }
 
-/// The tests of a file, each at its definition line. It reads the file once.
-fn tests_of(lines: &[&str]) -> Vec<TestName> {
+/// One definition of a test file: a test, or a template.
+struct Found<'a> {
+    line: usize,
+    /// The first line of the items of the definition.
+    first: usize,
+    text: &'a str,
+    test: TestName,
+}
+
+/// The definitions of a file. It reads the file once. A template with a literal
+/// and no placeholder (`it.each(rows)('closes')`) gives a name too.
+fn tests_of<'a>(lines: &[&'a str]) -> Vec<Found<'a>> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < lines.len() {
@@ -1076,10 +1281,30 @@ fn tests_of(lines: &[&str]) -> Vec<TestName> {
             continue;
         }
         let Some(d) = definition(lines, i, false) else {
-            break;
+            i += SCAN_LINES;
+            continue;
         };
-        if let Some(Under::Test(t)) = classify(d.text, d.annotated) {
-            out.push(t);
+        let test = match classify(d.text, d.annotated) {
+            Some(Under::Test(t)) => Some(t),
+            Some(Under::Template(name))
+                if !name.is_empty() && !name.contains(['%', '$']) && !name.contains("#{") =>
+            {
+                Some(TestName {
+                    name,
+                    call: true,
+                    bt: false,
+                    recv: None,
+                })
+            }
+            _ => None,
+        };
+        if let Some(test) = test {
+            out.push(Found {
+                line: d.line,
+                first: d.first,
+                text: d.text,
+                test,
+            });
         }
         i = d.line + 1;
     }
@@ -1103,6 +1328,12 @@ fn ends_in_segments(dotted_path: &str, key: &str) -> bool {
             .is_some_and(|p| p.ends_with('.'))
 }
 
+/// True if 2 dotted names are equal or one ends the other at a `.`: runners
+/// write them from their own root.
+fn relates(a: &str, b: &str) -> bool {
+    ends_in_segments(a, b) || ends_in_segments(b, a)
+}
+
 /// True if a file path of a case names the test file of a tag. `case_file` has
 /// forward slashes and no leading `./`. A runner that starts in a subfolder
 /// writes a shorter path, so the tag path can also end with `/` and the path of
@@ -1115,34 +1346,24 @@ fn same_file(case_file: &str, path: &str) -> bool {
     case_file == path || ends(case_file, path) || ends(path, case_file)
 }
 
+/// A path of a report with forward slashes and no leading `./`.
+fn report_path(path: &str) -> String {
+    path.replace('\\', "/").trim_start_matches("./").to_string()
+}
+
 /// The separators of the segments of a case name. A space inside a name is no
 /// separator: `Closes when cold` is one segment.
 const SEPS: [&str; 6] = [" > ", " \u{203a} ", "::", "/", ".", "#"];
 
-/// How well the name of a case names a test.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum NameFit {
-    /// The case name only ends with the name after a space (jest-junit and
-    /// RSpec join the titles with a space).
-    Weak,
-    /// The name is a whole segment of the case name.
-    Strong,
-}
-
-/// The end of the last place where `text` has `lit` as a whole segment: at the
-/// start or after a separator, and at the end or before a separator.
-fn find_whole(text: &str, lit: &str) -> Option<usize> {
-    if lit.is_empty() {
-        return None;
-    }
-    text.match_indices(lit)
-        .filter(|(i, _)| {
+/// True if `text` has `lit` as a whole segment: at the start or after a
+/// separator, and at the end or before a separator.
+fn has_whole(text: &str, lit: &str) -> bool {
+    !lit.is_empty()
+        && text.match_indices(lit).any(|(i, _)| {
             let j = i + lit.len();
-            (*i == 0 || SEPS.iter().any(|s| text[..*i].ends_with(s)))
+            (i == 0 || SEPS.iter().any(|s| text[..i].ends_with(s)))
                 && (j == text.len() || SEPS.iter().any(|s| text[j..].starts_with(s)))
         })
-        .map(|(i, _)| i + lit.len())
-        .max()
 }
 
 /// The case name, and the parts of it before each `(` and ` [`: a report adds
@@ -1172,107 +1393,36 @@ fn cut_head(case: &str) -> &str {
     &case[..cut]
 }
 
-/// How the name of the case names the test, or `None` (design 0.8.1, D82 item
-/// 4). The rule is that the name of the test is a whole segment of the case
-/// name, with the separators of `SEPS` only:
+/// True if the name of the case can name the test (design 0.8.1, D82 item 4).
+/// It is wide on purpose: each case that it accepts is read, and the identity of
+/// the test then decides what the case is.
 ///
-/// - a Go method of a suite: `<Test function>/<method>`, and more segments for a
-///   subtest;
-/// - a name in a literal (the form call): the name is a whole segment, or it is
-///   the end of the case name after a space (a weak match, unless the case name
-///   has a segment of ` > `). A Kotlin name in backticks has the parameters
-///   after it: the whole name first, then each part before a `(` or ` [`;
-/// - an identifier: it is a whole segment of the name before its parameters.
-///
-/// The first part is where the name ends in the case name. The cases that
-/// differ only after it (the subtests and the rows of a table) are one test.
-fn name_match(case: &str, test: &TestName) -> Option<(usize, NameFit)> {
+/// - A Go method of a suite: `<Test function>/<method>`, and more segments for a
+///   subtest.
+/// - A name in a literal (the form call): the name is a whole segment, or it is
+///   the end of the case name after a space, unless the case name has a segment
+///   of ` > `. A Kotlin name in backticks has the parameters after it.
+/// - An identifier: it is a whole segment of the name before its parameters.
+fn name_match(case: &str, test: &TestName) -> bool {
     if test.recv.is_some() {
         // A case of one segment names no method.
-        let mut segs = case.split('/');
-        let first = segs.next()?;
-        let second = segs.next()?;
-        return (second == test.name).then_some((first.len() + 1 + second.len(), NameFit::Strong));
+        return case.split('/').nth(1) == Some(test.name.as_str());
     }
-    if test.call {
-        let lit = test.name.as_str();
-        let variants = if test.bt {
-            tail_variants(case)
-        } else {
-            vec![case]
-        };
-        if variants.iter().any(|v| find_whole(v, lit).is_some()) {
-            return Some((case.len(), NameFit::Strong));
-        }
-        let space = |v: &str| {
-            v.strip_suffix(lit).is_some_and(|prefix| {
-                prefix.ends_with(' ') && !prefix.contains(" > ") && !prefix.contains(" \u{203a} ")
-            })
-        };
-        return variants
-            .iter()
-            .any(|v| space(v))
-            .then_some((case.len(), NameFit::Weak));
+    if !test.call {
+        return has_whole(cut_head(case), &test.name);
     }
-    find_whole(cut_head(case), &test.name).map(|e| (e, NameFit::Strong))
-}
-
-/// True if the case has the whole name of the test: it equals the name, or its
-/// last segment does (` > `, `::` and `.` end a segment, `/` does not), or it
-/// is the expected name, or it is the method of a Go suite under its function.
-/// The subtests and the rows of a table have the name of the test before their
-/// tail, and they are no own case.
-fn is_own(case: &str, test: &TestName, titles: Option<&[String]>) -> bool {
-    let last = |text: &str, seps: &[&str]| -> usize {
-        seps.iter()
-            .filter_map(|sep| text.rfind(sep).map(|i| i + sep.len()))
-            .max()
-            .unwrap_or(0)
+    let lit = test.name.as_str();
+    let variants = if test.bt {
+        tail_variants(case)
+    } else {
+        vec![case]
     };
-    if test.recv.is_some() {
-        let mut segs = case.split('/');
-        return segs.next().is_some()
-            && segs.next() == Some(test.name.as_str())
-            && segs.next().is_none();
-    }
-    if test.call {
-        let variants = if test.bt {
-            tail_variants(case)
-        } else {
-            vec![case]
-        };
-        return variants
-            .iter()
-            .any(|v| v[last(v, &[" > ", " \u{203a} "])..] == test.name)
-            || titles.is_some_and(|ts| expected_name(case, test, ts));
-    }
-    let head = cut_head(case);
-    head[last(head, &["::", "."])..] == test.name
-}
-
-/// True if the case is the one that the titles of the groups and the name of
-/// the test give: the titles and the name, joined with a space, ` > ` or
-/// ` \u{203a} `. RSpec joins a title that starts with `#` or `.` to the title
-/// before it with no space (`Valve#open closes`). Then the weak match is the
-/// expected full name.
-fn expected_name(case: &str, test: &TestName, titles: &[String]) -> bool {
-    let joined = |sep: &str| {
-        let mut want = String::new();
-        for (i, t) in titles.iter().enumerate() {
-            if i > 0 && !(sep == " " && t.starts_with(['#', '.'])) {
-                want.push_str(sep);
-            }
-            want.push_str(t);
-        }
-        if !titles.is_empty() {
-            want.push_str(sep);
-        }
-        want.push_str(&test.name);
-        want
+    let space = |v: &str| {
+        v.strip_suffix(lit).is_some_and(|prefix| {
+            prefix.ends_with(' ') && !prefix.contains(" > ") && !prefix.contains(" \u{203a} ")
+        })
     };
-    [" ", " > ", " \u{203a} "]
-        .iter()
-        .any(|sep| case == joined(sep))
+    variants.iter().any(|v| has_whole(v, lit) || space(v))
 }
 
 /// The types that a line `suite.Run(t, ...)` runs: `new(<Type>)` and
@@ -1353,295 +1503,1542 @@ fn folder_of(path: &str) -> &str {
     path.rsplit_once('/').map_or("", |(f, _)| f)
 }
 
-/// The keys of a test file for a binary id of cargo-nextest: the stem of the
-/// file, or the name of its folder when the stem is `main`. A file in a folder of
-/// `tests/` (`tests/it/valves.rs`) is a module of the binary of that folder, so
-/// the first folder under `tests/` is a key too.
-fn binary_keys(path: &str) -> Vec<&str> {
-    let name = path.rsplit('/').next().unwrap_or(path);
-    let stem = name.rsplit_once('.').map_or(name, |(s, _)| s);
-    let mut keys = vec![if stem == "main" {
-        folder_of(path).rsplit('/').next().unwrap_or("")
-    } else {
-        stem
-    }];
-    let under = path
-        .strip_prefix("tests/")
-        .or_else(|| path.split_once("/tests/").map(|(_, r)| r));
-    if let Some((dir, _)) = under.and_then(|r| r.split_once('/')) {
-        keys.push(dir);
-    }
-    keys
-}
-
 /// The ends of a path at each `/`, the longest first: `a/b/c`, `b/c`, `c`.
 fn path_ends(path: &str) -> impl Iterator<Item = &str> {
     std::iter::once(path).chain(path.match_indices('/').map(|(i, _)| &path[i + 1..]))
 }
 
-/// How a `classname` names a test file (design 0.8.1, D82 item 6). The first
-/// row that applies decides.
-enum Class {
-    /// The binary id of cargo-nextest, with `::`: the key after the last `::`
-    /// and its last `/`.
-    Binary(String),
-    /// A path with `/` whose last segment has a `.`: the rule of `file`.
-    Path(String),
-    /// A path with `/` and no extension: the longest folder of a test file that
-    /// ends it in whole segments.
-    Folder(Option<String>),
-    /// Another `classname`, with `$` read as `.`: the keys that the dotted path
-    /// of the test file can end with, and the `classname` when it has one
-    /// segment (it can also end the folder).
-    Dotted(Vec<String>, Option<String>),
+/// The ends of a dotted name at each `.`, the longest first.
+fn dotted_ends(name: &str) -> impl Iterator<Item = &str> {
+    std::iter::once(name).chain(name.match_indices('.').map(|(i, _)| &name[i + 1..]))
 }
 
-/// The way a case fits a test file: by its file, by its `classname`, or by its
-/// name only.
-enum Kind {
-    File(String),
-    Class(Class, bool),
-    Name,
-}
-
-/// A Rust test file: an integration test (`tests/<name>.rs`, a binary of its
-/// own), or a file of `src/` with unit tests, with its module path.
-enum RustFile {
-    No,
-    Test,
-    Src(Vec<String>),
-}
-
-/// The kind of a Rust file by its path. The module path of `src/a/b.rs` is
-/// `a::b`, and `src/lib.rs` and `src/main.rs` have the empty path.
-fn rust_file(path: &str) -> RustFile {
-    if !path.ends_with(".rs") {
-        return RustFile::No;
+/// The family of a test file for the count of its dotted path: the extension,
+/// and one family for the languages of the JVM.
+fn family(path: &str) -> &str {
+    match path.rsplit_once('.').map_or("", |(_, e)| e) {
+        "java" | "kt" | "kts" | "scala" | "groovy" => "jvm",
+        other => other,
     }
-    let rest = path
-        .strip_prefix("src/")
-        .or_else(|| path.rsplit_once("/src/").map(|(_, r)| r));
-    let Some(rest) = rest else {
-        return RustFile::Test;
+}
+
+/// The part of a Rust crate that a file belongs to, as its path tells.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Part {
+    /// An integration test binary: `tests/<name>.rs` or `tests/<name>/`.
+    Test(String),
+    /// `src/lib.rs`.
+    Lib,
+    /// `src/main.rs`.
+    Main,
+    /// A binary of `src/bin/`.
+    Bin(String),
+    /// Another file of `src/`: a module of the library or of a binary.
+    Module,
+}
+
+/// A Rust test file: the folder of its crate, its part and its module path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Target {
+    root: String,
+    part: Part,
+    module: Vec<String>,
+}
+
+impl Target {
+    /// 2 files with one key can write the same cases.
+    fn key(&self) -> String {
+        match &self.part {
+            Part::Test(name) => format!("test {name}"),
+            Part::Lib => "lib".to_string(),
+            Part::Main => "main".to_string(),
+            Part::Bin(name) => format!("bin {name} {}", self.module.join("::")),
+            Part::Module => format!("module {}", self.module.join("::")),
+        }
+    }
+}
+
+/// The target of a Rust file. `None` for a layout that the path does not tell:
+/// a file outside `src/` and `tests/`, a path with both, or a file in a folder
+/// of `tests/` with no `main.rs` in the path list.
+fn rust_target(path: &str, files: &HashSet<&str>) -> Option<Target> {
+    let stem_path = path.strip_suffix(".rs")?;
+    let segs: Vec<&str> = stem_path.split('/').collect();
+    let dirs = &segs[..segs.len() - 1];
+    let has = |name: &str| dirs.contains(&name);
+    let anchor = match (has("src"), has("tests")) {
+        (true, false) => "src",
+        (false, true) => "tests",
+        _ => return None,
     };
-    let mut module: Vec<String> = rest
-        .trim_end_matches(".rs")
-        .split('/')
-        .map(str::to_string)
-        .collect();
-    if matches!(
-        module.last().map(String::as_str),
-        Some("mod" | "lib" | "main")
-    ) {
-        module.pop();
-    }
-    RustFile::Src(module)
-}
-
-/// The test file of a tag, with what the rules of fit read.
-struct Place<'p> {
-    path: &'p str,
-    dotted: String,
-    keys: Vec<&'p str>,
-    folder: &'p str,
-    rust: RustFile,
-}
-
-impl<'p> Place<'p> {
-    fn new(path: &'p str) -> Place<'p> {
-        Place {
-            path,
-            dotted: dotted(path),
-            keys: binary_keys(path),
-            folder: folder_of(path),
-            rust: rust_file(path),
+    let at = dirs.iter().rposition(|s| *s == anchor)?;
+    let root = segs[..at].join("/");
+    let rest = &segs[at + 1..];
+    let module = |from: &[&str], drop: &[&str]| -> Vec<String> {
+        let mut m: Vec<String> = from.iter().map(|s| s.to_string()).collect();
+        if m.last().is_some_and(|l| drop.contains(&l.as_str())) {
+            m.pop();
         }
-    }
-}
-
-/// The keys of a case name for the index: the name, the parts before each
-/// parameter list, the parts after a space or a separator, and the segments.
-/// The index only finds the cases to look at. `name_match` decides.
-fn case_keys(name: &str) -> Vec<&str> {
-    // A name that is too long has no key but its whole name: the work for the
-    // keys grows with the square of the number of separators.
-    if is_long(name) {
-        return vec![name];
-    }
-    let mut variants = vec![name];
-    for (i, c) in name.char_indices() {
-        if i > 0 && (c == '(' || c == '[') {
-            variants.push(name[..i].trim_end());
-        }
-    }
-    if let Some(i) = name.find(" with data set") {
-        variants.push(&name[..i]);
-    }
-    let mut keys = Vec::new();
-    for v in variants {
-        keys.push(v);
-        keys.extend(v.match_indices(' ').map(|(p, _)| &v[p + 1..]));
-        // The segments: from the start or after a separator, to a separator or
-        // the end.
-        let mut starts = vec![0];
-        let mut ends = vec![v.len()];
-        for sep in SEPS {
-            for (p, _) in v.match_indices(sep) {
-                starts.push(p + sep.len());
-                ends.push(p);
-            }
-        }
-        for &a in &starts {
-            for &b in &ends {
-                if a < b {
-                    keys.push(&v[a..b]);
+        m
+    };
+    let (part, module) = if anchor == "tests" {
+        match rest {
+            [stem] => (Part::Test(stem.to_string()), Vec::new()),
+            [dir, tail @ ..] => {
+                let main = if root.is_empty() {
+                    format!("tests/{dir}/main.rs")
+                } else {
+                    format!("{root}/tests/{dir}/main.rs")
+                };
+                if !files.contains(main.as_str()) {
+                    return None;
                 }
+                (Part::Test(dir.to_string()), module(tail, &["main", "mod"]))
             }
+            [] => return None,
+        }
+    } else {
+        match rest {
+            ["lib"] => (Part::Lib, Vec::new()),
+            ["main"] => (Part::Main, Vec::new()),
+            ["bin", name] => (Part::Bin(name.to_string()), Vec::new()),
+            ["bin", name, tail @ ..] => {
+                (Part::Bin(name.to_string()), module(tail, &["main", "mod"]))
+            }
+            _ => (Part::Module, module(rest, &["mod"])),
+        }
+    };
+    Some(Target { root, part, module })
+}
+
+/// What the test files name: their paths, the ends of their paths and of their
+/// dotted paths, the folders of Go and the targets of Rust. Each count is the
+/// number of the files, for the rule that an identity must be unique.
+struct Names<'t> {
+    whole: HashSet<&'t str>,
+    ends: HashMap<&'t str, usize>,
+    /// (family, dotted path) to the number of files with it.
+    dotted_whole: HashMap<(&'t str, String), usize>,
+    /// (family, end of a dotted path) to the number of files with it.
+    dotted: HashMap<(&'t str, String), usize>,
+    /// (family) to the number of files.
+    families: HashMap<&'t str, usize>,
+    /// The stem of a C# file to the number of files with it.
+    stems: HashMap<&'t str, usize>,
+    go_folders: Vec<&'t str>,
+    /// The key of a Rust target to the folders of the crates that have it.
+    rust: HashMap<String, HashSet<String>>,
+}
+
+impl<'t> Names<'t> {
+    fn new(test_files: &'t [String]) -> Names<'t> {
+        let mut n = Names {
+            whole: test_files.iter().map(String::as_str).collect(),
+            ends: HashMap::new(),
+            dotted_whole: HashMap::new(),
+            dotted: HashMap::new(),
+            families: HashMap::new(),
+            stems: HashMap::new(),
+            go_folders: Vec::new(),
+            rust: HashMap::new(),
+        };
+        let mut folders = HashSet::new();
+        let files: Vec<&'t str> = test_files.iter().map(String::as_str).collect();
+        for f in files {
+            for end in path_ends(f) {
+                *n.ends.entry(end).or_default() += 1;
+            }
+            let fam = family(f);
+            *n.families.entry(fam).or_default() += 1;
+            let d = dotted(f);
+            for end in dotted_ends(&d) {
+                *n.dotted.entry((fam, end.to_string())).or_default() += 1;
+            }
+            *n.dotted_whole.entry((fam, d)).or_default() += 1;
+            if fam == "cs" {
+                let name = f.rsplit('/').next().unwrap_or(f);
+                *n.stems.entry(name.trim_end_matches(".cs")).or_default() += 1;
+            }
+            if fam == "go" && folders.insert(folder_of(f)) {
+                n.go_folders.push(folder_of(f));
+            }
+            if let Some(t) = rust_target(f, &n.whole) {
+                n.rust.entry(t.key()).or_default().insert(t.root);
+            }
+        }
+        n
+    }
+
+    /// The number of test files that the path of a case names.
+    fn files_named(&self, case_file: &str) -> usize {
+        let shorter = path_ends(case_file)
+            .skip(1)
+            .filter(|e| self.whole.contains(e))
+            .count();
+        self.ends.get(case_file).copied().unwrap_or(0) + shorter
+    }
+
+    /// The number of test files of a family whose dotted path relates to
+    /// `name`. An empty name relates to each file of the family.
+    fn dotted_named(&self, path: &str, name: &str) -> usize {
+        let fam = family(path);
+        if name.is_empty() {
+            return self.families.get(fam).copied().unwrap_or(0);
+        }
+        // The key borrows nothing from the maps.
+        let get = |map: &HashMap<(&'t str, String), usize>, key: &str| {
+            self.families
+                .get_key_value(fam)
+                .and_then(|(f, _)| map.get(&(*f, key.to_string())))
+                .copied()
+                .unwrap_or(0)
+        };
+        let shorter: usize = dotted_ends(name)
+            .skip(1)
+            .map(|e| get(&self.dotted_whole, e))
+            .sum();
+        get(&self.dotted, name) + shorter
+    }
+}
+
+/// The most bytes and separators of a name that has all its keys.
+const LONG_BYTES: usize = 256;
+const LONG_SEPS: usize = 32;
+
+/// True for a case name that is too long to read by its segments: more than 256
+/// bytes, or more than 32 separators (`SEPS`, `(` and `[`).
+fn is_long(name: &str) -> bool {
+    name.len() > LONG_BYTES
+        || SEPS.iter().map(|s| name.matches(s).count()).sum::<usize>()
+            + name.matches(['(', '[']).count()
+            > LONG_SEPS
+}
+
+/// True if a row tail of a runner can start at byte `i` of a name: `[`, a `(`
+/// that does not follow a space, ` [` or ` with data set`.
+fn tail_at(name: &str, i: usize) -> bool {
+    let rest = &name[i..];
+    rest.starts_with('[')
+        || (rest.starts_with('(') && !name[..i].ends_with(char::is_whitespace))
+        || rest.starts_with(" [")
+        || rest.starts_with(" with data set")
+}
+
+/// A name without a leading `[<project>] ` of Playwright.
+fn without_project(name: &str) -> &str {
+    if name.starts_with('[') {
+        name.split_once("] ").map_or(name, |(_, rest)| rest)
+    } else {
+        name
+    }
+}
+
+/// The keys of a case name for the index, each a part of the name, and true for
+/// a head with more words than the keys hold. The keys are:
+///
+/// - the whole name, and the name without a `[<project>] ` prefix;
+/// - the prefixes before the first 32 places where a row tail, a `::` or a `/`
+///   starts (in the first 256 bytes);
+/// - for a head that is not too long: each whole segment of the head, and, when
+///   it has no segment of ` > `, each end of it after one of its last 32 spaces.
+///
+/// A name has at most 98 keys, and one more with a project prefix.
+fn case_keys(name: &str) -> (Vec<&str>, bool) {
+    let base = without_project(name);
+    let mut keys = vec![name, base];
+    let mut prefixes = 0;
+    let mut head = base.len();
+    let mut last = "";
+    for (i, _) in base.char_indices().skip(1) {
+        let tail = tail_at(base, i);
+        if tail && head == base.len() {
+            head = i;
+        }
+        let rest = &base[i..];
+        if i <= LONG_BYTES
+            && prefixes < LONG_SEPS
+            && (tail || rest.starts_with('/') || rest.starts_with("::"))
+        {
+            let prefix = base[..i].trim_end();
+            if prefix != last {
+                keys.push(prefix);
+                prefixes += 1;
+                last = prefix;
+            }
+        }
+        if (i > LONG_BYTES || prefixes >= LONG_SEPS) && head < base.len() {
+            break;
+        }
+    }
+    let head = base[..head].trim_end();
+    let mut wordy = false;
+    if !is_long(head) {
+        let mut cuts: Vec<(usize, usize)> = SEPS
+            .iter()
+            .flat_map(|s| head.match_indices(s).map(|(i, _)| (i, i + s.len())))
+            .collect();
+        cuts.sort_unstable();
+        let mut from = 0;
+        for (a, b) in cuts {
+            if a >= from {
+                keys.push(&head[from..a]);
+                from = b;
+            }
+        }
+        keys.push(&head[from..]);
+        if !head.contains(" > ") && !head.contains(" \u{203a} ") {
+            let mut spaces = head.rmatch_indices(' ');
+            keys.extend(spaces.by_ref().take(LONG_SEPS).map(|(p, _)| &head[p + 1..]));
+            wordy = spaces.next().is_some();
         }
     }
     keys.retain(|k| !k.is_empty());
     keys.sort_unstable();
     keys.dedup();
-    keys
+    (keys, wordy)
 }
 
-/// True for a case name that has no key but its whole name: more than 256
-/// bytes, or more than 32 separators (`SEPS`, `(` and `[`).
-fn is_long(name: &str) -> bool {
-    name.len() > 256
-        || SEPS.iter().map(|s| name.matches(s).count()).sum::<usize>()
-            + name.matches(['(', '[']).count()
-            > 32
+/// The cases of one key. Most keys have one case, so an entry of the index is
+/// small: a list of more cases is in a table of its own.
+#[derive(Clone, Copy)]
+enum Posting {
+    One(u32),
+    Many(u32),
+}
+
+/// The index of the keys of the case names. A key is held as its hash: a report
+/// can have millions of keys. Two keys can share a hash, so a lookup only finds
+/// the cases to read, and each reader checks the name of the case.
+#[derive(Default)]
+struct Index {
+    hasher: RandomState,
+    keys: HashMap<u64, Posting>,
+    lists: Vec<Vec<u32>>,
+}
+
+impl Index {
+    fn add(&mut self, key: &str, case: u32) {
+        match self.keys.entry(self.hasher.hash_one(key)) {
+            Entry::Vacant(slot) => {
+                slot.insert(Posting::One(case));
+            }
+            Entry::Occupied(mut slot) => match *slot.get() {
+                Posting::One(first) => {
+                    slot.insert(Posting::Many(self.lists.len() as u32));
+                    self.lists.push(vec![first, case]);
+                }
+                Posting::Many(list) => self.lists[list as usize].push(case),
+            },
+        }
+    }
+
+    fn get(&self, key: &str) -> &[u32] {
+        match self.keys.get(&self.hasher.hash_one(key)) {
+            None => &[],
+            Some(Posting::One(case)) => std::slice::from_ref(case),
+            Some(Posting::Many(list)) => &self.lists[*list as usize],
+        }
+    }
+
+    /// The pairs of a key and a case.
+    #[cfg(test)]
+    fn entries(&self) -> usize {
+        let ones = self.keys.values().filter(|p| matches!(p, Posting::One(_)));
+        ones.count() + self.lists.iter().map(Vec::len).sum::<usize>()
+    }
+}
+
+/// The form of a definition (design 0.8.1, D82 item 2). With the shape of a
+/// case, it gives the row of the identity rule.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Form {
+    Def,
+    Fn,
+    Func,
+    Call,
+    /// The form method, and a Kotlin name in backticks.
+    Method,
+}
+
+fn form_of(test: &TestName, text: &str) -> Form {
+    if test.bt {
+        return Form::Method;
+    }
+    if test.call {
+        return Form::Call;
+    }
+    let body = strip_modifiers(text);
+    match &body[..ident_end(body)] {
+        "def" => Form::Def,
+        "fn" => Form::Fn,
+        "func" => Form::Func,
+        _ => Form::Method,
+    }
+}
+
+/// A row of the identity rule (docs/test-report.md): the form of the
+/// definition and the shape of the case.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Row {
+    /// A case with no `classname`: the line format.
+    Lines,
+    /// A pair that no row lists: it has no full field.
+    Unlisted,
+    PytestXunit2,
+    PytestXunit1,
+    Nextest,
+    Go,
+    /// JUnit and xUnit.
+    Jvm,
+    Phpunit,
+    /// jest-junit with `addFileAttribute`, and RSpec.
+    FileTitles,
+    /// Vitest and Playwright.
+    PathTitles,
+    JestDefaults,
+}
+
+fn row_of(form: Form, case: &Case) -> Row {
+    let Some(cn) = case.classname.as_deref() else {
+        return Row::Lines;
+    };
+    if case.file.is_some() {
+        return match form {
+            Form::Def => Row::PytestXunit1,
+            Form::Method => Row::Phpunit,
+            Form::Call => Row::FileTitles,
+            Form::Fn | Form::Func => Row::Unlisted,
+        };
+    }
+    // jest-junit writes its title as the `classname`, also with a `/` in it.
+    if form == Form::Call && cn == case.name {
+        return Row::JestDefaults;
+    }
+    let binary = cn.contains("::");
+    let path = !binary && cn.contains(['/', '\\']);
+    // A spec file in the root of the runner has no `/`: its extension shows
+    // that the `classname` is a path.
+    let script = !binary
+        && cn.rsplit_once('.').is_some_and(|(_, e)| {
+            matches!(
+                e,
+                "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs" | "mts" | "cts" | "vue" | "svelte"
+            )
+        });
+    let extension = script || path && cn.rsplit(['/', '\\']).next().unwrap_or(cn).contains('.');
+    // The name of a Cargo package has no dot and no space.
+    let package = cn
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    match form {
+        Form::Fn if binary || package => Row::Nextest,
+        Form::Func if !binary => Row::Go,
+        Form::Def if !binary && !path => Row::PytestXunit2,
+        Form::Method if !binary && !path => Row::Jvm,
+        Form::Call if extension => Row::PathTitles,
+        Form::Call if !binary && !path => Row::JestDefaults,
+        _ => Row::Unlisted,
+    }
+}
+
+/// One field of a case against the identity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Field {
+    Same,
+    /// The report and the identity both hold the field in full, and they
+    /// differ: the case is another test.
+    Differs,
+    /// One of them does not hold the field in full.
+    Unread,
+}
+
+impl Field {
+    fn of(same: bool) -> Field {
+        if same { Field::Same } else { Field::Differs }
+    }
+
+    fn and(self, other: Field) -> Field {
+        match (self, other) {
+            (Field::Differs, _) | (_, Field::Differs) => Field::Differs,
+            (Field::Unread, _) | (_, Field::Unread) => Field::Unread,
+            _ => Field::Same,
+        }
+    }
+}
+
+/// The `package` or `namespace` of the test of a JVM or .NET file.
+#[derive(Debug, PartialEq, Eq)]
+enum Package {
+    Line(String),
+    Absent,
+    /// A `namespace` block that the indent does not show.
+    Unread,
+}
+
+/// The line `package x.y`, or a file-scoped `namespace x.y;`.
+fn package_line(lines: &[&str]) -> Option<String> {
+    lines.iter().find_map(|l| {
+        let t = l.trim();
+        let rest = t.strip_prefix("package ").or_else(|| {
+            t.strip_prefix("namespace ")
+                .filter(|r| r.trim_end().ends_with(';'))
+        })?;
+        let name = rest.split([';', ' ', '{']).next().unwrap_or("");
+        (!name.is_empty()).then(|| name.replace('\\', "."))
+    })
+}
+
+fn package_of(lines: &[&str], chain: Option<&[Title]>) -> Package {
+    let blocks: Vec<&str> = chain
+        .unwrap_or_default()
+        .iter()
+        .filter(|t| t.kind == GroupKind::Namespace)
+        .map(|t| t.text.as_str())
+        .collect();
+    if !blocks.is_empty() {
+        return Package::Line(blocks.join("."));
+    }
+    if let Some(p) = package_line(lines) {
+        return Package::Line(p);
+    }
+    if lines.iter().any(|l| l.trim().starts_with("namespace ")) {
+        return Package::Unread;
+    }
+    Package::Absent
+}
+
+/// The `DisplayName` of the items of a definition: `None` when it has none, and
+/// `Some(None)` when its value is no literal.
+fn display_name(lines: &[&str], first: usize, line: usize) -> Option<Option<String>> {
+    let mut from = first;
+    while from > 0 {
+        let above = lines[from - 1].trim();
+        if above.starts_with('@') || above.starts_with('[') || is_comment(above) {
+            from -= 1;
+        } else {
+            break;
+        }
+    }
+    lines.get(from..=line)?.iter().find_map(|l| {
+        let (_, rest) = l.split_once("DisplayName")?;
+        let value = rest
+            .trim_start()
+            .trim_start_matches(['(', '='])
+            .trim_start();
+        Some(literal(value).map(str::to_string))
+    })
+}
+
+/// A Go module: the folder of its `go.mod` and its module path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct GoModule {
+    dir: String,
+    path: String,
+}
+
+impl GoModule {
+    /// The folder of a package below the module, empty for its root.
+    fn relative<'f>(&self, folder: &'f str) -> &'f str {
+        if self.dir.is_empty() {
+            folder
+        } else {
+            folder
+                .strip_prefix(&self.dir)
+                .map_or(folder, |r| r.trim_start_matches('/'))
+        }
+    }
+
+    fn import(&self, folder: &str) -> String {
+        match self.relative(folder) {
+            "" => self.path.clone(),
+            rel => format!("{}/{rel}", self.path),
+        }
+    }
+}
+
+/// The `classname` of a Go case against the folder of the tag. With a `go.mod`,
+/// it is the import path or the folder below the module (gotestsum
+/// `relative`). With none, the folder must end it.
+fn go_field(classname: &str, folder: &str, module: Option<&GoModule>) -> Field {
+    let short = |of: &str| {
+        !classname.contains('/') && of.contains('/') && of.rsplit('/').next() == Some(classname)
+    };
+    let ends = |long: &str, end: &str| long.strip_suffix(end).is_some_and(|r| r.ends_with('/'));
+    match module {
+        Some(m) => {
+            let rel = m.relative(folder);
+            if classname == m.import(folder)
+                || (!rel.is_empty() && classname == rel)
+                || (rel.is_empty() && classname == ".")
+            {
+                Field::Same
+            } else if short(rel) {
+                Field::Unread
+            } else {
+                Field::Differs
+            }
+        }
+        None if folder.is_empty() => Field::Unread,
+        None if classname == folder || ends(classname, folder) => Field::Same,
+        None if short(folder) || ends(folder, classname) => Field::Unread,
+        None => Field::Differs,
+    }
+}
+
+/// A nextest binary id: the package, and the part of the crate.
+fn binary_id(classname: &str) -> (&str, Option<Part>) {
+    let Some((package, rest)) = classname.split_once("::") else {
+        return (classname, Some(Part::Lib));
+    };
+    let part = if let Some(name) = rest.strip_prefix("bin/") {
+        Some(Part::Bin(name.to_string()))
+    } else {
+        let name = rest.strip_prefix("test/").unwrap_or(rest);
+        // Another kind (`bench/`, `example/`) is no test binary of a test file.
+        (!name.contains('/')).then(|| Part::Test(name.to_string()))
+    };
+    (package, part)
+}
+
+/// The kind of a binary id against the target of a Rust file. `package` is the
+/// name in the `Cargo.toml` of the file.
+fn part_field(target: &Target, id: Option<&Part>, package: Option<&str>) -> Field {
+    match (&target.part, id) {
+        (Part::Test(a), Some(Part::Test(b))) => Field::of(a == b),
+        (Part::Lib, Some(Part::Lib)) => Field::Same,
+        (Part::Bin(a), Some(Part::Bin(b))) => Field::of(a == b),
+        // The name of the binary of `src/main.rs` is the package, unless
+        // `Cargo.toml` gives it another name.
+        (Part::Main, Some(Part::Bin(b))) => {
+            if package == Some(b.as_str()) {
+                Field::Same
+            } else {
+                Field::Unread
+            }
+        }
+        // A module belongs to the library, or to a binary: the path does not
+        // tell which.
+        (Part::Module, Some(Part::Lib)) => Field::Same,
+        (Part::Module, Some(Part::Bin(_))) => Field::Unread,
+        _ => Field::Differs,
+    }
+}
+
+/// The identity that the scanner builds from the definition under a tag.
+struct Identity<'p> {
+    path: &'p str,
+    test: TestName,
+    form: Form,
+    /// The groups around the definition. `None`: the scanner cannot read them.
+    chain: Option<Vec<Title>>,
+    /// False for a title of a call that is not the whole literal.
+    plain: bool,
+    /// The functions that run the Go suite of the method.
+    funcs: Vec<String>,
+    package: Package,
+    display: Option<Option<String>>,
+    target: Option<Target>,
+    cargo: Option<String>,
+    go: Option<GoModule>,
+    /// The other definitions of the tag file.
+    others: Vec<Found<'p>>,
+    lines: &'p [&'p str],
+    /// The `classname` of pytest: the dotted path and the classes. A tag can
+    /// have thousands of cases to read, so it is built once.
+    pytest: Option<String>,
+    /// True if the file of a test of the form call has a template. A template
+    /// can give any title, also the title of the test.
+    templates: bool,
+}
+
+/// The case that names the test, as the rule judges it.
+struct Judged<'a> {
+    case: &'a Case,
+    /// The name of the case without a project prefix: with the `classname` and
+    /// the `file`, the identity of the case.
+    name: &'a str,
+    /// For an own case, the field that ties it to the tag.
+    own: Option<Fit>,
+    /// For a weak case, the cause.
+    why: Option<Why>,
+    /// True when the runner writes the same case more than once in one report
+    /// (the projects of Playwright).
+    repeats: bool,
+}
+
+impl<'a> Judged<'a> {
+    fn new(case: &'a Case, name: &'a str, result: Result<Fit, Why>) -> Judged<'a> {
+        Judged {
+            case,
+            name,
+            own: result.ok(),
+            why: result.err(),
+            repeats: false,
+        }
+    }
+
+    fn key(&self) -> (&'a str, Option<&'a str>, Option<&'a str>) {
+        (
+            self.name,
+            self.case.classname.as_deref(),
+            self.case.file.as_deref(),
+        )
+    }
+}
+
+/// What `case:` reads of the tag file.
+struct TagFile<'p> {
+    path: &'p str,
+    classes: HashSet<String>,
+    package: Option<String>,
+}
+
+/// The titles and the name of a test, joined with `sep`.
+fn joined(chain: &[Title], name: &str, sep: &str) -> String {
+    let mut out = String::new();
+    for t in chain {
+        out.push_str(&t.text);
+        out.push_str(sep);
+    }
+    out.push_str(name);
+    out
+}
+
+/// The 3 full titles of a test of the form call: with a space as RSpec and
+/// jest-junit join them, with ` > ` (Vitest) and with ` \u{203a} `
+/// (Playwright). RSpec writes no space between a group of a bare constant and a
+/// group below it whose title starts with `#`, `.` or `::`.
+fn full_titles(chain: &[Title], name: &str) -> [String; 3] {
+    let mut space = String::new();
+    for (i, t) in chain.iter().enumerate() {
+        let no_space = i > 0
+            && chain[i - 1].constant
+            && (t.text.starts_with(['#', '.']) || t.text.starts_with("::"));
+        if i > 0 && !no_space {
+            space.push(' ');
+        }
+        space.push_str(&t.text);
+    }
+    if !chain.is_empty() {
+        space.push(' ');
+    }
+    space.push_str(name);
+    [
+        space,
+        joined(chain, name, " > "),
+        joined(chain, name, " \u{203a} "),
+    ]
+}
+
+impl Identity<'_> {
+    /// The groups, when each of them is of a kind that the form allows.
+    fn groups(&self) -> Option<&[Title]> {
+        let chain = self.chain.as_deref()?;
+        let fits = match self.form {
+            Form::Def => chain.iter().all(|t| t.kind == GroupKind::Class),
+            Form::Fn => chain.iter().all(|t| t.kind == GroupKind::Module),
+            Form::Func => chain.is_empty(),
+            Form::Call => chain.iter().all(|t| t.kind == GroupKind::Describe),
+            // A method has a class.
+            Form::Method => {
+                chain.iter().any(|t| t.kind == GroupKind::Class)
+                    && chain
+                        .iter()
+                        .all(|t| matches!(t.kind, GroupKind::Class | GroupKind::Namespace))
+            }
+        };
+        fits.then_some(chain)
+    }
+
+    /// The classes of the chain, joined with `.`.
+    fn classes(&self) -> Option<String> {
+        let names: Vec<&str> = self
+            .groups()?
+            .iter()
+            .filter(|t| t.kind == GroupKind::Class)
+            .map(|t| t.text.as_str())
+            .collect();
+        Some(names.join("."))
+    }
+
+    /// The module path of a Rust test: the file, the `mod` blocks and the `fn`.
+    fn module_path(&self) -> Option<String> {
+        let mut path = self.target.as_ref()?.module.clone();
+        path.extend(self.groups()?.iter().map(|t| t.text.clone()));
+        path.push(self.test.name.clone());
+        Some(path.join("::"))
+    }
+
+    /// True when the scanner builds the whole identity.
+    fn built(&self, row: Row) -> bool {
+        self.groups().is_some()
+            && self.plain
+            && self.display.is_none()
+            && match row {
+                Row::Nextest => self.target.is_some(),
+                Row::Jvm => self.package != Package::Unread,
+                _ => true,
+            }
+    }
+
+    /// The names that a case of the test has in this row, before its row tail.
+    /// Empty when the scanner cannot build the name.
+    fn heads(&self, row: Row) -> Vec<String> {
+        let name = &self.test.name;
+        match row {
+            Row::PytestXunit2 | Row::PytestXunit1 => vec![name.clone()],
+            Row::Go if self.test.recv.is_some() => {
+                self.funcs.iter().map(|f| format!("{f}/{name}")).collect()
+            }
+            Row::Go => vec![name.clone()],
+            Row::Phpunit if self.display.is_none() => vec![name.clone()],
+            Row::Jvm if self.display.is_none() => {
+                // xUnit writes `M`, `C.M` or `N.C.M` (`MethodFormat`).
+                let Some(classes) = self.classes() else {
+                    return Vec::new();
+                };
+                let mut out = vec![name.clone(), format!("{classes}.{name}")];
+                if let Package::Line(p) = &self.package {
+                    out.push(format!("{p}.{classes}.{name}"));
+                }
+                out
+            }
+            Row::Nextest => self.module_path().into_iter().collect(),
+            Row::FileTitles | Row::PathTitles | Row::JestDefaults if self.plain => {
+                let Some(chain) = self.groups() else {
+                    return Vec::new();
+                };
+                let titles = full_titles(chain, name);
+                if row == Row::JestDefaults {
+                    titles[..1].to_vec()
+                } else {
+                    titles.to_vec()
+                }
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// The names to look up in the index, for each row of the form. A case of
+    /// the line format has one of them.
+    fn lookups(&self) -> Vec<String> {
+        let name = &self.test.name;
+        let mut out = vec![name.clone()];
+        match self.form {
+            Form::Def => {}
+            Form::Fn => out.extend(self.module_path()),
+            Form::Func => out.extend(self.heads(Row::Go)),
+            Form::Method => {
+                out.extend(self.heads(Row::Jvm));
+                out.extend(self.display.clone().flatten());
+            }
+            Form::Call => {
+                if let Some(chain) = self.groups() {
+                    out.extend(full_titles(chain, name));
+                }
+            }
+        }
+        out
+    }
+
+    /// The identity part of the name of a case that has the name of the test in
+    /// this row: the name without a project prefix. `None` when it differs.
+    fn hit<'c>(&self, row: Row, case: &'c str) -> Option<&'c str> {
+        let heads = self.heads(row);
+        let tail = |rest: &str| match row {
+            Row::PytestXunit2 | Row::PytestXunit1 => rest.starts_with('['),
+            Row::Nextest => rest.starts_with("::"),
+            Row::Go => rest.starts_with('/'),
+            Row::Jvm | Row::Phpunit => {
+                rest.starts_with(['(', '[']) || rest.starts_with(" [") || tail_at(rest, 0)
+            }
+            _ => false,
+        };
+        let fits = |name: &str, head: &String| {
+            name.strip_prefix(head.as_str())
+                .is_some_and(|rest| rest.is_empty() || tail(rest))
+        };
+        if heads.iter().any(|h| fits(case, h)) {
+            return Some(case);
+        }
+        // Playwright can put `[<project>] ` before the title.
+        let short = without_project(case);
+        (matches!(row, Row::FileTitles | Row::PathTitles)
+            && short != case
+            && heads.iter().any(|h| {
+                short == h
+                    && (h.contains(" \u{203a} ") || self.groups().is_some_and(<[_]>::is_empty))
+            }))
+        .then_some(short)
+    }
+
+    /// True if the name of the case can name the test: only such a case is read.
+    fn names(&self, case: &str) -> bool {
+        if self.test.recv.is_some() {
+            // Only a case of a function that runs the suite.
+            let first = case.split('/').next().unwrap_or("");
+            if !self.funcs.iter().any(|f| f == first) {
+                return false;
+            }
+        }
+        name_match(case, &self.test)
+            || self.lookups().iter().any(|l| l == without_project(case))
+            || [
+                Row::PytestXunit2,
+                Row::Nextest,
+                Row::Go,
+                Row::Jvm,
+                Row::PathTitles,
+            ]
+            .iter()
+            .any(|row| row_form(*row) == self.form && self.hit(*row, case).is_some())
+    }
+
+    /// The `classname` of a case against the one of pytest.
+    fn pytest_classname(&self, classname: &str) -> Field {
+        match &self.pytest {
+            Some(want) => Field::of(relates(classname, want)),
+            None => Field::Unread,
+        }
+    }
+
+    /// The field that names the test file: the `file`, or the whole
+    /// `classname`.
+    fn file_field(&self, row: Row, case: &Case) -> Field {
+        let file = case.file.as_deref().map(report_path);
+        // A case with the `file` of another file is another test in each row.
+        if file.as_deref().is_some_and(|f| !same_file(f, self.path)) {
+            return Field::Differs;
+        }
+        let cn = case.classname.as_deref().unwrap_or("");
+        match row {
+            Row::Lines | Row::Unlisted => Field::Unread,
+            Row::FileTitles | Row::JestDefaults => Field::Same,
+            Row::PytestXunit1 | Row::PytestXunit2 => self.pytest_classname(cn),
+            Row::Nextest => {
+                let Some(target) = &self.target else {
+                    return Field::Unread;
+                };
+                let (package, part) = binary_id(cn);
+                let part = part_field(target, part.as_ref(), self.cargo.as_deref());
+                let package = match &self.cargo {
+                    Some(name) => Field::of(name == package),
+                    // With no `Cargo.toml`, a binary of `tests/` is unique by
+                    // its key, and the library is not.
+                    None if matches!(target.part, Part::Test(_)) => Field::Same,
+                    None => Field::Unread,
+                };
+                part.and(package)
+            }
+            Row::Go => go_field(cn, folder_of(self.path), self.go.as_ref()),
+            Row::Jvm => {
+                let Some(classes) = self.classes() else {
+                    return Field::Unread;
+                };
+                // `$` of the JVM and `+` of .NET join a nested class.
+                let cn = cn.replace(['$', '+'], ".");
+                match &self.package {
+                    Package::Line(p) if cn == format!("{p}.{classes}") => Field::Same,
+                    // A newer Surefire writes the outer class for a nested one.
+                    Package::Line(p) if self.nested() && cn == self.outer(p) => Field::Unread,
+                    Package::Line(_) => Field::Differs,
+                    Package::Absent
+                        if ends_in_segments(&cn, &classes)
+                            && ends_in_segments(&dotted(self.path), &cn) =>
+                    {
+                        Field::Same
+                    }
+                    Package::Absent | Package::Unread => Field::Unread,
+                }
+            }
+            Row::Phpunit => {
+                let Some(classes) = self.classes() else {
+                    return Field::Unread;
+                };
+                Field::of(ends_in_segments(&cn.replace('\\', "."), &classes))
+            }
+            Row::PathTitles => Field::of(same_file(&report_path(cn), self.path)),
+        }
+    }
+
+    /// True for a test of a class inside a class.
+    fn nested(&self) -> bool {
+        self.groups()
+            .is_some_and(|c| c.iter().filter(|t| t.kind == GroupKind::Class).count() > 1)
+    }
+
+    /// The package with the outermost class.
+    fn outer(&self, package: &str) -> String {
+        let top = self
+            .groups()
+            .and_then(|c| c.iter().find(|t| t.kind == GroupKind::Class))
+            .map_or("", |t| t.text.as_str());
+        format!("{package}.{top}")
+    }
+
+    /// True if another definition of the tag file builds the name of the case.
+    fn twin(&self, case: &str, name: &str) -> bool {
+        let mine = self.groups();
+        self.others.iter().any(|o| {
+            if self.form == Form::Call {
+                let t = o.test.name.as_str();
+                if !o.test.call || !(name.ends_with(t) || case.ends_with(t)) {
+                    return false;
+                }
+                return match ancestors(self.lines, o.line) {
+                    // A group that the scanner cannot read can build it.
+                    None => t == self.test.name,
+                    Some(chain) => full_titles(&chain, t)
+                        .iter()
+                        .any(|f| f == name || f == case),
+                };
+            }
+            // A display name replaces the name of the method in some runners.
+            if self.form == Form::Method
+                && display_name(self.lines, o.first, o.line)
+                    .flatten()
+                    .is_some_and(|d| d == case)
+            {
+                return true;
+            }
+            if form_of(&o.test, o.text) != self.form || o.test.recv != self.test.recv {
+                return false;
+            }
+            let theirs = ancestors(self.lines, o.line);
+            // The cases of a `mod` with the name of the test look as its rows.
+            if self.form == Form::Fn
+                && let (Some(path), Some(chain), Some(target)) =
+                    (self.module_path(), &theirs, &self.target)
+            {
+                let mut other = target.module.clone();
+                other.extend(chain.iter().map(|t| t.text.clone()));
+                other.push(o.test.name.clone());
+                let other = other.join("::");
+                if case.starts_with(&format!("{path}::")) && case.starts_with(&other) {
+                    return other.len() > path.len();
+                }
+            }
+            if o.test.name != self.test.name {
+                return false;
+            }
+            let (Some(mine), Some(theirs)) = (mine, &theirs) else {
+                return true;
+            };
+            let titles = |c: &[Title]| c.iter().map(|t| t.text.clone()).collect::<Vec<_>>();
+            let (mine, theirs) = (titles(mine), titles(theirs));
+            // A newer Surefire writes the outer class for a nested one.
+            mine == theirs || (self.form == Form::Method && theirs.starts_with(&mine))
+        })
+    }
+}
+
+/// The form of the definitions that a row with a row tail or a project prefix
+/// reads.
+fn row_form(row: Row) -> Form {
+    match row {
+        Row::Nextest => Form::Fn,
+        Row::Go => Form::Func,
+        Row::Jvm | Row::Phpunit => Form::Method,
+        Row::PathTitles | Row::FileTitles | Row::JestDefaults => Form::Call,
+        Row::PytestXunit1 | Row::PytestXunit2 | Row::Lines | Row::Unlisted => Form::Def,
+    }
 }
 
 /// The index of the cases of the reports, for the bind of many tags. It holds,
-/// once for all tags, what a bind needs about a case: the cases by the keys of
-/// their names, and the test files that each `classname` names. The cost of a
-/// bind is then the cost of its test, and not the number of cases times the
-/// number of test files.
+/// once for all tags, the cases by the keys of their names, what the test files
+/// name, and each manifest that a bind read. The cost of a bind is then the cost
+/// of its test, and not the number of cases times the number of test files.
 pub struct Binder<'a> {
     cases: &'a [Case],
     /// A key of a name (`case_keys`), to the cases that have it.
-    by_key: HashMap<&'a str, Vec<usize>>,
-    /// A whole name, to the cases that have it.
-    by_name: HashMap<&'a str, Vec<usize>>,
-    /// The second segment of a name with `/`, to the cases that have it: the
-    /// method of a Go suite.
-    by_second: HashMap<&'a str, Vec<usize>>,
-    /// For each case, the way that it fits a test file.
-    kind: Vec<Kind>,
+    index: Index,
+    /// The cases with a head of more words than their keys hold.
+    wordy: Vec<u32>,
     /// The cases with a name that is too long to read (`is_long`).
-    long: Vec<usize>,
+    long: Vec<u32>,
+    names: Names<'a>,
+    /// A manifest path, to its text: each is read once.
+    manifests: RefCell<HashMap<String, Option<Rc<str>>>>,
+    /// The folder of a `Cargo.toml`, to its package: each is parsed once.
+    packages: RefCell<HashMap<String, Option<String>>>,
+    /// A `classname` of Go, to the number of folders that it names.
+    go_counts: RefCell<HashMap<(String, bool), usize>>,
 }
 
+/// Reads a file of the working tree, by its path from the root of the
+/// repository.
+type Read<'r> = &'r dyn Fn(&str) -> Option<String>;
+
 impl<'a> Binder<'a> {
-    pub fn new(cases: &'a [Case], test_files: &[String]) -> Binder<'a> {
-        let names = Names::new(test_files);
-        let mut by_key: HashMap<&str, Vec<usize>> = HashMap::new();
-        let mut by_name: HashMap<&str, Vec<usize>> = HashMap::new();
-        let mut by_second: HashMap<&str, Vec<usize>> = HashMap::new();
-        let mut kind = Vec::with_capacity(cases.len());
+    pub fn new(cases: &'a [Case], test_files: &'a [String]) -> Binder<'a> {
+        let mut index = Index::default();
+        let mut wordy = Vec::new();
         let mut long = Vec::new();
         for (i, c) in cases.iter().enumerate() {
+            let i = i as u32;
             let name = c.name.as_str();
             if is_long(name) {
                 long.push(i);
             }
-            for k in case_keys(name) {
-                by_key.entry(k).or_default().push(i);
+            let (keys, more) = case_keys(name);
+            if more {
+                wordy.push(i);
             }
-            by_name.entry(name).or_default().push(i);
-            if let Some(second) = name.split('/').nth(1) {
-                by_second.entry(second).or_default().push(i);
+            for k in keys {
+                index.add(k, i);
             }
-            kind.push(match (&c.file, &c.classname) {
-                (Some(f), _) => {
-                    let f = f.replace('\\', "/");
-                    Kind::File(f.trim_start_matches("./").to_string())
-                }
-                (None, Some(cn)) => {
-                    let (class, named) = names.class(cn);
-                    Kind::Class(class, named)
-                }
-                (None, None) => Kind::Name,
-            });
         }
         Binder {
             cases,
-            by_key,
-            by_name,
-            by_second,
-            kind,
+            index,
+            wordy,
             long,
+            names: Names::new(test_files),
+            manifests: RefCell::new(HashMap::new()),
+            packages: RefCell::new(HashMap::new()),
+            go_counts: RefCell::new(HashMap::new()),
         }
     }
 
-    /// How case `i` fits the test file `at`, or `None` when it does not fit
-    /// (design 0.8.1, D82 item 6). With `loose`, a case that has no `file` and
-    /// whose `classname` names another test file still fits by its name only:
-    /// the explicit name of `case:` (item 8).
-    fn fit(&self, i: usize, at: &Place, loose: bool) -> Option<Fit> {
-        match &self.kind[i] {
-            Kind::File(f) => same_file(f, at.path).then_some(Fit::File),
-            Kind::Name => Some(Fit::Name),
-            Kind::Class(class, named) => {
-                // The `classname` of a unit test of Rust is the crate. It fits a
-                // file of `src/` by the module path of the name, and no file of
-                // `tests/`: that file is another binary (`<crate>::<name>`).
-                if let Class::Dotted(..) = class {
-                    match &at.rust {
-                        RustFile::Src(module) => {
-                            let name = &self.cases[i].name;
-                            let segs: Vec<&str> = name.split("::").collect();
-                            let ok = segs.len() > module.len()
-                                && module.iter().zip(&segs).all(|(m, s)| m == s);
-                            return ok.then_some(Fit::Name);
-                        }
-                        RustFile::Test if *named => return None,
-                        _ => {}
-                    }
-                }
-                if !named {
-                    return Some(Fit::Name);
-                }
-                let fits = match class {
-                    Class::Binary(key) => at.keys.contains(&key.as_str()),
-                    Class::Path(p) => same_file(p, at.path),
-                    Class::Folder(f) => f.as_deref() == Some(at.folder),
-                    Class::Dotted(keys, one) => {
-                        keys.iter().any(|k| ends_in_segments(&at.dotted, k))
-                            || one.as_deref().is_some_and(|c| {
-                                path_ends(at.folder).any(|e| e == c) && !at.folder.is_empty()
-                            })
-                    }
-                };
-                if fits {
-                    Some(Fit::Classname)
+    fn lookup(&self, key: &str) -> &[u32] {
+        self.index.get(key)
+    }
+
+    /// The nearest file of the name `file` at or above the folder of `path`: its
+    /// folder and its text.
+    fn nearest(&self, path: &str, file: &str, read: Read) -> Option<(String, Rc<str>)> {
+        let mut dir = folder_of(path);
+        loop {
+            let at = if dir.is_empty() {
+                file.to_string()
+            } else {
+                format!("{dir}/{file}")
+            };
+            let text = self
+                .manifests
+                .borrow_mut()
+                .entry(at.clone())
+                .or_insert_with(|| read(&at).map(Rc::from))
+                .clone();
+            if let Some(text) = text {
+                return Some((dir.to_string(), text));
+            }
+            if dir.is_empty() {
+                return None;
+            }
+            dir = folder_of(dir);
+        }
+    }
+
+    /// `[package] name` of the nearest `Cargo.toml`.
+    fn cargo_package(&self, path: &str, read: Read) -> Option<String> {
+        let (dir, text) = self.nearest(path, "Cargo.toml", read)?;
+        self.packages
+            .borrow_mut()
+            .entry(dir)
+            .or_insert_with(|| {
+                let table: toml::Table = text.parse().ok()?;
+                let name = table.get("package")?.get("name")?.as_str()?;
+                Some(name.to_string())
+            })
+            .clone()
+    }
+
+    /// The `module` line of the nearest `go.mod`.
+    fn go_module(&self, path: &str, read: Read) -> Option<GoModule> {
+        let (dir, text) = self.nearest(path, "go.mod", read)?;
+        let module = text.lines().find_map(|l| {
+            let rest = l.trim().strip_prefix("module ")?;
+            let rest = rest.split("//").next().unwrap_or("").trim();
+            Some(rest.trim_matches('"').to_string())
+        })?;
+        (!module.is_empty()).then_some(GoModule { dir, path: module })
+    }
+
+    /// The number of folders of Go test files that a `classname` can name.
+    fn go_folders_named(&self, classname: &str, with_module: bool, read: Read) -> usize {
+        let key = (classname.to_string(), with_module);
+        if let Some(n) = self.go_counts.borrow().get(&key) {
+            return *n;
+        }
+        let n = self
+            .names
+            .go_folders
+            .iter()
+            .filter(|folder| {
+                let module = if with_module {
+                    let path = if folder.is_empty() {
+                        "x.go".to_string()
+                    } else {
+                        format!("{folder}/x.go")
+                    };
+                    self.go_module(&path, read)
                 } else {
-                    loose.then_some(Fit::Name)
+                    None
+                };
+                match &module {
+                    // An import path names one folder. A shorter `classname`
+                    // can also be the short form of another folder.
+                    Some(m) if classname == m.import(folder) => true,
+                    Some(m) => {
+                        let rel = m.relative(folder);
+                        !classname.starts_with(&m.path)
+                            && (rel == classname || rel.rsplit('/').next() == Some(classname))
+                    }
+                    None => go_field(classname, folder, None) != Field::Differs,
+                }
+            })
+            .count();
+        self.go_counts.borrow_mut().insert(key, n);
+        n
+    }
+
+    /// The number of crates whose Rust target can write the binary id of the
+    /// tag.
+    fn crates_named(&self, target: &Target, package: Option<&str>, read: Read) -> usize {
+        let Some(roots) = self.names.rust.get(&target.key()) else {
+            return 0;
+        };
+        let Some(package) = package else {
+            return roots.len();
+        };
+        roots
+            .iter()
+            .filter(|root| {
+                let path = if root.is_empty() {
+                    "x.rs".to_string()
+                } else {
+                    format!("{root}/x.rs")
+                };
+                self.cargo_package(&path, read).as_deref() == Some(package)
+            })
+            .count()
+    }
+
+    /// True if the field that names the test file names more than one file of
+    /// the path list.
+    fn ambiguous(&self, id: &Identity, row: Row, case: &Case, read: Read) -> bool {
+        let file = case.file.as_deref().map(report_path);
+        let cn = case.classname.as_deref().unwrap_or("");
+        let n = match row {
+            Row::PytestXunit1 | Row::Phpunit | Row::FileTitles => {
+                file.map_or(0, |f| self.names.files_named(&f))
+            }
+            Row::PathTitles => self.names.files_named(&report_path(cn)),
+            Row::PytestXunit2 => {
+                // The part of the `classname` that names the module.
+                let classes = id.classes().unwrap_or_default();
+                let stem = if classes.is_empty() {
+                    cn
+                } else {
+                    cn.strip_suffix(&classes)
+                        .map_or("", |s| s.trim_end_matches('.'))
+                };
+                self.names.dotted_named(id.path, stem)
+            }
+            Row::Nextest => id
+                .target
+                .as_ref()
+                .map_or(0, |t| self.crates_named(t, id.cargo.as_deref(), read)),
+            Row::Go => self.go_folders_named(cn, id.go.is_some(), read),
+            Row::Jvm => {
+                let classes = id.classes().unwrap_or_default();
+                let top = classes.split('.').next().unwrap_or("");
+                match &id.package {
+                    _ if family(id.path) == "cs" => self.names.stems.get(top).copied().unwrap_or(0),
+                    Package::Line(p) => self.names.dotted_named(id.path, &format!("{p}.{top}")),
+                    _ => self
+                        .names
+                        .dotted_named(id.path, &cn.replace(['$', '+'], ".")),
                 }
             }
+            Row::Lines | Row::Unlisted | Row::JestDefaults => 0,
+        };
+        n > 1
+    }
+
+    /// What case `i` is for the identity of the tag: `None` for another test.
+    fn judge(&self, i: usize, id: &Identity, read: Read) -> Option<Judged<'a>> {
+        let case: &'a Case = &self.cases[i];
+        let row = row_of(id.form, case);
+        // The file field comes first: it is cheap, and it leaves out most cases
+        // of a name that many files have.
+        let file = id.file_field(row, case);
+        if file == Field::Differs || !id.names(&case.name) {
+            return None;
+        }
+        let heads = id.heads(row);
+        let hit = id.hit(row, &case.name);
+        let full_name = !heads.is_empty();
+        if full_name && hit.is_none() && !matches!(row, Row::Lines | Row::Unlisted) {
+            return None;
+        }
+        let name = hit.unwrap_or_else(|| {
+            let short = without_project(&case.name);
+            if id.form == Form::Call && id.lookups().iter().any(|l| l == short) {
+                short
+            } else {
+                &case.name
+            }
+        });
+        let result = if matches!(row, Row::Lines | Row::Unlisted) {
+            let built = id.groups().is_some() && id.plain && id.display.is_none();
+            Err(if built { Why::ByName } else { Why::NoIdentity })
+        } else if !id.built(row) {
+            Err(Why::NoIdentity)
+        } else if file == Field::Unread || !full_name || row == Row::JestDefaults {
+            Err(Why::ByName)
+        } else if id.groups().is_some_and(|c| c.iter().any(|t| t.partial))
+            || id.twin(&case.name, name)
+            || self.ambiguous(id, row, case, read)
+        {
+            Err(Why::NotUnique)
+        } else {
+            Ok(match row {
+                Row::PytestXunit1 | Row::Phpunit | Row::FileTitles => Fit::File,
+                _ => Fit::Classname,
+            })
+        };
+        let mut judged = Judged::new(case, name, result);
+        // Playwright runs one test once for each of its projects. With no
+        // group, only the name of the test shows in its title, as in each other
+        // runner, so a template of the file can be the second case.
+        judged.repeats = matches!(row, Row::PathTitles | Row::FileTitles)
+            && (name.contains(" \u{203a} ")
+                || (!id.templates && id.groups().is_some_and(<[_]>::is_empty)));
+        Some(judged)
+    }
+
+    /// The tie of a case that `case:` names to the tag file: the field that
+    /// ties it, or why it is weak.
+    fn tie(&self, file: &TagFile, case: &Case, read: Read) -> Result<Fit, Why> {
+        let path = file.path;
+        let unique = |n: usize, fit: Fit| {
+            if n > 1 { Err(Why::NotUnique) } else { Ok(fit) }
+        };
+        if let Some(of_case) = &case.file {
+            return unique(self.names.files_named(&report_path(of_case)), Fit::File);
+        }
+        let Some(cn) = case.classname.as_deref().filter(|cn| *cn != case.name) else {
+            return Err(Why::ByName);
+        };
+        if path.ends_with(".rs") {
+            let target = rust_target(path, &self.names.whole).ok_or(Why::ByName)?;
+            let cargo = self.cargo_package(path, read);
+            let (package, part) = binary_id(cn);
+            let named = match &cargo {
+                Some(name) => name == package,
+                None => matches!(target.part, Part::Test(_)),
+            };
+            if !named || part_field(&target, part.as_ref(), cargo.as_deref()) != Field::Same {
+                return Err(Why::ByName);
+            }
+            return unique(
+                self.crates_named(&target, cargo.as_deref(), read),
+                Fit::Classname,
+            );
+        }
+        if path.ends_with(".go") {
+            let module = self.go_module(path, read);
+            if go_field(cn, folder_of(path), module.as_ref()) != Field::Same {
+                return Err(Why::ByName);
+            }
+            return unique(
+                self.go_folders_named(cn, module.is_some(), read),
+                Fit::Classname,
+            );
+        }
+        if cn.contains("::") {
+            return Err(Why::ByName);
+        }
+        if cn.contains('/') {
+            let cn = report_path(cn);
+            return if same_file(&cn, path) {
+                unique(self.names.files_named(&cn), Fit::Classname)
+            } else {
+                Err(Why::ByName)
+            };
+        }
+        let cn = cn.replace(['$', '+', '\\'], ".");
+        let own = dotted(path);
+        if ends_in_segments(&own, &cn) {
+            return unique(self.names.dotted_named(path, &cn), Fit::Classname);
+        }
+        // The classes after the module or the package must be classes of the
+        // tag file.
+        let mut stem = cn.as_str();
+        let mut top = None;
+        while let Some((head, last)) = stem.rsplit_once('.') {
+            if !file.classes.contains(last) {
+                break;
+            }
+            (stem, top) = (head, Some(last));
+        }
+        let Some(top) = top else {
+            return Err(Why::ByName);
+        };
+        if ends_in_segments(&own, stem) {
+            unique(self.names.dotted_named(path, stem), Fit::Classname)
+        } else if file.package.as_deref() == Some(stem) {
+            unique(
+                self.names.dotted_named(path, &format!("{stem}.{top}")),
+                Fit::Classname,
+            )
+        } else {
+            Err(Why::ByName)
         }
     }
 
-    /// The cases that can name the test: the cases with its name as a key. The
-    /// index is wide, and `name_match` decides.
-    fn named_by(&self, test: &TestName) -> Vec<usize> {
-        let index = if test.recv.is_some() {
-            &self.by_second
-        } else {
-            &self.by_key
+    /// The cases that `case:` names: the cases with this whole name. A case
+    /// with the `file` of another file is another test. Each other case is in
+    /// the set, and it is own only when a full field ties it to the tag file.
+    fn named(&self, path: &str, lines: &[&str], value: &str, read: Read) -> Vec<Judged<'a>> {
+        let file = TagFile {
+            path,
+            classes: lines
+                .iter()
+                .filter_map(|l| group_title(l.trim()).flatten())
+                .filter(|t| t.kind == GroupKind::Class)
+                .map(|t| t.text)
+                .collect(),
+            package: package_line(lines),
         };
-        index.get(test.name.as_str()).cloned().unwrap_or_default()
+        let mut out: Vec<Judged> = self
+            .lookup(value)
+            .iter()
+            .map(|i| &self.cases[*i as usize])
+            .filter(|c| c.name == value)
+            .filter(|c| {
+                c.file
+                    .as_deref()
+                    .is_none_or(|f| same_file(&report_path(f), path))
+            })
+            .map(|c| {
+                let mut judged = Judged::new(c, &c.name, self.tie(&file, c, read));
+                // The projects of Playwright run one test more than once.
+                judged.repeats = judged.own.is_some() && c.name.contains(" \u{203a} ");
+                judged
+            })
+            .collect();
+        // The name does not tell 2 own cases of 2 identities apart.
+        let own: HashSet<_> = out
+            .iter()
+            .filter(|j| j.own.is_some())
+            .map(Judged::key)
+            .collect();
+        if own.len() > 1 {
+            for j in out.iter_mut().filter(|j| j.own.is_some()) {
+                j.own = None;
+                j.why = Some(Why::NotUnique);
+            }
+        }
+        out
+    }
+
+    /// The cases that can name the test: the cases with its name, or with the
+    /// last segment of its name, as a key. The index is wide, and
+    /// `Identity::names` decides.
+    fn named_by(&self, test: &TestName) -> Vec<usize> {
+        let name = test.name.as_str();
+        let last = SEPS
+            .iter()
+            .filter_map(|s| name.rfind(s).map(|i| i + s.len()))
+            .max()
+            .map_or(name, |i| &name[i..]);
+        let mut out: Vec<usize> = self
+            .lookup(name)
+            .iter()
+            .chain(self.lookup(last))
+            .map(|i| *i as usize)
+            .collect();
+        if name.matches(' ').count() >= LONG_SEPS {
+            out.extend(self.wordy.iter().map(|i| *i as usize));
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    /// The identity of the test that `scan` found under a tag.
+    fn identity<'p>(
+        &self,
+        path: &'p str,
+        lines: &'p [&'p str],
+        scan: &Scan<'p>,
+        test: TestName,
+        suites: &dyn Fn(&str, &str) -> Vec<String>,
+        read: Read,
+    ) -> Identity<'p> {
+        let form = form_of(&test, scan.text);
+        let chain = ancestors(lines, scan.line);
+        let method = form == Form::Method;
+        let package = if method {
+            package_of(lines, chain.as_deref())
+        } else {
+            Package::Absent
+        };
+        let display = if method {
+            display_name(lines, scan.first, scan.line)
+        } else {
+            None
+        };
+        let funcs = test
+            .recv
+            .as_ref()
+            .map(|ty| suites(ty, &test.name))
+            .unwrap_or_default();
+        let rust = form == Form::Fn && path.ends_with(".rs");
+        let target = rust.then(|| rust_target(path, &self.names.whole)).flatten();
+        let cargo = rust.then(|| self.cargo_package(path, read)).flatten();
+        let go = (form == Form::Func && path.ends_with(".go"))
+            .then(|| self.go_module(path, read))
+            .flatten();
+        let templates = form == Form::Call
+            && lines.iter().any(|l| {
+                let t = l.trim();
+                !is_comment(t)
+                    && matches!(
+                        classify(strip_modifiers(t), false),
+                        Some(Under::Template(_))
+                    )
+            });
+        let mut identity = Identity {
+            path,
+            templates,
+            pytest: None,
+            plain: !test.call || test.bt || plain_call(scan.text, &test.name),
+            form,
+            chain,
+            funcs,
+            package,
+            display,
+            target,
+            cargo,
+            go,
+            others: tests_of(lines)
+                .into_iter()
+                .filter(|f| f.line != scan.line)
+                .collect(),
+            lines,
+            test,
+        };
+        identity.pytest = identity.classes().map(|classes| {
+            let module = dotted(path);
+            if classes.is_empty() {
+                module
+            } else {
+                format!("{module}.{classes}")
+            }
+        });
+        identity
     }
 
     /// Binds one tag to the cases of the reports. `lines` are the lines of the
     /// test file, and `tag` is the index of the line of the tag. With `case`,
     /// the tag binds to the cases that have this name. Else it binds to the test
-    /// under it (design 0.8.1, D82): the cases that name that test, and no case
-    /// that belongs to another test of the file. It also gives the bind: the
-    /// test, the fit, the strength and the reason for no case. The suite
-    /// functions of Go are those of the file of the tag.
+    /// under it (design 0.8.1, D82). It also gives the bind: the test, the fit,
+    /// the strength and the reason for no case. The suite functions of Go are
+    /// those of the file of the tag, and no manifest is read.
     #[cfg(test)]
     pub fn bind(
         &self,
@@ -1652,11 +3049,18 @@ impl<'a> Binder<'a> {
     ) -> (Proof, Bind) {
         // The suite function is in the file of the tag only.
         let suites = |ty: &str, method: &str| suite_funcs([lines.join("\n").as_str()], ty, method);
-        self.bind_with(path, lines, tag, case, &suites)
+        self.bind_with(path, lines, tag, case, &suites, &|_| None)
     }
 
     /// Like `bind`. `suites` gives the functions that run the Go suite of a type
-    /// for a method (`suite_funcs` over the test files of the package).
+    /// for a method (`suite_funcs` over the test files of the package), and
+    /// `read` gives the text of a manifest.
+    ///
+    /// The rule: a case that names the test is another test only when a field
+    /// that the report and the built identity both hold in full differs. It is
+    /// an own case when each field is equal and the identity is unique. Each
+    /// other case stays in the set as a weak link. No case leaves the set
+    /// because another case fits better.
     pub fn bind_with(
         &self,
         path: &str,
@@ -1664,14 +3068,11 @@ impl<'a> Binder<'a> {
         tag: usize,
         case: Option<&str>,
         suites: &dyn Fn(&str, &str) -> Vec<String>,
+        read: &dyn Fn(&str) -> Option<String>,
     ) -> (Proof, Bind) {
-        let at = Place::new(path);
         let mut bind = Bind::default();
-        let mut cand: Vec<usize>;
-        let mut tests: Vec<TestName> = Vec::new();
-        let mut ours: Option<TestName> = None;
-        let mut def_line = tag;
-        match case {
+        let mut ident: Option<Identity> = None;
+        let set: Vec<Judged> = match case {
             Some("") => {
                 // A broken `case:` binds no case, and not the test under the tag.
                 bind.by = By::Case;
@@ -1680,19 +3081,19 @@ impl<'a> Binder<'a> {
             Some(name) => {
                 bind.by = By::Case;
                 bind.test = Some(name.to_string());
-                cand = self.by_name.get(name).cloned().unwrap_or_default();
-                if cand.is_empty() {
+                let set = self.named(path, lines, name, read);
+                if set.is_empty() {
                     bind.near = self.near(name);
                 }
+                set
             }
             None => {
-                let (under, line) = if tag < lines.len() {
+                let scan = if tag < lines.len() {
                     under_tag_line(lines, tag)
                 } else {
-                    (Under::NoTest(None), tag)
+                    Scan::none(tag)
                 };
-                def_line = line;
-                match under {
+                match scan.under.clone() {
                     Under::NoTest(line) => {
                         bind.line = line;
                         return (Proof::Unbound, bind.unbound(Reason::NoTest));
@@ -1702,71 +3103,32 @@ impl<'a> Binder<'a> {
                         bind.test = (!name.is_empty()).then_some(name);
                         return (Proof::Unbound, bind.unbound(Reason::Template));
                     }
-                    Under::Test(t) => {
-                        bind.test = Some(t.name.clone());
-                        cand = self.named_by(&t);
-                        ours = Some(t);
+                    Under::Test(test) => {
+                        bind.test = Some(test.name.clone());
+                        let id = self.identity(path, lines, &scan, test, suites, read);
+                        let mut cand = self.named_by(&id.test);
+                        for key in id.lookups() {
+                            cand.extend(self.lookup(&key).iter().map(|i| *i as usize));
+                        }
+                        cand.sort_unstable();
+                        cand.dedup();
+                        let set = cand
+                            .into_iter()
+                            .filter_map(|i| self.judge(i, &id, read))
+                            .collect();
+                        ident = Some(id);
+                        set
                     }
                 }
             }
-        }
-        if let Some(t) = &ours {
-            // The index is wide. The name of the test decides.
-            cand.retain(|&i| name_match(&self.cases[i].name, t).is_some());
-            if let Some(ty) = &t.recv {
-                // Only a case of the function that runs the suite binds. With no
-                // such function, or when another suite of it has a method of the
-                // same name, the tag binds no case.
-                let funcs = suites(ty, &t.name);
-                cand.retain(|&i| {
-                    let first = self.cases[i].name.split('/').next().unwrap_or("");
-                    funcs.iter().any(|f| f == first)
-                });
-            }
-        }
-        // The titles of the groups of the test: with them, a name that a runner
-        // joins with a space is the expected name.
-        let titles = ours
-            .as_ref()
-            .filter(|t| t.call && t.recv.is_none())
-            .and_then(|_| ancestors(lines, def_line));
-        if ours.is_some() {
-            tests = tests_of(lines);
-        }
-        let loose = ours.is_none();
-        let mut fits: Vec<(usize, Fit, bool)> = cand
-            .iter()
-            .filter_map(|&i| {
-                let fit = self.fit(i, &at, loose)?;
-                let name = &self.cases[i].name;
-                // A name that is a whole segment, or the expected full name.
-                let strong = match &ours {
-                    None => true,
-                    Some(t) => match name_match(name, t) {
-                        Some((_, NameFit::Strong)) => true,
-                        Some((_, NameFit::Weak)) => titles
-                            .as_deref()
-                            .is_some_and(|ts| expected_name(name, t, ts)),
-                        None => false,
-                    },
-                };
-                Some((i, fit, strong))
-            })
-            .collect();
-        // A case that fits the test file by its `file` or its `classname` hides
-        // the cases that fit by their name only (item 6). That is the only fit
-        // rule that leaves a case out: no case of the name hides another case
-        // of the name (the worst case decides).
-        if fits.iter().any(|f| f.1 != Fit::Name) {
-            fits.retain(|f| f.1 != Fit::Name);
-        }
-        let bound: Vec<&Case> = fits.iter().map(|(i, ..)| &self.cases[*i]).collect();
-        if bound.is_empty() {
-            // A case with a long name has no key but its whole name.
-            let long = ours.as_ref().is_some_and(|t| {
+        };
+        if set.is_empty() {
+            // A case with a long name has not each key of its name.
+            let long = ident.as_ref().is_some_and(|id| {
                 self.long.iter().any(|&i| {
-                    self.cases[i].name.contains(t.name.as_str())
-                        && self.fit(i, &at, false).is_some()
+                    let c = &self.cases[i as usize];
+                    c.name.contains(id.test.name.as_str())
+                        && id.file_field(row_of(id.form, c), c) != Field::Differs
                 })
             });
             let reason = if long {
@@ -1776,52 +3138,22 @@ impl<'a> Binder<'a> {
             };
             return (Proof::Unbound, bind.unbound(reason));
         }
-        bind.cases = bound.len();
-        let by_name = fits.iter().all(|(_, f, _)| *f == Fit::Name);
-        bind.fit = Some(if by_name {
-            Fit::Name
-        } else if fits.iter().any(|(_, f, _)| *f == Fit::File) {
+        bind.cases = set.len();
+        let owned = |fit: Fit| set.iter().any(|j| j.own == Some(fit));
+        bind.fit = Some(if owned(Fit::File) {
             Fit::File
-        } else {
+        } else if owned(Fit::Classname) {
             Fit::Classname
-        });
-        // A bind is weak when a case of it fits by its name only, or its name is
-        // no whole segment, or more than one case fits. SD621 reports it, unless
-        // `case:` names the one case of that name in the reports (item 9).
-        // A file with 2 tests of one name has the cases of both: that is no bind
-        // by name only.
-        let twins = ours
-            .as_ref()
-            .is_some_and(|t| tests.iter().filter(|x| *x == t).count() > 1);
-        let own = ours
-            .as_ref()
-            .is_none_or(|t| bound.iter().any(|c| is_own(&c.name, t, titles.as_deref())));
-        bind.why = if !twins && self.many(&bound, &ours) {
-            Some(Why::Many)
-        } else if fits.iter().any(|f| f.1 == Fit::Name) {
-            Some(Why::ByName)
-        } else if !own || fits.iter().any(|f| !f.2) {
-            Some(Why::NotWhole)
         } else {
-            None
-        };
-        let weak = bind.why.is_some();
-        bind.by_name = weak
-            && match case {
-                Some(name) => !one_case(
-                    &self
-                        .by_name
-                        .get(name)
-                        .map(|v| v.iter().map(|i| &self.cases[*i]).collect::<Vec<_>>())
-                        .unwrap_or_default(),
-                ),
-                None => true,
-            };
-        // A set that is not one case proves the requirement only when each case
-        // passed: the worst case decides, so a skipped or failed case never
-        // hides behind a passed one.
-        bind.shared = twins || !one_case(&bound);
-        let proof = decide(&bound, bind.shared);
+            Fit::Name
+        });
+        // The worst cause of the weak links: SD621 names it.
+        bind.why = [Why::NoIdentity, Why::NotUnique, Why::ByName]
+            .into_iter()
+            .find(|why| set.iter().any(|j| j.why == Some(*why)));
+        bind.by_name = bind.why.is_some();
+        let (proof, shared) = decide(&set);
+        bind.shared = shared;
         bind.case = match &proof {
             Proof::Passed(n, _) | Proof::Skipped(n) | Proof::Failed(n) => Some(n.clone()),
             Proof::Unbound => None,
@@ -1829,42 +3161,15 @@ impl<'a> Binder<'a> {
         (proof, bind)
     }
 
-    /// True when the cases are more than one test of the reports: they do not
-    /// share the name up to the end of the name of the test, the `classname` and
-    /// the file, or one name is in one report more than once. The subtests of a
-    /// test and the rows of a table (`TestA` and `TestA/row`, `test_a[1]` and
-    /// `test_a[2]`) are one test.
-    fn many(&self, bound: &[&Case], ours: &Option<TestName>) -> bool {
-        let family = |c: &Case| {
-            let end = ours
-                .as_ref()
-                .and_then(|t| name_match(&c.name, t))
-                .map_or(c.name.len(), |(e, _)| e);
-            (
-                c.name[..end].to_string(),
-                c.classname.clone(),
-                c.file.clone(),
-            )
-        };
-        let Some(first) = bound.first() else {
-            return false;
-        };
-        let one = family(first);
-        if bound.iter().any(|c| family(c) != one) {
-            return true;
-        }
-        bound.iter().all(|c| c.name == first.name) && !one_case(bound)
-    }
-
     /// The names of the cases that have `value` as a key: the cases that a
     /// `case:` with a part of a name meant. At most 3.
     fn near(&self, value: &str) -> Vec<String> {
         let mut names: Vec<String> = self
-            .by_key
-            .get(value)
-            .into_iter()
-            .flatten()
-            .map(|i| self.cases[*i].name.clone())
+            .lookup(value)
+            .iter()
+            .map(|i| &self.cases[*i as usize].name)
+            .filter(|name| case_keys(name).0.contains(&value))
+            .cloned()
             .collect();
         names.sort();
         names.dedup();
@@ -1873,149 +3178,71 @@ impl<'a> Binder<'a> {
     }
 }
 
-/// What the test files name (design 0.8.1, D82 item 6): the ends of their
-/// dotted paths, the ends of their paths, their paths, their folders, the ends
-/// of their folders and the keys of their binary ids.
-struct Names<'t> {
-    ends: HashSet<String>,
-    paths: HashSet<&'t str>,
-    whole: HashSet<&'t str>,
-    folders: HashSet<&'t str>,
-    folder_ends: HashSet<&'t str>,
-    keys: HashSet<&'t str>,
-}
-
-impl<'t> Names<'t> {
-    fn new(test_files: &'t [String]) -> Names<'t> {
-        let mut n = Names {
-            ends: HashSet::new(),
-            paths: HashSet::new(),
-            whole: HashSet::new(),
-            folders: HashSet::new(),
-            folder_ends: HashSet::new(),
-            keys: HashSet::new(),
-        };
-        for f in test_files {
-            let mut rest = dotted(f);
-            loop {
-                n.ends.insert(rest.clone());
-                match rest.split_once('.') {
-                    Some((_, tail)) => rest = tail.to_string(),
-                    None => break,
-                }
-            }
-            n.paths.extend(path_ends(f));
-            n.whole.insert(f.as_str());
-            let folder = folder_of(f);
-            if !folder.is_empty() {
-                n.folders.insert(folder);
-                n.folder_ends.extend(path_ends(folder));
-            }
-            n.keys.extend(binary_keys(f));
-        }
-        n
+/// The proof of the set, and true when the worst of more than one identity
+/// decided. A case that is own and comes more than once, once in each report or
+/// once for each project of Playwright, is one test that ran again: it passed
+/// when a run passed and none failed. Each other repeat is a case of its own.
+/// The worst case then decides: a failed case, a skipped case, a passed case.
+fn decide(set: &[Judged]) -> (Proof, bool) {
+    let mut order: Vec<Vec<&Judged>> = Vec::new();
+    let mut at = HashMap::new();
+    for j in set {
+        let k = *at.entry(j.key()).or_insert_with(|| {
+            order.push(Vec::new());
+            order.len() - 1
+        });
+        order[k].push(j);
     }
-
-    /// The class of a `classname`, and true if it names a test file.
-    fn class(&self, cn: &str) -> (Class, bool) {
-        if let Some((_, tail)) = cn.rsplit_once("::") {
-            let key = tail.rsplit('/').next().unwrap_or(tail);
-            return (Class::Binary(key.to_string()), self.keys.contains(key));
+    // One result for each identity, or for each of its repeats.
+    let mut results: Vec<(Outcome, &str)> = Vec::new();
+    for runs in &order {
+        let reports: HashSet<&str> = runs.iter().map(|j| j.case.report.as_str()).collect();
+        let one = runs.iter().all(|j| j.own.is_some())
+            && (reports.len() == runs.len() || runs.iter().all(|j| j.repeats));
+        if one {
+            let run = [Outcome::Fail, Outcome::Pass, Outcome::Skip]
+                .into_iter()
+                .find_map(|o| runs.iter().find(|j| j.case.outcome == o));
+            results.extend(run.map(|j| (j.case.outcome, j.case.name.as_str())));
+        } else {
+            results.extend(runs.iter().map(|j| (j.case.outcome, j.case.name.as_str())));
         }
-        if cn.contains('/') {
-            let norm = cn.replace('\\', "/");
-            let norm = norm.trim_start_matches("./");
-            let last = norm.rsplit('/').next().unwrap_or(norm);
-            if last.contains('.') {
-                // The rule of `file`: one path ends the other, or they are equal.
-                let named =
-                    self.paths.contains(norm) || path_ends(norm).any(|e| self.whole.contains(e));
-                return (Class::Path(norm.to_string()), named);
-            }
-            let longest = path_ends(norm).find(|e| self.folders.contains(e));
-            return (
-                Class::Folder(longest.map(str::to_string)),
-                longest.is_some(),
-            );
-        }
-        // The whole `classname` is a key. A class after the module (pytest) or
-        // an inner class (Java) is a trailing segment that starts with an upper
-        // case letter: it can go. The part before the last dot of another name
-        // is no key (`tests.test_close` names no file `tests.py`).
-        let cn = cn.replace('$', ".");
-        let mut keys: Vec<String> = vec![cn.clone()];
-        let mut whole = cn.as_str();
-        while let Some((head, last)) = whole.rsplit_once('.') {
-            if !head.is_empty() && last.starts_with(char::is_uppercase) {
-                keys.push(head.to_string());
-                whole = head;
-            } else {
-                break;
-            }
-        }
-        let one = (!cn.contains('.')).then(|| cn.clone());
-        let named = keys.iter().any(|k| self.ends.contains(k))
-            || one.as_deref().is_some_and(|c| self.folder_ends.contains(c));
-        (Class::Dotted(keys, one), named)
     }
-}
-
-/// True if the cases are one case: one name, one `classname` and one file, and
-/// at most once in each report (design 0.8.1, D82 item 7).
-fn one_case(cases: &[&Case]) -> bool {
-    let Some(first) = cases.first() else {
-        return true;
-    };
-    let same = cases
-        .iter()
-        .all(|c| c.name == first.name && c.classname == first.classname && c.file == first.file);
-    let reports: HashSet<&str> = cases.iter().map(|c| c.report.as_str()).collect();
-    same && reports.len() == cases.len()
-}
-
-/// The proof of the bound cases. A requirement passed when a bound case passed
-/// and no bound case failed. A shared set needs a pass of each case: a skipped
-/// case is no pass, so a skipped twin never hides behind a passed twin.
-fn decide(bound: &[&Case], shared: bool) -> Proof {
-    let named = |o: Outcome| {
-        bound
+    // 2 reports can each hold the case once: that is one case, also when it is
+    // weak.
+    let alone = order.len() == 1
+        && order[0]
             .iter()
-            .find(|c| c.outcome == o)
-            .map(|c| c.name.clone())
-    };
-    if let Some(n) = named(Outcome::Fail) {
+            .map(|j| j.case.report.as_str())
+            .collect::<HashSet<_>>()
+            .len()
+            == order[0].len();
+    let shared = results.len() > 1 && !alone;
+    let first = |o: Outcome| results.iter().find(|r| r.0 == o).map(|r| r.1.to_string());
+    let proof = if let Some(n) = first(Outcome::Fail) {
         Proof::Failed(n)
-    } else if shared && let Some(n) = named(Outcome::Skip) {
+    } else if let Some(n) = first(Outcome::Skip) {
         Proof::Skipped(n)
-    } else if let Some(n) = named(Outcome::Pass) {
-        let (name, runs) = least_passes(bound).unwrap_or((n, 0));
+    } else if let Some(n) = first(Outcome::Pass) {
+        let (name, runs) = least_passes(set).unwrap_or((n, 0));
         Proof::Passed(name, runs)
-    } else if let Some(n) = named(Outcome::Skip) {
-        Proof::Skipped(n)
     } else {
         Proof::Unbound
-    }
+    };
+    (proof, shared)
 }
 
-/// The bound case that passed least, with its passes. A case is a name with its
-/// `classname` and its file. Its passes are the reports in which it passed
-/// (D2). A case that never passed does not count: a skipped case of one report
-/// is not a fail. `None` when no case passed.
-fn least_passes(bound: &[&Case]) -> Option<(String, usize)> {
-    let mut passes: HashMap<String, (&str, HashSet<&str>)> = HashMap::new();
-    for c in bound.iter().filter(|c| c.outcome == Outcome::Pass) {
-        // The `\0` cannot be in a name, so 2 cases never share a key.
-        let key = format!(
-            "{}\0{}\0{}",
-            c.name,
-            c.classname.as_deref().unwrap_or(""),
-            c.file.as_deref().unwrap_or("")
-        );
+/// The identity of the set that passed least, with its passes: the reports in
+/// which it passed (D2). An identity that never passed does not count. `None`
+/// when no case passed.
+fn least_passes(set: &[Judged]) -> Option<(String, usize)> {
+    let mut passes: HashMap<_, (&str, HashSet<&str>)> = HashMap::new();
+    for j in set.iter().filter(|j| j.case.outcome == Outcome::Pass) {
         passes
-            .entry(key)
-            .or_insert_with(|| (c.name.as_str(), HashSet::new()))
+            .entry(j.key())
+            .or_insert_with(|| (j.case.name.as_str(), HashSet::new()))
             .1
-            .insert(c.report.as_str());
+            .insert(j.case.report.as_str());
     }
     // The least count first, and the name decides a tie, so the result does
     // not depend on the order of a hash map.
@@ -2087,12 +3314,14 @@ pub fn bind_covers(root: &std::path::Path, covers: &mut [Cover], reads: &Reads) 
                 .collect();
             suite_funcs(texts.iter().map(String::as_str), ty, method)
         };
+        let read = |p: &str| std::fs::read_to_string(root.join(p)).ok();
         let (proof, bind) = binder.bind_with(
             &cv.path,
             &lines,
             (cv.line as usize).saturating_sub(1),
             cv.case.as_deref(),
             &suites,
+            &read,
         );
         cv.proof = Some(proof);
         cv.bind = Some(bind);
@@ -2739,8 +3968,8 @@ mod tests {
 
     #[test]
     fn a_rust_attribute_line_is_code_and_a_nextest_case_binds() {
-        let text =
-            "// covers: requirements/valves#close\n#[test]\nfn closes() {\n    assert!(true);\n}\n";
+        // The `mod tests` is in the fixture now: the module path is a full field.
+        let text = "mod tests {\n    // covers: requirements/valves#close\n    #[test]\n    fn closes() {\n        assert!(true);\n    }\n}\n";
         // The shape of a unit test of a library (E6): the `classname` is the
         // crate, and the name has the module path.
         let cases = [case(
@@ -2768,7 +3997,9 @@ mod tests {
 
     #[test]
     fn a_jest_string_literal_binds() {
-        let text = "// covers: requirements/valves#close\nit('closes on timeout', () => {\n  expect(1).toBe(1);\n});\n";
+        // The `describe` is in the fixture now: the name of jest-junit is a full
+        // field, the titles and the title.
+        let text = "describe('Valves', () => {\n  // covers: requirements/valves#close\n  it('closes on timeout', () => {\n    expect(1).toBe(1);\n  });\n});\n";
         let cases = [case(
             "Valves closes on timeout",
             Some("Valves closes on timeout"),
@@ -2960,8 +4191,10 @@ mod tests {
         Binder::new(cases, &files).bind(path, &lines, tag, case_name)
     }
 
+    // The fit by name only went: the `classname` of pytest is a full field, so a
+    // case with another one is another test.
     #[test]
-    fn a_classname_that_names_no_test_file_binds_by_its_name_only() {
+    fn a_classname_that_names_another_module_is_another_test() {
         let text = "# covers: requirements/valves#close\ndef test_init():\n    pass\n";
         let cases = [case(
             "test_init",
@@ -2970,9 +4203,8 @@ mod tests {
             Outcome::Pass,
         )];
         let (proof, bind) = bind_of("tests/test_a.py", text, None, &cases, &["tests/test_a.py"]);
-        assert_eq!(proof, Proof::Passed("test_init".into(), 1));
-        assert_eq!(bind.fit, Some(Fit::Name));
-        assert!(bind.by_name && !bind.shared);
+        assert_eq!(proof, Proof::Unbound);
+        assert_eq!(bind.reason, Some(Reason::NoCase));
     }
 
     /// The table of the file rule (design 0.8.1, D82 item 6): the test file of
@@ -2983,7 +4215,10 @@ mod tests {
         let py = "# covers: a#b\ndef test_x():\n    pass\n";
         let rs = "// covers: a#b\n#[test]\nfn test_x() {\n}\n";
         let go = "// covers: a#b\nfunc TestX(t *testing.T) {\n}\n";
-        let java = "// covers: a#b\n@Test\nvoid testX() {\n}\n";
+        let java = "package com.example;\n\nclass ValveTest {\n    // covers: a#b\n    @Test\n    void testX() {\n    }\n}\n";
+        let nested = "package com.example;\n\nclass ValveTest {\n    class Inner {\n        // covers: a#b\n        @Test\n        void testX() {\n        }\n    }\n}\n";
+        let dotnet = "public class ValveTest {\n    // covers: a#b\n    [Fact] public void testX() {\n    }\n}\n";
+        let py_class = "class TestA:\n    # covers: a#b\n    def test_x(self):\n        pass\n";
         let js = "describe('V', () => {\n  // covers: a#b\n  it('x', () => {\n  });\n});\n";
         type Row<'a> = (
             &'a str,
@@ -3018,6 +4253,16 @@ mod tests {
             (
                 "tests/test_a.py",
                 py,
+                &["tests/test_a.py"],
+                "test_x",
+                Some("tests.test_a.TestA"),
+                None,
+                // Changed: the class chain is a full field.
+                None,
+            ),
+            (
+                "tests/test_a.py",
+                py_class,
                 &["tests/test_a.py"],
                 "test_x",
                 Some("tests.test_a.TestA"),
@@ -3107,7 +4352,9 @@ mod tests {
                 "TestX",
                 Some("example.org/app/valves"),
                 None,
-                None,
+                // Changed: with no `go.mod`, 2 folders end the `classname`, and
+                // the longest one no longer wins.
+                Some(Fit::Name),
             ),
             (
                 "app/valves/sensor_test.go",
@@ -3116,7 +4363,7 @@ mod tests {
                 "TestX",
                 Some("example.org/app/valves"),
                 None,
-                Some(Fit::Classname),
+                Some(Fit::Name),
             ),
             // gotestsum, the short form: one segment ends the folder.
             (
@@ -3136,7 +4383,8 @@ mod tests {
                 "TestX",
                 Some("example.org/app"),
                 None,
-                Some(Fit::Name),
+                // Changed: the folder of the tag does not end the import path.
+                None,
             ),
             // Java and Kotlin: the class with its package, and an inner class.
             (
@@ -3155,12 +4403,22 @@ mod tests {
                 "testX",
                 Some("com.example.ValveTest$Inner"),
                 None,
+                // Changed: the nested class is a full field.
+                None,
+            ),
+            (
+                "src/test/java/com/example/ValveTest.java",
+                nested,
+                &["src/test/java/com/example/ValveTest.java"],
+                "testX",
+                Some("com.example.ValveTest$Inner"),
+                None,
                 Some(Fit::Classname),
             ),
             // .NET with a namespace that the folders do not follow.
             (
                 "tests/ValveTest.cs",
-                java,
+                dotnet,
                 &["tests/ValveTest.cs"],
                 "testX",
                 Some("Valves.Tests.ValveTest"),
@@ -3201,8 +4459,10 @@ mod tests {
         }
     }
 
+    // The drop of the cases that fit by name only went: such a case is a weak
+    // link, and it takes part in the worst case.
     #[test]
-    fn a_case_that_fits_the_file_hides_a_case_that_fits_by_its_name_only() {
+    fn a_case_that_fits_the_file_does_not_hide_a_case_with_no_full_field() {
         let text = "# covers: a#b\ndef test_init():\n    pass\n";
         let cases = [
             case("test_init", Some("tests.test_a"), None, Outcome::Skip),
@@ -3211,12 +4471,14 @@ mod tests {
         let (proof, bind) = bind_of("tests/test_a.py", text, None, &cases, &["tests/test_a.py"]);
         assert_eq!(proof, Proof::Skipped("test_init".into()));
         assert_eq!(bind.fit, Some(Fit::Classname));
-        assert_eq!(bind.cases, 1);
-        assert!(!bind.by_name);
+        assert_eq!(bind.cases, 2);
+        assert_eq!(bind.why, Some(Why::ByName));
     }
 
+    // The shared set of 2 tests of one name went: the class chain is a full
+    // field, so the case of the other class is another test.
     #[test]
-    fn two_tests_of_one_name_make_a_shared_set_that_needs_each_case_to_pass() {
+    fn a_test_of_the_same_name_in_another_class_is_another_test() {
         let text = "class A:\n    # covers: a#b\n    def test_init(self):\n        pass\n\nclass B:\n    def test_init(self):\n        pass\n";
         let two = |a, b| {
             [
@@ -3225,48 +4487,45 @@ mod tests {
             ]
         };
         let files = ["tests/test_a.py"];
-        let (proof, bind) = bind_of(
-            "tests/test_a.py",
-            text,
-            None,
-            &two(Outcome::Skip, Outcome::Pass),
-            &files,
-        );
-        assert_eq!(proof, Proof::Skipped("test_init".into()));
-        assert!(bind.shared && !bind.by_name && bind.cases == 2);
-        let (proof, _) = bind_of(
-            "tests/test_a.py",
-            text,
-            None,
-            &two(Outcome::Pass, Outcome::Pass),
-            &files,
-        );
-        assert_eq!(proof, Proof::Passed("test_init".into(), 1));
-        let (proof, _) = bind_of(
-            "tests/test_a.py",
-            text,
-            None,
-            &two(Outcome::Fail, Outcome::Pass),
-            &files,
-        );
-        assert_eq!(proof, Proof::Failed("test_init".into()));
-        // One test of the name with 2 cases that fit it: the set is shared too,
-        // and no case hides the other.
+        for (own, other, want) in [
+            (
+                Outcome::Skip,
+                Outcome::Pass,
+                Proof::Skipped("test_init".into()),
+            ),
+            (
+                Outcome::Pass,
+                Outcome::Fail,
+                Proof::Passed("test_init".into(), 1),
+            ),
+            (
+                Outcome::Fail,
+                Outcome::Pass,
+                Proof::Failed("test_init".into()),
+            ),
+        ] {
+            let (proof, bind) = bind_of("tests/test_a.py", text, None, &two(own, other), &files);
+            assert_eq!(proof, want);
+            assert!(!bind.shared && !bind.by_name && bind.cases == 1, "{bind:?}");
+        }
+        // The module-level test is neither of the 2 tests of a class.
         let one = "# covers: a#b\ndef test_init():\n    pass\n";
         let (proof, bind) = bind_of(
             "tests/test_a.py",
             one,
             None,
-            &two(Outcome::Skip, Outcome::Pass),
+            &two(Outcome::Pass, Outcome::Pass),
             &files,
         );
-        assert!(bind.shared && bind.by_name);
-        assert_eq!(proof, Proof::Skipped("test_init".into()));
+        assert_eq!(proof, Proof::Unbound);
+        assert_eq!(bind.reason, Some(Reason::NoCase));
     }
 
+    // The tag is below a `describe` now: for a top-level `it`, `V closes` is
+    // another test, and so is `W closes`.
     #[test]
-    fn cases_that_fit_by_name_only_are_shared_unless_they_are_one_case() {
-        let text = "// covers: a#b\nit('closes', () => {\n});\n";
+    fn the_cases_of_jest_junit_with_its_defaults_are_weak_and_another_title_is_another_test() {
+        let text = "describe('V', () => {\n  // covers: a#b\n  it('closes', () => {\n  });\n});\n";
         let files = ["tests/v.test.js"];
         let run = |name: &str, report: &str, outcome| Case {
             report: report.to_string(),
@@ -3289,14 +4548,14 @@ mod tests {
         let (proof, bind) = bind_of("tests/v.test.js", text, None, &cases, &files);
         assert_eq!(proof, Proof::Skipped("V closes".into()));
         assert!(bind.shared);
-        // 2 names that end with the literal.
+        // Another title is another test.
         let cases = [
             run("V closes", "a", Outcome::Pass),
             run("W closes", "a", Outcome::Skip),
         ];
         let (proof, bind) = bind_of("tests/v.test.js", text, None, &cases, &files);
-        assert_eq!(proof, Proof::Skipped("W closes".into()));
-        assert!(bind.shared);
+        assert_eq!(proof, Proof::Passed("V closes".into(), 1));
+        assert!(bind.by_name && bind.cases == 1);
     }
 
     #[test]
@@ -3311,8 +4570,9 @@ mod tests {
         assert_eq!(proof, Proof::Passed("V closes".into(), 1));
         assert_eq!(bind.by, By::Case);
         assert_eq!(bind.fit, Some(Fit::Name));
-        // The one case of the name: no SD621.
-        assert!(!bind.by_name && !bind.shared);
+        // Changed: one case of the name with no full field is weak too, because
+        // the case of the tag can be absent.
+        assert!(bind.by_name && !bind.shared);
         // 2 cases of the name in 2 files: a bind by name, and a shared set.
         let cases = [
             case("V closes", Some("V closes"), None, Outcome::Pass),
@@ -3321,8 +4581,8 @@ mod tests {
         let (proof, bind) = bind_of("t/test_a.py", text, Some("V closes"), &cases, &[]);
         assert_eq!(proof, Proof::Skipped("V closes".into()));
         assert!(bind.by_name && bind.shared);
-        // A case with a `classname` of another test file still binds by its
-        // name, and a case of the file hides it.
+        // A case with a `classname` of another test file stays as a weak link.
+        // Changed: the case of the file no longer hides it.
         let cases = [
             case("T", Some("tests.test_b"), None, Outcome::Pass),
             case("T", Some("tests.test_a"), None, Outcome::Skip),
@@ -3331,6 +4591,7 @@ mod tests {
         let (proof, bind) = bind_of("tests/test_a.py", text, Some("T"), &cases, &files);
         assert_eq!(proof, Proof::Skipped("T".into()));
         assert_eq!(bind.fit, Some(Fit::Classname));
+        assert!(bind.by_name && bind.cases == 2);
         // A case with a file binds only when the file is the file of the tag.
         let cases = [case("T", None, Some("tests/test_b.py"), Outcome::Pass)];
         let (proof, _) = bind_of("tests/test_a.py", text, Some("T"), &cases, &files);
@@ -3619,60 +4880,67 @@ mod tests {
     fn the_tests_of_a_file_are_the_definition_lines() {
         let text = "import it\n\ndescribe('Valves', () => {\n  it('closes', () => {\n    expect(1);\n  });\n\n  it('never closes', () => {\n  });\n});\n";
         let lines: Vec<&str> = text.lines().collect();
+        let names: Vec<TestName> = tests_of(&lines).into_iter().map(|f| f.test).collect();
         assert_eq!(
-            tests_of(&lines),
+            names,
             [test_name("closes", true), test_name("never closes", true)]
         );
     }
 
-    /// The strength of a match: `Some(true)` for a whole segment, `Some(false)`
-    /// for the end after a space, `None` for no match.
-    fn strong(case: &str, test: &TestName) -> Option<bool> {
-        name_match(case, test).map(|(_, f)| f == NameFit::Strong)
-    }
-
+    // The strength of a name match went: the identity decides what a case is,
+    // and `name_match` only says which cases to read.
     #[test]
     fn the_name_of_a_test_is_a_whole_segment_of_the_name_of_the_case() {
         let call = test_name("closes", true);
         let def = test_name("closes", false);
-        // The form call: the whole name, or a whole segment after a separator.
-        assert_eq!(strong("closes", &call), Some(true));
-        assert_eq!(strong("Valves > closes", &call), Some(true));
-        assert_eq!(strong("Valves \u{203a} closes", &call), Some(true));
-        assert_eq!(strong("Valves > closes > more", &call), Some(true));
-        // The end after a space is weak. A name that has a segment of ` > ` never
-        // matches by its last word.
-        assert_eq!(strong("Valves closes", &call), Some(false));
-        assert_eq!(strong("Valves > fast closes", &call), None);
-        assert_eq!(strong("Valves reopens", &call), None);
-        assert_eq!(strong("Valves closes now", &call), None);
-        assert_eq!(strong("closes (slow)", &call), None);
-        assert_eq!(strong("closes()", &call), None);
+        // The form call: the whole name, a whole segment after a separator, or
+        // the end after a space.
+        for name in [
+            "closes",
+            "Valves > closes",
+            "Valves \u{203a} closes",
+            "Valves > closes > more",
+            "Valves closes",
+        ] {
+            assert!(name_match(name, &call), "{name}");
+        }
+        // A name that has a segment of ` > ` never matches by its last word.
+        for name in [
+            "Valves > fast closes",
+            "Valves reopens",
+            "Valves closes now",
+            "closes (slow)",
+            "closes()",
+        ] {
+            assert!(!name_match(name, &call), "{name}");
+        }
         // An identifier: a whole segment before its parameters. A space is no
         // separator, and a tail starts right after the name.
-        assert_eq!(strong("closes", &def), Some(true));
-        assert_eq!(strong("tests::closes", &def), Some(true));
-        assert_eq!(strong("closes::case_1", &def), Some(true));
-        assert_eq!(strong("closes[1-2]", &def), Some(true));
-        assert_eq!(strong("closes/no_reply", &def), Some(true));
-        assert_eq!(strong("closes(int) [1] a", &def), Some(true));
-        assert_eq!(strong("closes with data set #0", &def), Some(true));
-        assert_eq!(strong("Valves closes", &def), None);
-        assert_eq!(
-            strong("Closes when cold", &test_name("Closes", false)),
-            None
-        );
-        assert_eq!(strong("Closes (cold)", &test_name("Closes", false)), None);
-        assert_eq!(strong("closes_late", &def), None);
+        for name in [
+            "closes",
+            "tests::closes",
+            "closes::case_1",
+            "closes[1-2]",
+            "closes/no_reply",
+            "closes(int) [1] a",
+            "closes with data set #0",
+        ] {
+            assert!(name_match(name, &def), "{name}");
+        }
+        assert!(!name_match("Valves closes", &def));
+        assert!(!name_match("closes_late", &def));
+        let upper = test_name("Closes", false);
+        assert!(!name_match("Closes when cold", &upper));
+        assert!(!name_match("Closes (cold)", &upper));
         // A Kotlin name in backticks is whole, and the parameters follow it.
         let kt = TestName {
             bt: true,
             ..test_name("stops (fast)", true)
         };
-        assert_eq!(strong("stops (fast)", &kt), Some(true));
-        assert_eq!(strong("stops (fast)()", &kt), Some(true));
-        assert_eq!(strong("stops (fast)(int) [1] 3", &kt), Some(true));
-        assert_eq!(strong("stops()", &kt), None);
+        for name in ["stops (fast)", "stops (fast)()", "stops (fast)(int) [1] 3"] {
+            assert!(name_match(name, &kt), "{name}");
+        }
+        assert!(!name_match("stops()", &kt));
     }
 
     #[test]
@@ -3719,7 +4987,7 @@ mod tests {
             ),
         ];
         for (test, name) in pairs {
-            assert!(name_match(name, &test).is_some(), "{name} / {}", test.name);
+            assert!(name_match(name, &test), "{name} / {}", test.name);
             let cases = [case(name, None, None, Outcome::Pass)];
             let binder = Binder::new(&cases, &[]);
             assert_eq!(binder.named_by(&test), [0], "{name} / {}", test.name);
@@ -3799,7 +5067,7 @@ mod tests {
         );
         // A name with a segment of ` > ` is no match for the end of a name.
         let tests = [test_name("closes", true)];
-        assert!(name_match("Valves > never closes", &tests[0]).is_none());
+        assert!(!name_match("Valves > never closes", &tests[0]));
     }
 
     #[test]
@@ -4176,5 +5444,1261 @@ mod tests {
         for bad in ["", "later", "Manual", "manual environment", "manual,"] {
             assert!(!is_owed_reason(bad), "{bad:?}");
         }
+    }
+}
+
+/// The matrix of the bind rule: each runner, each result of the case of the
+/// tag, and each neighbor that has the same head or last segment. The names of
+/// the reports are written out here, as the runners write them. They are not
+/// built by the code under test.
+#[cfg(test)]
+mod matrix {
+    use super::*;
+
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Own {
+        Passed,
+        Failed,
+        Skipped,
+        Absent,
+    }
+
+    /// A report case: the name, the `classname` and the `file`.
+    type Shape = (&'static str, Option<&'static str>, Option<&'static str>);
+
+    /// A neighbor: its label, its case, and the other test file that holds it
+    /// (`None` for a test of the tag file).
+    struct Near {
+        label: &'static str,
+        case: Shape,
+        file: Option<&'static str>,
+    }
+
+    struct Runner {
+        label: &'static str,
+        path: &'static str,
+        /// The tag file. It holds the test under the tag and the tests of the
+        /// neighbors of the same file.
+        text: &'static str,
+        own: Shape,
+        /// 2 rows of the same test, as the runner writes them.
+        rows: Option<[&'static str; 2]>,
+        near: Vec<Near>,
+        manifests: &'static [(&'static str, &'static str)],
+        /// The counter-constraint (A3): the bind is silent, and no neighbor is
+        /// in the set.
+        silent: bool,
+    }
+
+    const CARGO: &[(&str, &str)] = &[("Cargo.toml", "[package]\nname = \"app\"\n")];
+    const GO_MOD: &[(&str, &str)] = &[("go.mod", "module example.org/app\n")];
+
+    fn near(label: &'static str, case: Shape, file: Option<&'static str>) -> Near {
+        Near { label, case, file }
+    }
+
+    fn runners() -> Vec<Runner> {
+        let nextest_int = |label, manifests| Runner {
+            label,
+            path: "tests/valves.rs",
+            text: "// covers: a#b\n#[test]\nfn closes() {\n}\n\nmod cold {\n    #[test]\n    fn closes() {\n    }\n}\n",
+            own: ("closes", Some("app::valves"), None),
+            rows: Some(["closes::case_1", "closes::case_2"]),
+            near: vec![
+                near(
+                    "same-file",
+                    ("cold::closes", Some("app::valves"), None),
+                    None,
+                ),
+                near(
+                    "other-file",
+                    ("closes", Some("app::pumps"), None),
+                    Some("tests/pumps.rs"),
+                ),
+                near(
+                    "src-vs-tests",
+                    ("valves::tests::closes", Some("app"), None),
+                    Some("src/valves.rs"),
+                ),
+            ],
+            manifests,
+            silent: true,
+        };
+        let go = |label, manifests| Runner {
+            label,
+            path: "valves/sensor_test.go",
+            text: "package valves\n\n// covers: a#b\nfunc TestClose(t *testing.T) {\n}\n\nfunc TestTable(t *testing.T) {\n\tt.Run(\"TestClose\", func(t *testing.T) {\n\t})\n}\n",
+            own: ("TestClose", Some("example.org/app/valves"), None),
+            rows: Some(["TestClose/row_1", "TestClose/row_2"]),
+            near: vec![
+                near(
+                    "same-file",
+                    ("TestTable/TestClose", Some("example.org/app/valves"), None),
+                    None,
+                ),
+                near(
+                    "other-file",
+                    ("TestClose", Some("example.org/app/pumps"), None),
+                    Some("pumps/sensor_test.go"),
+                ),
+            ],
+            manifests,
+            silent: true,
+        };
+        vec![
+            Runner {
+                label: "pytest-xunit2",
+                path: "tests/test_valves.py",
+                text: "class TestValves:\n    # covers: a#b\n    def test_closes(self):\n        pass\n\nclass TestPumps:\n    def test_closes(self):\n        pass\n\ndef test_closes():\n    pass\n",
+                own: ("test_closes", Some("tests.test_valves.TestValves"), None),
+                rows: Some(["test_closes[1]", "test_closes[2]"]),
+                near: vec![
+                    near(
+                        "same-file",
+                        ("test_closes", Some("tests.test_valves.TestPumps"), None),
+                        None,
+                    ),
+                    near(
+                        "module-level",
+                        ("test_closes", Some("tests.test_valves"), None),
+                        None,
+                    ),
+                    near(
+                        "other-file",
+                        ("test_closes", Some("tests.test_pumps.TestValves"), None),
+                        Some("tests/test_pumps.py"),
+                    ),
+                ],
+                manifests: &[],
+                silent: true,
+            },
+            Runner {
+                label: "pytest-xunit1",
+                path: "tests/test_valves.py",
+                text: "class TestValves:\n    # covers: a#b\n    def test_closes(self):\n        pass\n\nclass TestPumps:\n    def test_closes(self):\n        pass\n",
+                own: (
+                    "test_closes",
+                    Some("tests.test_valves.TestValves"),
+                    Some("tests/test_valves.py"),
+                ),
+                rows: Some(["test_closes[1]", "test_closes[2]"]),
+                near: vec![
+                    near(
+                        "same-file",
+                        (
+                            "test_closes",
+                            Some("tests.test_valves.TestPumps"),
+                            Some("tests/test_valves.py"),
+                        ),
+                        None,
+                    ),
+                    near(
+                        "other-file",
+                        (
+                            "test_closes",
+                            Some("tests.test_pumps.TestValves"),
+                            Some("tests/test_pumps.py"),
+                        ),
+                        Some("tests/test_pumps.py"),
+                    ),
+                ],
+                manifests: &[],
+                silent: true,
+            },
+            nextest_int("nextest-integration", CARGO),
+            nextest_int("nextest-integration-no-manifest", &[]),
+            Runner {
+                label: "nextest-unit",
+                path: "src/valves.rs",
+                text: "#[cfg(test)]\nmod tests {\n    // covers: a#b\n    #[test]\n    fn closes() {\n    }\n}\n\nmod hot {\n    #[test]\n    fn closes() {\n    }\n}\n",
+                own: ("valves::tests::closes", Some("app"), None),
+                rows: Some([
+                    "valves::tests::closes::case_1",
+                    "valves::tests::closes::case_2",
+                ]),
+                near: vec![
+                    near(
+                        "same-file",
+                        ("valves::hot::closes", Some("app"), None),
+                        None,
+                    ),
+                    near(
+                        "other-file",
+                        ("pumps::tests::closes", Some("app"), None),
+                        Some("src/pumps.rs"),
+                    ),
+                    near(
+                        "tests-vs-src",
+                        ("closes", Some("app::valves"), None),
+                        Some("tests/valves.rs"),
+                    ),
+                ],
+                manifests: CARGO,
+                silent: true,
+            },
+            go("go", GO_MOD),
+            go("go-no-manifest", &[]),
+            Runner {
+                label: "go-testify",
+                path: "valves/suite_test.go",
+                text: "package valves\n\nfunc TestValveSuite(t *testing.T) {\n\tsuite.Run(t, new(ValveSuite))\n}\n\nfunc TestPumpSuite(t *testing.T) {\n\tsuite.Run(t, new(PumpSuite))\n}\n\n// covers: a#b\nfunc (s *ValveSuite) TestCloses() {\n}\n\nfunc (s *PumpSuite) TestCloses() {\n}\n",
+                own: (
+                    "TestValveSuite/TestCloses",
+                    Some("example.org/app/valves"),
+                    None,
+                ),
+                rows: Some([
+                    "TestValveSuite/TestCloses/row_1",
+                    "TestValveSuite/TestCloses/row_2",
+                ]),
+                near: vec![
+                    near(
+                        "same-file",
+                        (
+                            "TestPumpSuite/TestCloses",
+                            Some("example.org/app/valves"),
+                            None,
+                        ),
+                        None,
+                    ),
+                    near(
+                        "other-file",
+                        (
+                            "TestValveSuite/TestCloses",
+                            Some("example.org/app/pumps"),
+                            None,
+                        ),
+                        Some("pumps/suite_test.go"),
+                    ),
+                ],
+                manifests: GO_MOD,
+                silent: true,
+            },
+            Runner {
+                label: "junit-java",
+                path: "src/test/java/com/example/ValveTest.java",
+                text: "package com.example;\n\nclass ValveTest {\n    // covers: a#b\n    @Test\n    void closes() {\n    }\n}\n\nclass SpareTest {\n    @Test\n    void closes() {\n    }\n}\n",
+                own: ("closes", Some("com.example.ValveTest"), None),
+                rows: Some(["closes(int)[1]", "closes(int)[2]"]),
+                near: vec![
+                    near(
+                        "same-file",
+                        ("closes", Some("com.example.SpareTest"), None),
+                        None,
+                    ),
+                    near(
+                        "other-file",
+                        ("closes", Some("com.example.PumpTest"), None),
+                        Some("src/test/java/com/example/PumpTest.java"),
+                    ),
+                    near(
+                        "other-package",
+                        ("closes", Some("com.other.ValveTest"), None),
+                        Some("src/test/java/com/other/ValveTest.java"),
+                    ),
+                ],
+                manifests: &[],
+                silent: true,
+            },
+            Runner {
+                label: "junit-kotlin",
+                path: "src/test/kotlin/com/example/ValveTest.kt",
+                text: "package com.example\n\nclass ValveTest {\n    // covers: a#b\n    @Test fun `closes on timeout`() {\n    }\n}\n\nclass SpareTest {\n    @Test fun `closes on timeout`() {\n    }\n}\n",
+                own: ("closes on timeout()", Some("com.example.ValveTest"), None),
+                rows: Some(["closes on timeout(int)[1]", "closes on timeout(int)[2]"]),
+                near: vec![
+                    near(
+                        "same-file",
+                        ("closes on timeout()", Some("com.example.SpareTest"), None),
+                        None,
+                    ),
+                    near(
+                        "other-file",
+                        ("closes on timeout()", Some("com.example.PumpTest"), None),
+                        Some("src/test/kotlin/com/example/PumpTest.kt"),
+                    ),
+                ],
+                manifests: &[],
+                silent: true,
+            },
+            Runner {
+                label: "xunit",
+                path: "tests/ValveTest.cs",
+                text: "namespace Valves.Tests;\n\npublic class ValveTest\n{\n    // covers: a#b\n    [Fact]\n    public void Closes()\n    {\n    }\n}\n\npublic class SpareTest\n{\n    [Fact]\n    public void Closes()\n    {\n    }\n}\n",
+                own: ("Closes", Some("Valves.Tests.ValveTest"), None),
+                rows: Some(["Closes(n: 1)", "Closes(n: 2)"]),
+                near: vec![
+                    near(
+                        "same-file",
+                        ("Closes", Some("Valves.Tests.SpareTest"), None),
+                        None,
+                    ),
+                    near(
+                        "other-file",
+                        ("Closes", Some("Valves.Tests.PumpTest"), None),
+                        Some("tests/PumpTest.cs"),
+                    ),
+                ],
+                manifests: &[],
+                silent: false,
+            },
+            Runner {
+                label: "phpunit",
+                path: "tests/ValveTest.php",
+                text: "<?php\nnamespace Tests;\n\nclass ValveTest extends TestCase\n{\n    // covers: a#b\n    public function testCloses()\n    {\n    }\n}\n\nclass SpareTest extends TestCase\n{\n    public function testCloses()\n    {\n    }\n}\n",
+                own: (
+                    "testCloses",
+                    Some("Tests.ValveTest"),
+                    Some("/work/app/tests/ValveTest.php"),
+                ),
+                rows: Some(["testCloses with data set #0", "testCloses with data set #1"]),
+                near: vec![
+                    near(
+                        "same-file",
+                        (
+                            "testCloses",
+                            Some("Tests.SpareTest"),
+                            Some("/work/app/tests/ValveTest.php"),
+                        ),
+                        None,
+                    ),
+                    near(
+                        "other-file",
+                        (
+                            "testCloses",
+                            Some("Tests.PumpTest"),
+                            Some("/work/app/tests/PumpTest.php"),
+                        ),
+                        Some("tests/PumpTest.php"),
+                    ),
+                ],
+                manifests: &[],
+                silent: false,
+            },
+            Runner {
+                label: "rspec",
+                path: "spec/valve_spec.rb",
+                text: "describe Valve do\n  # covers: a#b\n  it 'closes' do\n  end\nend\n\ndescribe Pump do\n  it 'closes' do\n  end\n\n  it 'never closes' do\n  end\nend\n",
+                own: (
+                    "Valve closes",
+                    Some("spec.valve_spec"),
+                    Some("./spec/valve_spec.rb"),
+                ),
+                rows: None,
+                near: vec![
+                    near(
+                        "same-file",
+                        (
+                            "Pump closes",
+                            Some("spec.valve_spec"),
+                            Some("./spec/valve_spec.rb"),
+                        ),
+                        None,
+                    ),
+                    near(
+                        "same-end",
+                        (
+                            "Pump never closes",
+                            Some("spec.valve_spec"),
+                            Some("./spec/valve_spec.rb"),
+                        ),
+                        None,
+                    ),
+                    near(
+                        "other-file",
+                        (
+                            "Valve closes",
+                            Some("spec.pump_spec"),
+                            Some("./spec/pump_spec.rb"),
+                        ),
+                        Some("spec/pump_spec.rb"),
+                    ),
+                ],
+                manifests: &[],
+                silent: true,
+            },
+            Runner {
+                label: "vitest",
+                path: "tests/valves.test.ts",
+                text: "describe('Valves', () => {\n  // covers: a#b\n  it('closes', () => {\n  });\n});\n\ndescribe('Pumps', () => {\n  it('closes', () => {\n  });\n  it('never closes', () => {\n  });\n});\n",
+                own: ("Valves > closes", Some("tests/valves.test.ts"), None),
+                rows: None,
+                near: vec![
+                    near(
+                        "same-file",
+                        ("Pumps > closes", Some("tests/valves.test.ts"), None),
+                        None,
+                    ),
+                    near(
+                        "same-end",
+                        ("Pumps > never closes", Some("tests/valves.test.ts"), None),
+                        None,
+                    ),
+                    near(
+                        "other-file",
+                        ("Valves > closes", Some("tests/pumps.test.ts"), None),
+                        Some("tests/pumps.test.ts"),
+                    ),
+                ],
+                manifests: &[],
+                silent: true,
+            },
+            Runner {
+                label: "playwright",
+                path: "e2e/valves.spec.ts",
+                text: "test.describe('Valves', () => {\n  // covers: a#b\n  test('closes', async () => {\n  });\n});\n\ntest.describe('Pumps', () => {\n  test('closes', async () => {\n  });\n});\n",
+                own: ("Valves \u{203a} closes", Some("valves.spec.ts"), None),
+                rows: None,
+                near: vec![
+                    near(
+                        "same-file",
+                        ("Pumps \u{203a} closes", Some("valves.spec.ts"), None),
+                        None,
+                    ),
+                    near(
+                        "other-file",
+                        ("Valves \u{203a} closes", Some("pumps.spec.ts"), None),
+                        Some("e2e/pumps.spec.ts"),
+                    ),
+                ],
+                manifests: &[],
+                silent: true,
+            },
+            Runner {
+                label: "jest-file",
+                path: "tests/valves.test.js",
+                text: "describe('Valves', () => {\n  // covers: a#b\n  it('closes', () => {\n  });\n});\n\ndescribe('Pumps', () => {\n  it('closes', () => {\n  });\n});\n",
+                own: (
+                    "Valves closes",
+                    Some("Valves closes"),
+                    Some("tests/valves.test.js"),
+                ),
+                rows: None,
+                near: vec![
+                    near(
+                        "same-file",
+                        (
+                            "Pumps closes",
+                            Some("Pumps closes"),
+                            Some("tests/valves.test.js"),
+                        ),
+                        None,
+                    ),
+                    near(
+                        "other-file",
+                        (
+                            "Valves closes",
+                            Some("Valves closes"),
+                            Some("tests/pumps.test.js"),
+                        ),
+                        Some("tests/pumps.test.js"),
+                    ),
+                ],
+                manifests: &[],
+                silent: false,
+            },
+            Runner {
+                label: "jest-defaults",
+                path: "tests/valves.test.js",
+                text: "describe('Valves', () => {\n  // covers: a#b\n  it('closes', () => {\n  });\n});\n\ndescribe('Pumps', () => {\n  it('closes', () => {\n  });\n});\n",
+                own: ("Valves closes", Some("Valves closes"), None),
+                rows: None,
+                near: vec![
+                    near(
+                        "other-title",
+                        ("Pumps closes", Some("Pumps closes"), None),
+                        None,
+                    ),
+                    near(
+                        "same-title",
+                        ("Valves closes", Some("Valves closes"), None),
+                        Some("tests/pumps.test.js"),
+                    ),
+                ],
+                manifests: &[],
+                silent: false,
+            },
+            Runner {
+                label: "lines",
+                path: "tests/test_valves.py",
+                text: "# covers: a#b\ndef test_closes():\n    pass\n",
+                own: ("test_closes", None, None),
+                rows: None,
+                near: vec![near(
+                    "other-file",
+                    ("test_closes", None, None),
+                    Some("tests/test_pumps.py"),
+                )],
+                manifests: &[],
+                silent: false,
+            },
+            // A file of the same relative path in a second project: the report
+            // cannot tell them apart.
+            Runner {
+                label: "vitest-monorepo-twin",
+                path: "tests/valves.test.ts",
+                text: "describe('Valves', () => {\n  // covers: a#b\n  it('closes', () => {\n  });\n});\n",
+                own: ("Valves > closes", Some("tests/valves.test.ts"), None),
+                rows: None,
+                near: vec![near(
+                    "suffix-twin",
+                    ("Valves > closes", Some("pkg/tests/valves.test.ts"), None),
+                    Some("pkg/tests/valves.test.ts"),
+                )],
+                manifests: &[],
+                silent: false,
+            },
+        ]
+    }
+
+    fn case_of(shape: Shape, name: &str, outcome: Outcome) -> Case {
+        Case {
+            name: name.to_string(),
+            classname: shape.1.map(str::to_string),
+            file: shape.2.map(str::to_string),
+            outcome,
+            report: "r.xml".to_string(),
+        }
+    }
+
+    /// The one call of the code under test.
+    fn run(
+        path: &str,
+        text: &str,
+        case_name: Option<&str>,
+        cases: &[Case],
+        files: &[&str],
+        manifests: &[(&str, &str)],
+    ) -> (Proof, Bind) {
+        let lines: Vec<&str> = text.lines().collect();
+        let tag = lines.iter().position(|l| l.contains("covers:")).unwrap();
+        let files: Vec<String> = files.iter().map(|f| f.to_string()).collect();
+        let suites = |ty: &str, method: &str| suite_funcs([text], ty, method);
+        let read = |p: &str| {
+            manifests
+                .iter()
+                .find(|(m, _)| *m == p)
+                .map(|(_, t)| t.to_string())
+        };
+        // ADAPTER
+        Binder::new(cases, &files).bind_with(path, &lines, tag, case_name, &suites, &read)
+    }
+
+    fn word(proof: &Proof, bind: &Bind) -> String {
+        let p = match proof {
+            Proof::Passed(..) => "passed",
+            Proof::Failed(_) => "failed",
+            Proof::Skipped(_) => "skipped",
+            Proof::Unbound => "unbound",
+        };
+        assert_eq!(bind.by_name, bind.why.is_some(), "{bind:?}");
+        match bind.why {
+            Some(why) => format!("{p}+{}", why.key()),
+            None => p.to_string(),
+        }
+    }
+
+    #[test]
+    fn no_cell_of_the_matrix_gives_a_silent_false_proof_or_hides_a_fail() {
+        let start = std::time::Instant::now();
+        let mut binds = 0;
+        let mut red: Vec<String> = Vec::new();
+        for r in runners() {
+            let rows: &[bool] = if r.rows.is_some() {
+                &[false, true]
+            } else {
+                &[false]
+            };
+            for &rowed in rows {
+                for own in [Own::Passed, Own::Failed, Own::Skipped, Own::Absent] {
+                    let mut neighbors: Vec<(Option<&Near>, Outcome)> = vec![(None, Outcome::Pass)];
+                    for n in &r.near {
+                        neighbors.push((Some(n), Outcome::Pass));
+                        neighbors.push((Some(n), Outcome::Fail));
+                    }
+                    for (n, result) in neighbors {
+                        if own == Own::Absent && (rowed || n.is_none()) {
+                            continue;
+                        }
+                        let outcome = match own {
+                            Own::Passed => Some(Outcome::Pass),
+                            Own::Failed => Some(Outcome::Fail),
+                            Own::Skipped => Some(Outcome::Skip),
+                            Own::Absent => None,
+                        };
+                        let mut cases = Vec::new();
+                        if let Some(o) = outcome {
+                            match r.rows.filter(|_| rowed) {
+                                // The first row passes. The second row has the
+                                // result of the cell.
+                                Some([a, b]) => {
+                                    cases.push(case_of(r.own, a, Outcome::Pass));
+                                    cases.push(case_of(r.own, b, o));
+                                }
+                                None => cases.push(case_of(r.own, r.own.0, o)),
+                            }
+                        }
+                        let mut files = vec![r.path];
+                        if let Some(n) = n {
+                            cases.push(case_of(n.case, n.case.0, result));
+                            files.extend(n.file);
+                        }
+                        let (proof, bind) = run(r.path, r.text, None, &cases, &files, r.manifests);
+                        binds += 1;
+                        let id = format!(
+                            "{}{} own={own:?} near={}/{result:?} -> {}",
+                            r.label,
+                            if rowed { " rows" } else { "" },
+                            n.map_or("none", |n| n.label),
+                            word(&proof, &bind),
+                        );
+                        let passed = matches!(proof, Proof::Passed(..));
+                        // A1: a silent pass needs a passed case of the tag.
+                        if passed && !bind.by_name && own != Own::Passed {
+                            red.push(format!("A1 {id}"));
+                        }
+                        // A2: a failed or skipped case of the tag never passes.
+                        if matches!(own, Own::Failed | Own::Skipped) && passed {
+                            red.push(format!("A2 {id}"));
+                        }
+                        // A3: the counter-constraint.
+                        if r.silent && own == Own::Passed && !(passed && !bind.by_name) {
+                            red.push(format!("A3 {id}"));
+                        }
+                        if r.silent
+                            && own == Own::Absent
+                            && !(proof == Proof::Unbound
+                                && bind.reason == Some(Reason::NoCase)
+                                && !bind.by_name)
+                        {
+                            red.push(format!("A3 {id}"));
+                        }
+                        // A4: jest-junit with its defaults.
+                        if r.label == "jest-defaults" && own == Own::Passed {
+                            let same = n.is_some_and(|n| n.label == "same-title");
+                            let ok = if same && result == Outcome::Fail {
+                                matches!(proof, Proof::Failed(_))
+                            } else {
+                                passed
+                            } && bind.why == Some(Why::ByName);
+                            if !ok {
+                                red.push(format!("A4 {id}"));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let took = start.elapsed();
+        assert!(
+            red.is_empty(),
+            "{} red of {binds} binds\n{}",
+            red.len(),
+            red.join("\n")
+        );
+        assert!(binds >= 450, "{binds}");
+        assert!(took.as_secs_f64() < 1.0, "{binds} binds took {took:?}");
+    }
+
+    /// A named cell: the tag file, the cases, the other test files, the
+    /// manifests, the value of `case:`, and the result that the rule gives.
+    struct Named {
+        id: &'static str,
+        path: &'static str,
+        text: &'static str,
+        case: Option<&'static str>,
+        cases: Vec<Case>,
+        files: &'static [&'static str],
+        manifests: &'static [(&'static str, &'static str)],
+        want: &'static str,
+    }
+
+    fn c(name: &str, classname: Option<&str>, file: Option<&str>, outcome: Outcome) -> Case {
+        Case {
+            name: name.to_string(),
+            classname: classname.map(str::to_string),
+            file: file.map(str::to_string),
+            outcome,
+            report: "r.xml".to_string(),
+        }
+    }
+
+    fn named_cells() -> Vec<Named> {
+        use Outcome::{Fail, Pass, Skip};
+        const RS: &str = "#[cfg(test)]\nmod tests {\n    // covers: a#b\n    #[test]\n    fn closes() {\n    }\n}\n";
+        const RS_B: &str = "// covers: a#b\n#[test]\nfn closes() {\n}\n";
+        const HOT: &str = "mod hot {\n    // covers: a#b\n    #[test]\n    fn closes() {\n    }\n}\n\nmod cold {\n    #[test]\n    fn closes() {\n    }\n}\n";
+        const CLI: &str = "// covers: a#b\n#[test]\nfn runs() {\n}\n";
+        const TWO_CRATES: &[(&str, &str)] = &[
+            ("crates/a/Cargo.toml", "[package]\nname = \"a-cli\"\n"),
+            ("crates/b/Cargo.toml", "[package]\nname = \"b-cli\"\n"),
+            ("Cargo.toml", "[workspace]\nmembers = [\"crates/*\"]\n"),
+        ];
+        const CRATE_FILES: &[&str] = &["crates/a/tests/cli.rs", "crates/b/tests/cli.rs"];
+        const GO_FILES: &[&str] = &["server/serve_test.go", "cmd/server/serve_test.go"];
+        const GO: &str = "package server\n\n// covers: a#b\nfunc TestServe(t *testing.T) {\n}\n";
+        const PY_CLASS: &str = "# covers: a#b\ndef test_closes():\n    pass\n\nclass TestPumps:\n    def test_closes(self):\n        pass\n";
+        const NESTED: &str = "package com.example;\n\nclass ValveTest {\n    // covers: a#b\n    @Test\n    void closes() {\n    }\n\n    @Nested\n    class Nested {\n        @Test\n        void closes() {\n        }\n    }\n}\n";
+        const OVERLOAD: &str = "package com.example;\n\nclass ValveTest {\n    // covers: a#b\n    @Test\n    void closes() {\n    }\n\n    @ParameterizedTest\n    void closes(int n) {\n    }\n}\n";
+        const VT: &str = "describe('Valves', () => {\n  // covers: a#b\n  it('closes', () => {\n  });\n});\ndescribe('Pumps', () => {\n  it('closes', () => {\n  });\n});\n";
+        const PW: &str = "test.describe('Valves', () => {\n  // covers: a#b\n  test('closes', async () => {\n  });\n});\n";
+        const XU: &str = "namespace Valves.Tests;\n\npublic class ValveTest\n{\n    // covers: a#b\n    [Fact]\n    public void Closes()\n    {\n    }\n\n    [Fact(DisplayName = \"Closes when cold\")]\n    public void Other()\n    {\n    }\n}\n";
+        const TWINS: &str = "describe Valve do\n  describe '#open' do\n    # covers: a#b\n    it 'works' do\n    end\n  end\n\n  describe '#shut' do\n    it 'works' do\n    end\n  end\nend\n";
+        const KT: &str = "package com.example\n\nclass ValveTest {\n    // covers: a#b\n    @ParameterizedTest\n    fun `closes on timeout`(n: Int) {\n    }\n}\n";
+        const PY: &str = "# covers: a#b\ndef test_closes():\n    pass\n";
+        const EACH: &str = "describe('Valves', () => {\n  // covers: a#b\n  it.skip('closes', () => {\n  });\n\n  it.each(['a', 'b'])('closes', (x) => {\n  });\n});\n";
+        const PW_EACH: &str = "// covers: a#b\ntest.skip('closes', async () => {\n});\n\ntest.each(['a', 'b'])('closes', async () => {\n});\n";
+        const RS_STRINGS: &str = "describe 'Valve' do\n  describe '#open' do\n    # covers: a#b\n    it 'works' do\n    end\n  end\nend\n";
+        const RS_COLONS: &str = "describe Valve do\n  describe '::open' do\n    # covers: a#b\n    it 'works' do\n    end\n  end\nend\n";
+        const RS_EXAMPLE: &str =
+            "describe Valve do\n  # covers: a#b\n  it '#opens' do\n  end\nend\n";
+        const IN_NESTED: &str = "package com.example;\n\nclass ValveTest {\n    @Nested\n    class Nested {\n        // covers: a#b\n        @Test\n        void closes() {\n        }\n    }\n}\n";
+        const KT_PLAIN: &str = "package com.example\n\nclass ValveTest {\n    // covers: a#b\n    @Test fun `closes on timeout`() {\n    }\n}\n";
+        const XU_TAGGED: &str = "namespace Valves.Tests;\n\npublic class ValveTest\n{\n    // covers: a#b\n    [Fact(DisplayName = \"closes when cold\")]\n    public void Closes()\n    {\n    }\n}\n";
+        const HYPHEN: &[(&str, &str)] = &[("Cargo.toml", "[package]\nname = \"my-crate\"\n")];
+        const SPEC: Option<&str> = Some("./spec/valve_spec.rb");
+        let rspec = |id, text, name: &str, want| Named {
+            id,
+            path: "spec/valve_spec.rb",
+            text,
+            case: None,
+            cases: vec![c(name, Some("spec.valve_spec"), SPEC, Pass)],
+            files: &["spec/valve_spec.rb"],
+            manifests: &[],
+            want,
+        };
+        let nested = |id, classname: &str, want| Named {
+            id,
+            path: "src/test/java/com/example/ValveTest.java",
+            text: IN_NESTED,
+            case: None,
+            cases: vec![c("closes", Some(classname), None, Pass)],
+            files: &["src/test/java/com/example/ValveTest.java"],
+            manifests: &[],
+            want,
+        };
+        let mut more = vec![
+            rspec(
+                "RSpec: 2 string titles keep the space",
+                RS_STRINGS,
+                "Valve #open works",
+                "passed",
+            ),
+            rspec(
+                "RSpec: a constant and `::` have no space",
+                RS_COLONS,
+                "Valve::open works",
+                "passed",
+            ),
+            rspec(
+                "RSpec: an example keeps the space",
+                RS_EXAMPLE,
+                "Valve #opens",
+                "passed",
+            ),
+            nested(
+                "a tag in a nested class: the shape of Surefire 3.2.5",
+                "com.example.ValveTest$Nested",
+                "passed",
+            ),
+            nested(
+                "a tag in a nested class: a newer Surefire writes the outer class",
+                "com.example.ValveTest",
+                "passed+by-name",
+            ),
+            Named {
+                id: "a template with the literal of the test: a skipped run is not hidden",
+                path: "tests/v.test.ts",
+                text: EACH,
+                case: None,
+                cases: vec![
+                    c("Valves > closes", Some("tests/v.test.ts"), None, Skip),
+                    c("Valves > closes", Some("tests/v.test.ts"), None, Pass),
+                    c("Valves > closes", Some("tests/v.test.ts"), None, Pass),
+                ],
+                files: &["tests/v.test.ts"],
+                manifests: &[],
+                want: "skipped+not-unique",
+            },
+            Named {
+                id: "a template twin in the shape of Playwright: a skipped run is not hidden",
+                path: "e2e/v.spec.ts",
+                text: PW_EACH,
+                case: None,
+                cases: vec![
+                    c("closes", Some("v.spec.ts"), None, Skip),
+                    c("closes", Some("v.spec.ts"), None, Pass),
+                ],
+                files: &["e2e/v.spec.ts"],
+                manifests: &[],
+                want: "skipped+not-unique",
+            },
+            Named {
+                id: "a top-level test beside a table: a repeat in one report is no run",
+                path: "tests/v.test.ts",
+                text: "// covers: a#b\nit.skip('closes', () => {\n});\n\nit.each(['closes'])('%s', () => {\n});\n",
+                case: None,
+                cases: vec![
+                    c("closes", Some("tests/v.test.ts"), None, Skip),
+                    c("closes", Some("tests/v.test.ts"), None, Pass),
+                ],
+                files: &["tests/v.test.ts"],
+                manifests: &[],
+                want: "skipped",
+            },
+            Named {
+                id: "a Kotlin name in backticks with no parentheses in the report",
+                path: "src/test/kotlin/com/example/ValveTest.kt",
+                text: KT_PLAIN,
+                case: None,
+                cases: vec![c(
+                    "closes on timeout",
+                    Some("com.example.ValveTest"),
+                    None,
+                    Pass,
+                )],
+                files: &["src/test/kotlin/com/example/ValveTest.kt"],
+                manifests: &[],
+                want: "passed",
+            },
+            Named {
+                id: "xUnit: a tagged test with a DisplayName is weak",
+                path: "tests/ValveTest.cs",
+                text: XU_TAGGED,
+                case: None,
+                cases: vec![c(
+                    "closes when cold",
+                    Some("Valves.Tests.ValveTest"),
+                    None,
+                    Pass,
+                )],
+                files: &["tests/ValveTest.cs"],
+                manifests: &[],
+                want: "passed+no-identity",
+            },
+            Named {
+                id: "a group with a path constant is unreadable",
+                path: "spec/valve_spec.rb",
+                text: "describe Valves::Valve do\n  # covers: a#b\n  it 'closes' do\n  end\nend\n",
+                case: None,
+                cases: vec![c(
+                    "Valves::Valve closes",
+                    Some("spec.valve_spec"),
+                    SPEC,
+                    Pass,
+                )],
+                files: &["spec/valve_spec.rb"],
+                manifests: &[],
+                want: "passed+no-identity",
+            },
+            Named {
+                id: "a file with no indent is unreadable",
+                path: "tests/v.test.ts",
+                text: "describe('Valves', () => {\n// covers: a#b\nit('closes', () => {\n});\n});\n",
+                case: None,
+                cases: vec![c("Valves > closes", Some("tests/v.test.ts"), None, Pass)],
+                files: &["tests/v.test.ts"],
+                manifests: &[],
+                want: "passed+no-identity",
+            },
+            Named {
+                id: "a unit test of Rust with no Cargo.toml",
+                path: "src/valves.rs",
+                text: RS,
+                case: None,
+                cases: vec![c("valves::tests::closes", Some("app"), None, Pass)],
+                files: &["src/valves.rs"],
+                manifests: &[],
+                want: "passed+by-name",
+            },
+            Named {
+                id: "nextest keeps the hyphen of the package name",
+                path: "tests/valves.rs",
+                text: RS_B,
+                case: None,
+                cases: vec![c("closes", Some("my-crate::valves"), None, Pass)],
+                files: &["tests/valves.rs"],
+                manifests: HYPHEN,
+                want: "passed",
+            },
+            Named {
+                id: "one binary in 2 files and no Cargo.toml is one binary",
+                path: "tests/it/valves.rs",
+                text: RS_B,
+                case: None,
+                cases: vec![c("valves::closes", Some("mycrate::it"), None, Pass)],
+                files: &["tests/it/main.rs", "tests/it/valves.rs"],
+                manifests: &[],
+                want: "passed",
+            },
+        ];
+        more.extend(vec![
+            Named {
+                id: "B1 the failed unit case is not hidden by an integration binary",
+                path: "src/valves.rs",
+                text: RS,
+                case: None,
+                cases: vec![
+                    c("valves::tests::closes", Some("app"), None, Fail),
+                    c("closes", Some("app::valves"), None, Pass),
+                ],
+                files: &["src/valves.rs", "tests/valves.rs"],
+                manifests: CARGO,
+                want: "failed",
+            },
+            Named {
+                id: "B2 b::closes against a::closes",
+                path: "src/b.rs",
+                text: RS_B,
+                case: None,
+                cases: vec![c("a::closes", Some("app"), None, Pass)],
+                files: &["src/a.rs", "src/b.rs"],
+                manifests: CARGO,
+                want: "unbound",
+            },
+            Named {
+                id: "B2 hot::closes against cold::closes",
+                path: "src/lib.rs",
+                text: HOT,
+                case: None,
+                cases: vec![c("cold::closes", Some("app"), None, Pass)],
+                files: &["src/lib.rs"],
+                manifests: CARGO,
+                want: "unbound",
+            },
+            Named {
+                id: "B2 crate a against crate b",
+                path: "crates/a/tests/cli.rs",
+                text: CLI,
+                case: None,
+                cases: vec![c("runs", Some("b-cli::cli"), None, Pass)],
+                files: CRATE_FILES,
+                manifests: TWO_CRATES,
+                want: "unbound",
+            },
+            Named {
+                id: "B2 crate a against crate b, no Cargo.toml",
+                path: "crates/a/tests/cli.rs",
+                text: CLI,
+                case: None,
+                cases: vec![c("runs", Some("b-cli::cli"), None, Pass)],
+                files: CRATE_FILES,
+                manifests: &[],
+                want: "passed+not-unique",
+            },
+            Named {
+                id: "A3 workspace: tests/cli.rs in 2 crates, silent",
+                path: "crates/a/tests/cli.rs",
+                text: CLI,
+                case: None,
+                cases: vec![
+                    c("runs", Some("a-cli::cli"), None, Pass),
+                    c("runs", Some("b-cli::cli"), None, Fail),
+                ],
+                files: CRATE_FILES,
+                manifests: TWO_CRATES,
+                want: "passed",
+            },
+            Named {
+                id: "A3 Go: server/ beside cmd/server/, the tag in server/",
+                path: "server/serve_test.go",
+                text: GO,
+                case: None,
+                cases: vec![
+                    c("TestServe", Some("example.org/app/server"), None, Pass),
+                    c("TestServe", Some("example.org/app/cmd/server"), None, Fail),
+                ],
+                files: GO_FILES,
+                manifests: GO_MOD,
+                want: "passed",
+            },
+            Named {
+                id: "A3 Go: server/ beside cmd/server/, the tag in cmd/server/",
+                path: "cmd/server/serve_test.go",
+                text: GO,
+                case: None,
+                cases: vec![
+                    c("TestServe", Some("example.org/app/server"), None, Fail),
+                    c("TestServe", Some("example.org/app/cmd/server"), None, Pass),
+                ],
+                files: GO_FILES,
+                manifests: GO_MOD,
+                want: "passed",
+            },
+            Named {
+                id: "B3 the pytest class",
+                path: "tests/test_a.py",
+                text: PY_CLASS,
+                case: None,
+                cases: vec![c("test_closes", Some("tests.test_a.TestPumps"), None, Pass)],
+                files: &["tests/test_a.py"],
+                manifests: &[],
+                want: "unbound",
+            },
+            Named {
+                id: "B3 the JUnit nested class",
+                path: "src/test/java/com/example/ValveTest.java",
+                text: NESTED,
+                case: None,
+                cases: vec![c("closes", Some("com.example.ValveTest$Nested"), None, Pass)],
+                files: &["src/test/java/com/example/ValveTest.java"],
+                manifests: &[],
+                want: "unbound",
+            },
+            Named {
+                id: "a nested class with the method name: a newer Surefire writes the outer class",
+                path: "src/test/java/com/example/ValveTest.java",
+                text: NESTED,
+                case: None,
+                cases: vec![c("closes", Some("com.example.ValveTest"), None, Pass)],
+                files: &["src/test/java/com/example/ValveTest.java"],
+                manifests: &[],
+                want: "passed+not-unique",
+            },
+            Named {
+                id: "B3 an overload is weak",
+                path: "src/test/java/com/example/ValveTest.java",
+                text: OVERLOAD,
+                case: None,
+                cases: vec![c("closes", Some("com.example.ValveTest"), None, Pass)],
+                files: &["src/test/java/com/example/ValveTest.java"],
+                manifests: &[],
+                want: "passed+not-unique",
+            },
+            Named {
+                id: "B3 the Vitest title chain",
+                path: "tests/v.test.ts",
+                text: VT,
+                case: None,
+                cases: vec![c("Pumps > closes", Some("tests/v.test.ts"), None, Pass)],
+                files: &["tests/v.test.ts"],
+                manifests: &[],
+                want: "unbound",
+            },
+            Named {
+                id: "B3 the Playwright title chain",
+                path: "e2e/v.spec.ts",
+                text: PW,
+                case: None,
+                cases: vec![c("Pumps \u{203a} closes", Some("v.spec.ts"), None, Pass)],
+                files: &["e2e/v.spec.ts"],
+                manifests: &[],
+                want: "unbound",
+            },
+            Named {
+                id: "B3 the xUnit display name of another test",
+                path: "tests/ValveTest.cs",
+                text: XU,
+                case: None,
+                cases: vec![c("Closes when cold", Some("Valves.Tests.ValveTest"), None, Pass)],
+                files: &["tests/ValveTest.cs"],
+                manifests: &[],
+                want: "unbound",
+            },
+            Named {
+                id: "M1 2 RSpec examples with 2 full titles",
+                path: "spec/valve_spec.rb",
+                text: TWINS,
+                case: None,
+                cases: vec![
+                    c("Valve#open works", Some("spec.valve_spec"), Some("./spec/valve_spec.rb"), Pass),
+                    c("Valve#shut works", Some("spec.valve_spec"), Some("./spec/valve_spec.rb"), Fail),
+                ],
+                files: &["spec/valve_spec.rb"],
+                manifests: &[],
+                want: "passed",
+            },
+            Named {
+                id: "M2 the rows of a Kotlin name in backticks",
+                path: "src/test/kotlin/com/example/ValveTest.kt",
+                text: KT,
+                case: None,
+                cases: vec![
+                    c("closes on timeout(int)[1]", Some("com.example.ValveTest"), None, Pass),
+                    c("closes on timeout(int)[2]", Some("com.example.ValveTest"), None, Pass),
+                ],
+                files: &["src/test/kotlin/com/example/ValveTest.kt"],
+                manifests: &[],
+                want: "passed",
+            },
+            Named {
+                id: "Playwright: one test in 2 projects",
+                path: "e2e/v.spec.ts",
+                text: PW,
+                case: None,
+                cases: vec![
+                    c("Valves \u{203a} closes", Some("v.spec.ts"), None, Pass),
+                    c("Valves \u{203a} closes", Some("v.spec.ts"), None, Skip),
+                ],
+                files: &["e2e/v.spec.ts"],
+                manifests: &[],
+                want: "passed",
+            },
+            Named {
+                id: "Playwright: one test in 2 projects, with the project in the name",
+                path: "e2e/v.spec.ts",
+                text: PW,
+                case: None,
+                cases: vec![
+                    c("[chromium] Valves \u{203a} closes", Some("v.spec.ts"), None, Pass),
+                    c("[webkit] Valves \u{203a} closes", Some("v.spec.ts"), None, Skip),
+                ],
+                files: &["e2e/v.spec.ts"],
+                manifests: &[],
+                want: "passed",
+            },
+            Named {
+                id: "a pytest row [2] was skipped",
+                path: "tests/test_a.py",
+                text: PY,
+                case: None,
+                cases: vec![
+                    c("test_closes[1]", Some("tests.test_a"), None, Pass),
+                    c("test_closes[2]", Some("tests.test_a"), None, Skip),
+                ],
+                files: &["tests/test_a.py"],
+                manifests: &[],
+                want: "skipped",
+            },
+            Named {
+                id: "a long pytest row that failed is not dropped",
+                path: "tests/test_a.py",
+                text: PY,
+                case: None,
+                cases: vec![
+                    c("test_closes[1]", Some("tests.test_a"), None, Pass),
+                    c(
+                        "test_closes[a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a]",
+                        Some("tests.test_a"),
+                        None,
+                        Fail,
+                    ),
+                ],
+                files: &["tests/test_a.py"],
+                manifests: &[],
+                want: "failed",
+            },
+            Named {
+                id: "A5 case: with one case of another file that passed",
+                path: "tests/test_a.py",
+                text: "# covers: a#b case:test_closes\nVALUE = 1\n",
+                case: Some("test_closes"),
+                cases: vec![c("test_closes", Some("tests.test_b"), None, Pass)],
+                files: &["tests/test_a.py", "tests/test_b.py"],
+                manifests: &[],
+                want: "passed+by-name",
+            },
+            Named {
+                id: "A5 case: with jest-junit defaults and one case",
+                path: "tests/v.test.js",
+                text: "// covers: a#b case:\"Valves closes\"\n",
+                case: Some("Valves closes"),
+                cases: vec![c("Valves closes", Some("Valves closes"), None, Pass)],
+                files: &["tests/v.test.js"],
+                manifests: &[],
+                want: "passed+by-name",
+            },
+            Named {
+                id: "case: with the classname of the tag file is silent",
+                path: "tests/test_a.py",
+                text: "# covers: a#b case:test_closes\nVALUE = 1\n",
+                case: Some("test_closes"),
+                cases: vec![c("test_closes", Some("tests.test_a"), None, Pass)],
+                files: &["tests/test_a.py", "tests/test_b.py"],
+                manifests: &[],
+                want: "passed",
+            },
+        ]);
+        more
+    }
+
+    #[test]
+    fn each_named_cell_of_the_rule_has_its_result() {
+        let mut red = Vec::new();
+        for n in named_cells() {
+            let (proof, bind) = run(n.path, n.text, n.case, &n.cases, n.files, n.manifests);
+            let got = word(&proof, &bind);
+            if got != n.want {
+                red.push(format!("{}: want {}, got {got}", n.id, n.want));
+            }
+        }
+        assert!(red.is_empty(), "{} red\n{}", red.len(), red.join("\n"));
+    }
+}
+
+/// The deterministic guard of the cost of the index (docs/test-report.md).
+#[cfg(test)]
+mod index_cost {
+    use super::*;
+
+    #[test]
+    fn a_name_has_at_most_98_keys() {
+        // 256 bytes and 32 separators in each shape, with many spaces.
+        for sep in [" > ", "::", "/", ".", "#", "(", "[", " \u{203a} "] {
+            for word in ["a ", "ab c d ", "a"] {
+                let mut name = String::new();
+                for i in 0..32 {
+                    name.push_str(&format!("{i}{word}x{sep}"));
+                }
+                while name.len() < 256 {
+                    name.push_str(" y");
+                }
+                let mut end = 256;
+                while !name.is_char_boundary(end) {
+                    end -= 1;
+                }
+                name.truncate(end);
+                let keys = case_keys(&name).0.len();
+                assert!(keys <= 98, "{keys} keys: {name:?}");
+            }
+        }
+        // Many spaces: the ends after the last 32 spaces only, and the name is
+        // in the list of the names with more words.
+        let words = "w ".repeat(120);
+        let (keys, wordy) = case_keys(words.trim_end());
+        assert!(keys.len() <= 98 && wordy, "{}", keys.len());
+    }
+
+    #[test]
+    fn the_index_of_10000_typical_names_has_at_most_6_keys_for_each_case() {
+        let names: Vec<Case> = (0..10_000)
+            .map(|i| {
+                let name = match i % 6 {
+                    0 => format!("test_closes_{i}[1-2]"),
+                    1 => format!("valves::tests::closes_{i}"),
+                    2 => format!("TestClose{i}/no_reply"),
+                    3 => format!("Valves closes on timeout {i}"),
+                    4 => format!("Valves > closes on timeout {i}"),
+                    _ => format!("closes{i}(int)[1]"),
+                };
+                Case {
+                    name,
+                    classname: Some("tests.test_valves".to_string()),
+                    file: None,
+                    outcome: Outcome::Pass,
+                    report: "r.xml".to_string(),
+                }
+            })
+            .collect();
+        let binder = Binder::new(&names, &[]);
+        let entries = binder.index.entries();
+        assert!(entries <= 6 * names.len(), "{entries}");
+    }
+
+    /// A test name with more words than a case keeps ends of finds its case.
+    #[test]
+    fn a_test_with_more_than_32_words_still_finds_a_longer_case() {
+        let lit = format!("{}closes", "very ".repeat(40));
+        let text = format!("// covers: a#b\nit('{lit}', () => {{\n}});\n");
+        let lines: Vec<&str> = text.lines().collect();
+        let cases = [Case {
+            name: format!("Valves {lit}"),
+            classname: None,
+            file: None,
+            outcome: Outcome::Fail,
+            report: "r.xml".to_string(),
+        }];
+        let (proof, _) = Binder::new(&cases, &[]).bind("t/v.test.js", &lines, 0, None);
+        assert_eq!(proof, Proof::Failed(cases[0].name.clone()));
     }
 }
