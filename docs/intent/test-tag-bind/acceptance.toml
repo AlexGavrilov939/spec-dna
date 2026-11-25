@@ -1,0 +1,86 @@
+format = 2
+change = "test-tag-bind"
+scope = [".claude/agents/ownership.md", "CHANGELOG.md", "docs/README.md", "docs/adr/0024-test-report-as-evidence.md", "docs/commands.md", "docs/config.md", "docs/design/0.8.1-a-evidence-and-context.md", "docs/design/0.8.1-a-lifecycle-and-harness.md", "docs/diagnostics.md", "docs/guides/change.md", "docs/init.md", "docs/profiles.md", "docs/test-report.md", "examples/first-project/README.md", "src/check.rs", "src/config.rs", "src/context.rs", "src/detect.rs", "src/diag.rs", "src/evidence.rs", "src/finish.rs", "src/init.rs", "src/json.rs", "src/lifecycle.rs", "src/main.rs", "src/report.rs", "src/upgrade.rs", "tests/accept_cmd.rs", "tests/cli.rs", "tests/evidence_reports.rs", "tests/golden/check-binds.json", "tests/golden/show-binds.json", "tests/golden/show-requirement.json", "tests/init_change.rs", "tests/upgrade_cli.rs"]
+paths = ["src/check.rs", "src/config.rs", "src/context.rs", "src/detect.rs", "src/diag.rs", "src/evidence.rs", "src/finish.rs", "src/init.rs", "src/lifecycle.rs", "src/main.rs", "src/report.rs", "src/upgrade.rs", "tests/accept_cmd.rs", "tests/cli.rs", "tests/evidence_reports.rs", "tests/golden/check-binds.json", "tests/golden/show-binds.json", "tests/golden/show-requirement.json", "tests/init_change.rs", "tests/upgrade_cli.rs"]
+tree = "dcb3dbbbdf875783"
+result = "accepted"
+acknowledged-by = []
+
+[[acceptor]]
+roles = ["acceptor"]
+brief = "39b5612f3c76214e"
+session = "c51acbf1-5aed-497f-8ed7-0e87fb4f43ac"
+agent = "unknown"
+model = "opus"
+result = "accepted"
+
+[[attempt]]
+acceptor = 1
+text = "Proof: cargo fmt --check, cargo clippy --all-targets -- -D warnings and cargo test pass (84 test groups, 3576 tests, 0 failed). pre-commit run --all-files passes and leaves the tree clean. spec-dna check --all: 0 errors, no SD102 and no SD602. The diff against origin/master touches only paths of scope and the folder of the change. [evidence] has no reports key, so no stamp ran."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "The defect (E22): 2 tags on lines 1 and 2 of a Vitest file above `import { describe, it, expect }`, and only the passed case `Pumps > stops it` of another file. Each gives SD616 no-test, line 3 is not a test. Also case:closes with the case `Valves closes` gives no-case and names `Valves closes`, a tag above describe gives group, and a tag above it.each(rows) gives template."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "The breaks of the first record, again: it.skip('opens') with it.each(['fast'])('%s opens') gives skipped; xUnit [Fact(Skip)] Closes() with DisplayName `Closes when cold` gives skipped, and with DisplayName `Closes(cold)` and no own case gives SD621 not-unique; pytest app/tests.py against tests/test_close.py gives skipped or no-case; the nextest lib case valves::tests::closes against tests/app.rs gives no-case; 2 testify suites in TestAll give no-case; Kotlin `stops (fast)` binds `stops (fast)()`."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Rust: src/lib.rs, src/valves/mod.rs and src/valves/seat.rs bind tests::root, valves::tests::closes and valves::seat::tests::seats with fit classname. A Cargo.toml with a later [package.metadata] name, and with single quotes, keeps the package. tests/valves/inner.rs against the binary tests/inner.rs gives SD621 no-identity, not a silent bind."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Go, JVM, .NET: gotestsum short with 2 folders `valves`, and no go.mod, give SD621 not-unique. A subtest TestX/TestOpen does not bind the tag of TestOpen (no-case). JUnit 5 nested Cold.closes with no outer case gives no-case. A Java overload closes(int) gives not-unique. Kotlin rows stops(int)[1] passed and [2] skipped give a shared skip. C# nested block namespaces A.B.ValveTest bind with fit classname."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Other rows: root test_a.py against tests/test_a.py with class TestA gives not-unique. A jest-junit defaults case `Pumps Valves closes` does not prove `Valves closes`. Vitest `never closes` in the tag file gives no-case. PHPUnit `testOneMore` does not bind testOne, and `testOne with data set #0` does. RSpec `Valve#close closes` and `Valve close closes` stay apart. The lines format gives by-name with a path and with `-`."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Code tree and stamp: an untracked test file gives outside-tree, also after an edit after the stamp (issue 113). tree-exclude and a Markdown file give outside-tree. A tracked symbolic link to an ignored test file gives no tag. A report written again after the stamp gives SD614 with `one hook entry`. A tracked edit gives SD614 for the tree."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Bad case: input: `case:\"a b\" case:\"c\"` and `case:\"test_x\"x` are not valid; `case:test_x,` binds; `case:test_x*/` gives no-case and names the value. jest-junit defaults in strict: SD621 is an error and check exits 1."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Hook note of init --dry-run, 21 entries: no note for -DskipTests, -DskipTests=true, -x test, eslint --plugin jest, --collect-only, gradlew clean, go vet, make check and an entry with evidence stamp. A note for bun test, tox, python -m pytest, npx vitest, uv run pytest, cargo nextest and sh -c 'pytest'. Limits as docs/init.md says: a note for echo \"run pytest later\", no note for npm t, and no note for an entry that stamps before the tests."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "A template in a nested group: jest-junit with the file, a tag above it.skip('cold opens') in describe('Valves'), and it.each(['opens'])('%s') in a nested describe('cold'), which also builds `Valves cold opens`. With only the case of the template in the report: passed, fit file, no SD621. With both cases: shared, skipped, which is correct. A plain nested it('opens') and an RSpec interpolation in a loop give SD621 not-unique."
+outcome = "broke"
+
+[[finding]]
+acceptor = 1
+severity = "note"
+path = "src/evidence.rs"
+line = 3323
+text = "A template counts as a twin only in the same chain (`theirs(*line).is_none_or(|c| &c == mine)`). A template in a nested group whose join gives the full title of the tag, in the space join of jest-junit with the file or RSpec, does not make the identity not unique, so the bind stays silent. docs/test-report.md line 242 (limit 6) says that a template that can give the title of a plain test makes that test weak. A plain nested test is caught. The result is correct for each report that also holds the case of the tagged test, because the 2 cases then share a key and the worst decides. Only a report without the tagged case gives a silent pass, so this is a missing SD621 and no false proof of a real run."
+
+[[finding]]
+acceptor = 1
+severity = "note"
+path = "docs/design/0.8.1-a-lifecycle-and-harness.md"
+line = 171
+text = "D89 item 3 still gives the old rule of the hook scan: a hook runs tests when its `id:` or `entry:` has one of the words `test`, `tests`, `junit` and others. src/detect.rs and docs/init.md read the entry only, with a list of commands, the goals of the build tools and the flags that skip the tests. The plan lists this page in Files for D89, but the branch does not change it. The first record named the same gap."
+
+[[finding]]
+acceptor = 1
+severity = "note"
+path = "src/evidence.rs"
+line = 403
+text = "A tag reads only its first `case:` word. `# covers: req#r3 case:test_x case:test_y` binds test_x, and the second `case:` gives no message. The quoted form with a second `case:\"c\"` is not valid, so the 2 forms differ."
