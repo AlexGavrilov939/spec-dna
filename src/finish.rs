@@ -21,7 +21,7 @@
 
 use crate::change::{self, Applied, Change, Delta, DeltaLine, Verb};
 use crate::check;
-use crate::config::Config;
+use crate::config::{Config, Profile};
 use crate::diag::{Code, Diag, Severity};
 use crate::lifecycle::{self, Diff};
 use crate::model::{Class, Corpus, Doc, DocType, LinkRes, Res, join};
@@ -32,6 +32,16 @@ use crate::rollup::{self, Pin, Rollup};
 use crate::split;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
+
+/// The note that a success of `finish` prints, so that each agent gets the rule
+/// of the lessons at the end of a change (harness additions of 0.8.1, item 20).
+const LESSONS_NOTE: &str = "list the lessons of this change for the person: the target file, the text and the evidence of each; edit no target file before the person accepts the lesson";
+
+/// The note on the lessons for a project of `profile`. `lite` prints none (ADR
+/// 0004, amendment of 2026-11-25).
+pub fn lessons_note(profile: Profile) -> Option<&'static str> {
+    (profile != Profile::Lite).then_some(LESSONS_NOTE)
+}
 
 /// The input of `plan`.
 pub struct Ctx<'a> {

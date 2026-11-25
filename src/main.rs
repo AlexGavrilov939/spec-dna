@@ -4480,12 +4480,20 @@ fn finish(repo: &Repo, a: &Args) -> Result<u8, Fatal> {
     if !a.dry_run {
         finish::write_plan(&repo.root, &repo.git, &plan).map_err(|e| Fatal::Io(e.message))?;
     }
-    report_finish(slug, &folder, a, &plan, &cfg.pin);
+    let lessons = finish::lessons_note(cfg.profile);
+    report_finish(slug, &folder, a, &plan, &cfg.pin, lessons);
     Ok(0)
 }
 
 /// The report of a plan that no step stopped, written or not (`--dry-run`).
-fn report_finish(slug: &str, folder: &str, a: &Args, plan: &finish::Plan, pin: &str) {
+fn report_finish(
+    slug: &str,
+    folder: &str,
+    a: &Args,
+    plan: &finish::Plan,
+    pin: &str,
+    lessons: Option<&str>,
+) {
     let diff_of = |w: &finish::Write| init::unified_diff(&w.path, w.old.as_deref(), &w.new, false);
     if a.json {
         let writes = plan.writes.iter().map(|w| {
@@ -4592,6 +4600,10 @@ fn report_finish(slug: &str, folder: &str, a: &Args, plan: &finish::Plan, pin: &
         );
     }
     for note in &plan.notes {
+        eprintln!("note: {note}");
+    }
+    // Only after a write, so the note comes once for each change.
+    if let (false, Some(note)) = (a.dry_run, lessons) {
         eprintln!("note: {note}");
     }
     // The roll-up (design 0.8.0, D54): the documents that the delta made due.
