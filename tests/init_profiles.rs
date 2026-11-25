@@ -1389,6 +1389,125 @@ fn a_new_strict_project_has_the_advisor() {
     );
 }
 
+// ---- The keys of the 3 hooks (harness additions of 0.8.1) ----
+
+/// The keys `subagent-card` and `fix-limit` of the file.
+fn report_keys(r: &Repo) -> (Option<bool>, Option<i64>) {
+    let t = table(r);
+    let h = t.get("harness").unwrap();
+    (
+        h.get("subagent-card").and_then(toml::Value::as_bool),
+        h.get("fix-limit").and_then(toml::Value::as_integer),
+    )
+}
+
+/// Replaces the harness keys `from` of the file with `to`, and commits.
+fn set_keys(r: &Repo, from: &str, to: &str) {
+    let cfg = r.read("spec-dna.toml");
+    assert_eq!(cfg.matches(from).count(), 1, "{from}\n{cfg}");
+    r.write("spec-dna.toml", &cfg.replace(from, to));
+    r.commit("set the keys");
+}
+
+#[test]
+fn a_new_project_gets_the_report_keys_of_its_profile() {
+    for (profile, card, limit) in [
+        ("lite", false, 0),
+        ("standard", true, 3),
+        ("strict", true, 3),
+    ] {
+        for level in ["lean", "full"] {
+            let r = repo();
+            let answers = format!("profile = \"{profile}\"\nharness = \"{level}\"\n");
+            let (code, out, err) = init_with(&r, &answers, &[]);
+            assert_eq!(code, 0, "{profile} {level}: {out}{err}");
+            assert_eq!(
+                report_keys(&r),
+                (Some(card), Some(limit)),
+                "{profile} {level}"
+            );
+            let settings = r.read(".claude/settings.json");
+            assert_eq!(settings.contains("spec-dna hook subagent-card"), card);
+            assert_eq!(settings.contains("spec-dna hook return-state"), card);
+            assert_eq!(settings.contains("spec-dna hook fix-limit"), limit > 0);
+        }
+    }
+    // The level `none` writes no key.
+    let r = repo();
+    let (code, out, err) = init_with(&r, "harness = \"none\"\n", &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let cfg = r.read("spec-dna.toml");
+    assert!(
+        !cfg.contains("subagent-card") && !cfg.contains("fix-limit"),
+        "{cfg}"
+    );
+}
+
+#[test]
+fn reconfigure_keeps_the_report_keys_of_the_file() {
+    const NEW: &str = "subagent-card = true\nfix-limit = 3\n";
+    // The keys of a new project stay with another profile, and with no flag.
+    let r = project_of("standard");
+    reconfigure(&r, "profile = \"lite\"\n");
+    assert_eq!(report_keys(&r), (Some(true), Some(3)));
+    assert!(
+        r.read(".claude/settings.json")
+            .contains("spec-dna hook fix-limit --limit 3 ")
+    );
+    // A value that a person set stays, in each direction.
+    set_keys(&r, NEW, "subagent-card = false\nfix-limit = 5\n");
+    for profile in ["standard", "strict"] {
+        reconfigure(&r, &format!("profile = \"{profile}\"\n"));
+        assert_eq!(report_keys(&r), (Some(false), Some(5)), "{profile}");
+    }
+    let (code, out, err) = run(&r, &["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(report_keys(&r), (Some(false), Some(5)));
+    // A key that a person sets to `true` in `lite` writes the hooks.
+    let r = project_of("lite");
+    assert_eq!(report_keys(&r), (Some(false), Some(0)));
+    set_keys(
+        &r,
+        "subagent-card = false\nfix-limit = 0\n",
+        "subagent-card = true\nfix-limit = 2\n",
+    );
+    reconfigure(&r, "");
+    let settings = r.read(".claude/settings.json");
+    assert!(settings.contains("spec-dna hook subagent-card"), "{settings}");
+    assert!(settings.contains("spec-dna hook fix-limit --limit 2 "), "{settings}");
+}
+
+/// A project of 0.8.0 has a file with no key. `init` and `--reconfigure` add
+/// none, so it gets no hook.
+#[test]
+fn a_file_with_no_report_key_gets_none() {
+    const NEW: &str = "subagent-card = true\nfix-limit = 3\n";
+    let r = project_of("standard");
+    // The positive control: the file of a new project has the keys.
+    set_keys(&r, NEW, "");
+    let no_key = |r: &Repo, what: &str| {
+        assert_eq!(report_keys(r), (None, None), "{what}");
+    };
+    reconfigure(&r, "");
+    no_key(&r, "reconfigure");
+    let settings = r.read(".claude/settings.json");
+    for gone in ["subagent-card", "return-state", "fix-limit"] {
+        assert!(!settings.contains(gone), "{gone}\n{settings}");
+    }
+    let (code, out, err) = run(&r, &["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    no_key(&r, "init");
+    reconfigure(&r, "profile = \"strict\"\n");
+    no_key(&r, "reconfigure to strict");
+    // A new harness in an existing file is no new configuration.
+    let r = repo();
+    let (code, out, err) = init_with(&r, "harness = \"none\"\n", &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    r.commit("adopt spec-dna");
+    reconfigure(&r, "harness = \"lean\"\n");
+    no_key(&r, "from the level none");
+}
+
 // ---- `lite` keeps its files (harness additions of 0.8.1) ----
 
 /// The adapter line of 0.8.0, in `AGENTS.md` and `CLAUDE.md`. `{V}` stands for

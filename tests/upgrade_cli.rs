@@ -2528,6 +2528,8 @@ fn the_first_upgrade_of_the_fixture_of_0_7_1_writes_the_files_of_its_profile() {
             "[owners]",
             "[budgets.area]",
             "[layers.summaries]",
+            "subagent-card",
+            "fix-limit",
         ] {
             assert!(!text.contains(key), "{profile}: upgrade wrote {key}");
         }

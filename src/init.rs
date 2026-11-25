@@ -864,6 +864,20 @@ fn settle_approvals_hook(plan: &mut Plan) {
     }
 }
 
+/// A new configuration with a harness gets the keys `subagent-card` and
+/// `fix-limit` of its profile: `lite` has the hooks off (harness additions of
+/// 0.8.1). `new_config` is true when no `spec-dna.toml` exists. A current file
+/// keeps its keys, and a file with no key gets none, so `--reconfigure` adds no
+/// hook to a project of 0.8.0.
+fn settle_report_hooks(plan: &mut Plan, new_config: bool) {
+    if !new_config || plan.harness.level == Level::None {
+        return;
+    }
+    let on = plan.profile != Profile::Lite;
+    plan.harness.subagent_card.get_or_insert(on);
+    plan.harness.fix_limit.get_or_insert(if on { 3 } else { 0 });
+}
+
 /// Sets `[harness.roles] acceptor.advisor` (design 0.8.0, D81 items 2, 6 and 7)
 /// where the role `acceptor` is in use. A file with no key gets the default of the
 /// profile, so `init` writes the key for each new project. `--reconfigure`
@@ -3619,7 +3633,7 @@ fn ask(plan: &mut Plan, facts: &Facts, io: &mut Ask) -> Result<(), String> {
         plan.base = b.clone();
     }
 
-    io.say("    The agent harness is a team of models for Claude Code. lean writes the main model, `verifier`, `Explore`, `acceptor` (it comes with the skill `review`, and `lite` has none), the stage skills, `REVIEW.md`, up to 3 hooks and a model-team line in CLAUDE.md. It writes the advisor and `fallback-advisor` only when question 13 turns the advisor on.");
+    io.say("    The agent harness is a team of models for Claude Code. lean writes the main model, `verifier`, `Explore`, `acceptor` (it comes with the skill `review`, and `lite` has none), the stage skills, `REVIEW.md`, up to 7 hooks and a model-team line in CLAUDE.md. It writes the advisor and `fallback-advisor` only when question 13 turns the advisor on.");
     io.say("    full also writes `implementer` and `code-simplifier`, and proposes the 11 skills, also the skills that are off by default (`spec-dna skill list` shows them). none writes nothing. The files are for Claude Code only.");
     for n in &plan.harness_notes {
         io.say(&format!("    {n}"));
@@ -3998,6 +4012,7 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     settle_evals(&mut plan);
     settle_approvals_hook(&mut plan);
     settle_advisor(&mut plan);
+    settle_report_hooks(&mut plan, !exists);
     let mut offered = before.clone();
     // The offered defaults are the defaults of the profile that was chosen.
     offered.apply_preset(plan.profile);
@@ -4008,6 +4023,7 @@ pub fn run(repo: &Repo, o: &Opts) -> Result<u8, Fatal> {
     settle_evals(&mut offered);
     settle_approvals_hook(&mut offered);
     settle_advisor(&mut offered);
+    settle_report_hooks(&mut offered, !exists);
     let text = render(&plan);
     // spec-dna never writes a configuration that it cannot read.
     let parsed = Config::parse(&text)
