@@ -1770,22 +1770,37 @@ enum Root {
     Main,
 }
 
-/// True if the root file declares the module with the line `mod <name>;`, with
-/// no indent.
-fn declares_module(text: &str, name: &str) -> bool {
-    text.lines().any(|line| {
-        if indent(line) != 0 || !line.contains(name) {
-            return false;
-        }
+/// Where a root file has the line `mod <name>;`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ModLine {
+    Absent,
+    /// Only with an indent, for example in a macro or in a block `mod`.
+    Indented,
+    /// With no indent.
+    Top,
+}
+
+/// Where the root file declares the module with the line `mod <name>;`.
+fn declares_module(text: &str, name: &str) -> ModLine {
+    let mut out = ModLine::Absent;
+    for line in text.lines().filter(|line| line.contains(name)) {
         let mut off = 0;
         while let Some((_, end)) = skip_item(&[line], 0, off, 1) {
             off = end;
         }
-        strip_modifiers(&line[off..])
+        let declares = strip_modifiers(&line[off..])
             .strip_prefix("mod ")
             .and_then(|r| r.trim_start().strip_prefix(name))
-            .is_some_and(|r| r.trim_start().starts_with(';'))
-    })
+            .is_some_and(|r| r.trim_start().starts_with(';'));
+        if !declares {
+            continue;
+        }
+        if indent(line) == 0 {
+            return ModLine::Top;
+        }
+        out = ModLine::Indented;
+    }
+    out
 }
 
 impl Target {
@@ -1867,10 +1882,34 @@ struct Dotted<'t> {
     whole: usize,
 }
 
-/// True for a file that the class index reads, and for a tag file that asks it:
-/// a `.java`, `.kt` or `.cs` file.
+/// The extension of a file that the class index reads, in lower case: `java`,
+/// `kt` or `cs`. A path can write it in any letter case.
+fn indexed_extension(path: &str) -> Option<&'static str> {
+    let (_, written) = path.rsplit_once('.')?;
+    ["java", "kt", "cs"]
+        .into_iter()
+        .find(|e| e.eq_ignore_ascii_case(written))
+}
+
+/// True for a file that the class index reads, and for a tag file that asks it.
 fn is_indexed(path: &str) -> bool {
-    matches!(path.rsplit_once('.'), Some((_, "java" | "kt" | "cs")))
+    indexed_extension(path).is_some()
+}
+
+/// The name of a Java or C# record, from the text of the line after the word
+/// `record`: white space, the name, and then `(`, `<`, `{`, `:`, `;` or the end
+/// of the line. A use of `record` as an identifier has no such text.
+fn record_name(rest: &str) -> Option<&str> {
+    let spaced = rest.trim_start();
+    if spaced.len() == rest.len() {
+        return None;
+    }
+    // C# can write a name as `@name`.
+    let name = spaced.strip_prefix('@').unwrap_or(spaced);
+    let (name, after) = name.split_at(ident_end(name));
+    let after = after.trim_start();
+    let ends = after.is_empty() || after.starts_with(['(', '<', '{', ':', ';']);
+    (!name.is_empty() && ends).then_some(name)
 }
 
 /// A line of a JVM or .NET file without the text of its comments and strings.
@@ -1958,8 +1997,9 @@ struct Declared {
     /// The names of the `package` line of a JVM file, or of the `namespace`
     /// lines of a .NET file, in their order.
     namespaces: Vec<String>,
-    /// The name of each `class` and `interface`, and of each `object` of
-    /// Kotlin, with true when no namespace comes before it.
+    /// The name of each `class` and `interface`, of each `object` of Kotlin and
+    /// of each bare `record` of Java and C#, with true when no namespace comes
+    /// before it.
     classes: Vec<(String, bool)>,
 }
 
@@ -1973,7 +2013,10 @@ impl Declared {
         } else {
             text
         };
-        let csharp = path.ends_with(".cs");
+        let extension = indexed_extension(path);
+        let csharp = extension == Some("cs");
+        // `record` is a plain word of Kotlin.
+        let records = matches!(extension, Some("java" | "cs"));
         let keyword = if csharp { "namespace" } else { "package" };
         // `object` of C# is the name of a type, not of a declaration.
         let kinds: &[&str] = if csharp {
@@ -1987,7 +2030,10 @@ impl Declared {
         let mut wants: Option<bool> = None;
         for line in text.lines() {
             wants = wants.filter(|namespace| !namespace);
-            if wants.is_none() && !line.contains(keyword) && !kinds.iter().any(|w| line.contains(w))
+            if wants.is_none()
+                && !line.contains(keyword)
+                && !kinds.iter().any(|w| line.contains(w))
+                && !(records && line.contains("record"))
             {
                 continue;
             }
@@ -2042,6 +2088,13 @@ impl Declared {
                 } else if kinds.contains(&word) && !matches!(before, '.' | ':') {
                     // `Valve.class` and `Valve::class` declare nothing.
                     wants = Some(false);
+                } else if records && word == "record" && !matches!(before, '.' | ':') {
+                    // It only adds a name. The next word is read as before, so
+                    // `record class` keeps its class.
+                    if let Some(name) = record_name(&s[n..]) {
+                        out.classes
+                            .push((name.to_string(), out.namespaces.is_empty()));
+                    }
                 }
                 before = 'a';
                 s = &s[n..];
@@ -3475,7 +3528,8 @@ impl<'a> Binder<'a> {
 
     /// The target of a Rust file (`rust_target`). For a module of `src/`, the
     /// root files tell its target: the only one of the crate, or the one of 2
-    /// that declares the module.
+    /// that declares the module with no indent, when the other one does not
+    /// declare it at any indent.
     fn target(&self, path: &str, read: Read) -> Option<Target> {
         let mut target = rust_target(path, &self.names.whole)?;
         if target.part == Part::Module {
@@ -3490,8 +3544,8 @@ impl<'a> Binder<'a> {
                 (None, Some(_)) => Some(Root::Main),
                 (Some(lib), Some(main)) => target.module.first().and_then(|first| {
                     match (declares_module(&lib, first), declares_module(&main, first)) {
-                        (true, false) => Some(Root::Lib),
-                        (false, true) => Some(Root::Main),
+                        (ModLine::Top, ModLine::Absent) => Some(Root::Lib),
+                        (ModLine::Absent, ModLine::Top) => Some(Root::Main),
                         _ => None,
                     }
                 }),
@@ -7861,6 +7915,14 @@ mod matrix {
         const LIB_OTHER: (&str, &str) = ("src/lib.rs", "pub mod pumps;\n");
         const MAIN: (&str, &str) = ("src/main.rs", "#[cfg(unix)]\nmod valves;\nfn main() {}\n");
         const MAIN_OTHER: (&str, &str) = ("src/main.rs", "mod cli;\nfn main() {}\n");
+        const LIB_NESTED: (&str, &str) = (
+            "src/lib.rs",
+            "cfg_if::cfg_if! {\n    if #[cfg(unix)] {\n        pub mod valves;\n    }\n}\n",
+        );
+        const MAIN_NESTED: (&str, &str) = (
+            "src/main.rs",
+            "cfg_if::cfg_if! {\n    if #[cfg(unix)] {\n        mod valves;\n    }\n}\nfn main() {}\n",
+        );
         let unit = |classname: &str, o| c("valves::tests::closes", Some(classname), None, o);
         let lib = |o| unit("pump-app", o);
         let bin = |o| unit("pump-app::bin/pump-app", o);
@@ -7898,6 +7960,36 @@ mod matrix {
             of(
                 "both roots declare the module: a failed binary case stays",
                 &[PKG, LIB, MAIN],
+                vec![lib(Pass), bin(Fail)],
+                "failed+by-name",
+            ),
+            of(
+                "the library declares at an indent: a failed library case stays",
+                &[PKG, LIB_NESTED, MAIN],
+                vec![lib(Fail), bin(Pass)],
+                "failed+by-name",
+            ),
+            of(
+                "the binary declares at an indent: a failed binary case stays",
+                &[PKG, LIB, MAIN_NESTED],
+                vec![lib(Pass), bin(Fail)],
+                "failed+by-name",
+            ),
+            of(
+                "a line at an indent alone does not tie the module to the library",
+                &[PKG, LIB_NESTED, MAIN_OTHER],
+                vec![lib(Pass)],
+                "passed+by-name",
+            ),
+            of(
+                "a line at an indent alone does not tie the module to the binary",
+                &[PKG, LIB_OTHER, MAIN_NESTED],
+                vec![bin(Pass)],
+                "passed+by-name",
+            ),
+            of(
+                "both roots declare the module at an indent",
+                &[PKG, LIB_NESTED, MAIN_NESTED],
                 vec![lib(Pass), bin(Fail)],
                 "failed+by-name",
             ),
@@ -8142,10 +8234,74 @@ mod matrix {
                 "namespace Plant.Cold;\n\npublic partial class ValveTest { }\n",
             ),
             net(
-                false,
-                "GAP .NET: a twin bare `record`, which is no line of the page",
+                true,
+                ".NET: a twin bare `record` with parameters",
                 "other/Specs.cs",
                 "namespace Plant.Cold;\n\npublic record ValveTest(int Id);\n",
+            ),
+            net(
+                true,
+                ".NET: a twin bare `record` with its body on the next line",
+                "other/Specs.cs",
+                "namespace Plant.Cold;\n\npublic record ValveTest\n{\n}\n",
+            ),
+            net(
+                true,
+                ".NET: a twin generic bare `record` with a base",
+                "other/Specs.cs",
+                "namespace Plant.Cold;\n\n[Tag] public sealed record ValveTest<T> : Base;\n",
+            ),
+            net(
+                false,
+                "GAP .NET: a twin `record struct`, because `struct` is unread",
+                "other/Specs.cs",
+                "namespace Plant.Cold;\n\npublic record struct ValveTest(int Id);\n",
+            ),
+            jvm(
+                true,
+                "JVM: a twin Java `record`",
+                "b/Specs.java",
+                "package com.cold;\n\nrecord ValveTest(int id) {}\n",
+            ),
+            jvm(
+                true,
+                "JVM: a twin generic Java `record`",
+                "b/Specs.java",
+                "package com.cold;\n\npublic record ValveTest<T>(T id) {\n}\n",
+            ),
+            net(
+                true,
+                ".NET: a twin file with the extension .CS",
+                "other/A14.CS",
+                TWIN_CS,
+            ),
+            jvm(
+                true,
+                "JVM: a twin file with the extension .JAVA",
+                "other/A14.JAVA",
+                TWIN_JAVA,
+            ),
+            jvm(
+                true,
+                "JVM: a twin file with the extension .Kt",
+                "other/A14.Kt",
+                "package com.cold\n\nclass ValveTest {\n}\n",
+            ),
+            cell(
+                true,
+                ".NET: a tag file with the extension .Cs",
+                ("unit/ValveTest.Cs", CS.1),
+                "Plant.Cold.ValveTest",
+                "Closes",
+                vec![("other/Specs.cs", TWIN_CS)],
+            ),
+            cell(
+                true,
+                "JVM: a tag file with the extension .JAVA",
+                ("a/ValveTest.JAVA", JAVA.1),
+                "com.cold.ValveTest",
+                "closes",
+                vec![("b/Specs.java", TWIN_JAVA)],
             ),
             net(
                 true,
@@ -8361,6 +8517,50 @@ mod matrix {
                 ".NET: the class name in comments and strings",
                 "other/Notes.cs",
                 "namespace Plant.Cold;\n\n// class ValveTest\n/// <summary>class ValveTest</summary>\npublic class Notes\n{\n    string a = \"class ValveTest\";\n    string b = @\"C:\\\" + \"class ValveTest\";\n    string c = $@\"say \"\"class ValveTest\"\"\";\n}\n",
+            ),
+            // `record` as an identifier declares nothing: in the tag file and in
+            // a second file of its namespace.
+            cell(
+                false,
+                "JVM: Java uses `record` as an identifier",
+                (
+                    "a/ValveTest.java",
+                    "package com.cold;\n\nclass ValveTest {\n    Record record;\n\n    void record(Record record) {\n        record = record.next();\n        record.close();\n    }\n\n    // covers: a#b\n    @Test\n    void closes() {\n        var record = new ValveTest();\n        record(record);\n    }\n}\n",
+                ),
+                "com.cold.ValveTest",
+                "closes",
+                vec![(
+                    "b/Uses.java",
+                    "package com.cold;\n\nclass Uses {\n    private ValveTest record;\n\n    ValveTest record() {\n        return record;\n    }\n\n    void record (ValveTest record, Record other) {\n        record = new ValveTest();\n        record.closes();\n        record(record, ValveTest.class);\n        if (record instanceof ValveTest) {\n            other = (Record) record;\n        }\n        for (ValveTest record : all) {\n        }\n    }\n}\n",
+                )],
+            ),
+            cell(
+                false,
+                "JVM: Kotlin uses `record` as an identifier",
+                (
+                    "a/ValveTest.kt",
+                    "package com.cold\n\nclass ValveTest {\n    var record = Record()\n\n    fun record(record: Record) {\n        record.close()\n    }\n\n    // covers: a#b\n    @Test\n    fun closes() {\n        val record = ValveTest()\n        record(record)\n    }\n}\n",
+                ),
+                "com.cold.ValveTest",
+                "closes",
+                vec![(
+                    "b/Uses.kt",
+                    "package com.cold\n\nfun record(record: ValveTest): ValveTest {\n    record.x = 1\n    record = ValveTest()\n    record ValveTest()\n    val k = record\n    return record\n}\n",
+                )],
+            ),
+            cell(
+                false,
+                ".NET: C# uses `record` as an identifier",
+                (
+                    "unit/ValveTest.cs",
+                    "namespace Plant.Cold;\n\npublic class ValveTest\n{\n    Record record;\n\n    void record(Record record)\n    {\n        record.Close();\n    }\n\n    // covers: a#b\n    [Fact]\n    public void Closes()\n    {\n        var record = new ValveTest();\n        record(record);\n    }\n}\n",
+                ),
+                "Plant.Cold.ValveTest",
+                "Closes",
+                vec![(
+                    "other/Uses.cs",
+                    "namespace Plant.Cold;\n\npublic class Uses\n{\n    private ValveTest record;\n\n    public ValveTest record() => record;\n\n    void Use(Record record, ValveTest[] items)\n    {\n        var record = new ValveTest();\n        record = new ValveTest();\n        record.Close();\n        record?.Close();\n        record (record, typeof(ValveTest));\n        if (record is ValveTest) { }\n        var a = record as ValveTest;\n        var b = record switch { _ => 1 };\n        var c = record with { };\n        foreach (var record in items) { }\n        return record;\n    }\n}\n",
+                )],
             ),
             // What the line reader counts although it is no declaration: each of
             // these gives a weak bind, never a silent one.
