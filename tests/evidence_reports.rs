@@ -1975,9 +1975,10 @@ fn a_tag_above_a_test_with_a_template_name_binds_no_case() {
 }
 
 #[test]
-fn a_case_that_names_2_tests_belongs_to_the_test_with_the_nearer_name() {
-    // The case `Valves > never closes` ends with both names. It belongs to
-    // `never closes`, so the tag above `closes` has no case.
+fn a_case_with_the_group_separator_does_not_match_the_end_of_a_shorter_title() {
+    // The case `Valves > never closes` ends with both names. It has a segment
+    // of ` > `, so the end after a space does not count, and the tag above
+    // `closes` has no case.
     let text = format!(
         "describe('Valves', () => {{\n  {SLASH_TAG}  it('closes', () => {{\n    expect(1).toBe(1);\n  }});\n\n  it('never closes', () => {{\n    expect(1).toBe(1);\n  }});\n}});\n"
     );
