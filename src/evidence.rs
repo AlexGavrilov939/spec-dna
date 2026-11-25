@@ -21,7 +21,7 @@ use crate::diag::{Code, Diag};
 use crate::model::{Corpus, Doc, Res, canonical};
 use crate::repo::{Fatal, Repo};
 use crate::report::{Case, Outcome, Reads};
-use std::cell::RefCell;
+use std::cell::{OnceCell, RefCell};
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasher, RandomState};
@@ -1867,6 +1867,284 @@ struct Dotted<'t> {
     whole: usize,
 }
 
+/// True for a file that the class index reads, and for a tag file that asks it:
+/// a `.java`, `.kt` or `.cs` file.
+fn is_indexed(path: &str) -> bool {
+    matches!(path.rsplit_once('.'), Some((_, "java" | "kt" | "cs")))
+}
+
+/// A line of a JVM or .NET file without the text of its comments and strings.
+/// It reads one line at a time, so no comment and no string can hide a later
+/// line. A later line of a comment or of a string thus reads as code, which
+/// counts more declarations, never less. A quote or `/*` with no end on the
+/// line follows the same rule: a quote hides nothing, and `/*` hides the rest
+/// of its line only.
+fn code_of(line: &str, csharp: bool) -> String {
+    let mut s = line.trim_start_matches('\u{feff}').trim_start();
+    if s.starts_with('*') {
+        // The inner line of a `/* ... */` comment.
+        let Some((_, after)) = s.split_once("*/") else {
+            return String::new();
+        };
+        s = after;
+    } else if csharp && s.starts_with('#') {
+        return String::new();
+    }
+    let mut out = String::with_capacity(s.len());
+    while let Some(c) = s.chars().next() {
+        let mut next = &s[c.len_utf8()..];
+        match c {
+            '/' if next.starts_with('/') => break,
+            '/' if next.starts_with('*') => {
+                let Some((_, after)) = next[1..].split_once("*/") else {
+                    break;
+                };
+                next = after;
+                out.push(' ');
+            }
+            '"' | '\'' => {
+                // A C# verbatim string has no escape, and `""` is a quote.
+                let verbatim = csharp && out.trim_end_matches('$').ends_with('@');
+                let quotes = s.len() - s.trim_start_matches(c).len();
+                if c == '"' && quotes >= 3 {
+                    let body = &s[quotes..];
+                    next = body
+                        .split_once(&s[..quotes])
+                        .map_or(body, |(_, after)| after);
+                } else if let Some(end) = string_end(next, c, verbatim) {
+                    next = &next[end..];
+                }
+                out.push('"');
+            }
+            '`' => match next.split_once('`') {
+                // A Kotlin name in backticks: `package a.`in``.
+                Some((name, after)) if ident_end(name) == name.len() => {
+                    out.push_str(name);
+                    next = after;
+                }
+                Some((_, after)) => {
+                    next = after;
+                    out.push('"');
+                }
+                None => out.push(' '),
+            },
+            _ => out.push(c),
+        }
+        s = next;
+    }
+    out
+}
+
+/// The byte after the quote that ends a string, from the byte after the quote
+/// that starts it.
+fn string_end(s: &str, quote: char, verbatim: bool) -> Option<usize> {
+    let mut chars = s.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        if c == '\\' && !verbatim {
+            chars.next();
+        } else if c == quote {
+            if verbatim && chars.next_if(|(_, n)| *n == quote).is_some() {
+                continue;
+            }
+            return Some(i + 1);
+        }
+    }
+    None
+}
+
+/// What a JVM or .NET file declares, as the class index reads it.
+#[derive(Default)]
+struct Declared {
+    /// The names of the `package` line of a JVM file, or of the `namespace`
+    /// lines of a .NET file, in their order.
+    namespaces: Vec<String>,
+    /// The name of each `class` and `interface`, and of each `object` of
+    /// Kotlin, with true when no namespace comes before it.
+    classes: Vec<(String, bool)>,
+}
+
+impl Declared {
+    fn read(path: &str, text: &str) -> Declared {
+        // A UTF-16 file reads with a NUL beside each ASCII letter.
+        let plain;
+        let text = if text.contains('\0') {
+            plain = text.replace('\0', "");
+            plain.as_str()
+        } else {
+            text
+        };
+        let csharp = path.ends_with(".cs");
+        let keyword = if csharp { "namespace" } else { "package" };
+        // `object` of C# is the name of a type, not of a declaration.
+        let kinds: &[&str] = if csharp {
+            &["class", "interface"]
+        } else {
+            &["class", "object", "interface"]
+        };
+        let mut out = Declared::default();
+        // The keyword that waits for its name: true for a namespace. A class
+        // name can come on a later line.
+        let mut wants: Option<bool> = None;
+        for line in text.lines() {
+            wants = wants.filter(|namespace| !namespace);
+            if wants.is_none() && !line.contains(keyword) && !kinds.iter().any(|w| line.contains(w))
+            {
+                continue;
+            }
+            let code = code_of(line, csharp);
+            let mut s = code.as_str();
+            let mut before = ' ';
+            loop {
+                let t = s.trim_start();
+                if t.len() < s.len() {
+                    before = ' ';
+                }
+                s = t;
+                let Some(c) = s.chars().next() else {
+                    break;
+                };
+                if let Some(namespace) = wants.take() {
+                    // C# can write a name as `@name`.
+                    let r = s.strip_prefix('@').unwrap_or(s);
+                    let n = r
+                        .find(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '$' | '.')))
+                        .unwrap_or(r.len());
+                    if n > 0 {
+                        let name = &r[..n];
+                        if namespace {
+                            // Only the name of the namespace can end its line.
+                            // An extra namespace takes a file out of the default
+                            // one, so prose with the word must not count.
+                            let rest = r[n..].trim_start();
+                            let ends = rest.is_empty() || rest.starts_with(['{', ';']);
+                            if ends && !name.starts_with('.') && !name.ends_with('.') {
+                                out.namespaces.push(name.to_string());
+                            }
+                        } else {
+                            let name = name.split('.').next().unwrap_or(name);
+                            out.classes
+                                .push((name.to_string(), out.namespaces.is_empty()));
+                        }
+                        s = &r[n..];
+                        before = ' ';
+                        continue;
+                    }
+                }
+                let n = ident_end(s);
+                if n == 0 {
+                    before = c;
+                    s = &s[c.len_utf8()..];
+                    continue;
+                }
+                let word = &s[..n];
+                if word == keyword {
+                    wants = Some(true);
+                } else if kinds.contains(&word) && !matches!(before, '.' | ':') {
+                    // `Valve.class` and `Valve::class` declare nothing.
+                    wants = Some(false);
+                }
+                before = 'a';
+                s = &s[n..];
+            }
+        }
+        out
+    }
+}
+
+/// True if the namespace lines of a file can give the namespace `package`: one
+/// line is it, or lines in their order join to it, as nested blocks do.
+fn gives_namespace(lines: &[String], package: &str) -> bool {
+    // The places of `package` where the name of a later line can start.
+    let mut starts = vec![0];
+    for line in lines {
+        if line == package {
+            return true;
+        }
+        let mut more = Vec::new();
+        for &from in &starts {
+            let Some(rest) = package[from..].strip_prefix(line.as_str()) else {
+                continue;
+            };
+            if rest.is_empty() {
+                return true;
+            }
+            let to = from + line.len() + 1;
+            if rest.starts_with('.') && !starts.contains(&to) {
+                more.push(to);
+            }
+        }
+        starts.extend(more);
+    }
+    false
+}
+
+/// A file of the class index that declares a class.
+struct Source<'t> {
+    path: &'t str,
+    namespaces: Vec<String>,
+}
+
+/// The class index of step 5 (design 0.8.1, D82): the classes that the JVM and
+/// .NET files of the code tree declare. It keeps no text and no name of a class:
+/// the sources can declare millions of classes.
+#[derive(Default)]
+struct ClassIndex<'t> {
+    hasher: RandomState,
+    files: Vec<Source<'t>>,
+    /// The hash of a class name, a file that declares it, and true when no
+    /// namespace comes before the declaration, in the order of these 3. 2 names
+    /// can share a hash: a file then counts for both, which gives a weak bind
+    /// and no silent one.
+    classes: Vec<(u64, u32, bool)>,
+}
+
+impl<'t> ClassIndex<'t> {
+    fn new(paths: &[&'t str], read: &dyn Fn(&str) -> Option<String>) -> ClassIndex<'t> {
+        let mut out = ClassIndex::default();
+        for &path in paths {
+            let Some(text) = read(path) else {
+                continue;
+            };
+            let declared = Declared::read(path, &text);
+            if declared.classes.is_empty() {
+                continue;
+            }
+            let at = out.files.len() as u32;
+            for (name, global) in declared.classes {
+                out.classes.push((out.hasher.hash_one(&*name), at, global));
+            }
+            out.files.push(Source {
+                path,
+                namespaces: declared.namespaces,
+            });
+        }
+        out.classes.sort_unstable();
+        out.classes.dedup();
+        out
+    }
+
+    /// True if a file other than `tag` declares the class `class` in the
+    /// namespace `package`, which is empty for the default one. The count is
+    /// not 2 or more, so that a tag file that the reader cannot read hides no
+    /// twin.
+    fn elsewhere(&self, tag: &str, package: &str, class: &str) -> bool {
+        let name = self.hasher.hash_one(class);
+        let from = self.classes.partition_point(|c| c.0 < name);
+        self.classes[from..]
+            .iter()
+            .take_while(|c| c.0 == name)
+            .any(|&(_, at, global)| {
+                let file = &self.files[at as usize];
+                file.path != tag
+                    && if package.is_empty() {
+                        global || file.namespaces.is_empty()
+                    } else {
+                        gives_namespace(&file.namespaces, package)
+                    }
+            })
+    }
+}
+
 /// What the files of the code tree name, with the test files that git does not
 /// track: their paths, the ends of their paths and of their dotted paths, their
 /// stems and folders, the folders of Go and the targets of Rust. Each count is
@@ -1887,6 +2165,8 @@ struct Names<'t> {
     go_tests: HashMap<&'t str, Vec<&'t str>>,
     /// The key of a Rust target to the folders of the crates that have it.
     rust: HashMap<String, HashSet<String>>,
+    /// The files that the class index reads, in the order of the path list.
+    sources: Vec<&'t str>,
 }
 
 /// The stem of a file as the binary id of nextest writes it: the name of the
@@ -1928,10 +2208,14 @@ impl<'t> Names<'t> {
             go_folders: Vec::new(),
             go_tests: HashMap::new(),
             rust: HashMap::new(),
+            sources: Vec::new(),
         };
         let mut go = HashSet::new();
         let files: Vec<&'t str> = paths.iter().map(String::as_str).collect();
         for f in files {
+            if is_indexed(f) {
+                n.sources.push(f);
+            }
             for end in path_ends(f) {
                 *n.ends.entry(end).or_default() += 1;
             }
@@ -3083,6 +3367,8 @@ pub struct Binder<'a> {
     /// `long-name` only.
     long: Index,
     names: Names<'a>,
+    /// The class index, built for the first JVM or .NET tag that needs it.
+    classes: OnceCell<ClassIndex<'a>>,
     /// A manifest or a root file of a crate, to its text: each is read once.
     manifests: RefCell<HashMap<String, Option<Rc<str>>>>,
     /// The folder of a `Cargo.toml`, to its package: each is parsed once.
@@ -3126,6 +3412,7 @@ impl<'a> Binder<'a> {
             index,
             long,
             names: Names::new(paths),
+            classes: OnceCell::new(),
             manifests: RefCell::new(HashMap::new()),
             packages: RefCell::new(HashMap::new()),
             go_counts: RefCell::new(HashMap::new()),
@@ -3319,9 +3606,69 @@ impl<'a> Binder<'a> {
             .count()
     }
 
+    fn classes(&self, read: Read) -> &ClassIndex<'a> {
+        self.classes
+            .get_or_init(|| ClassIndex::new(&self.names.sources, read))
+    }
+
+    /// True if another file of the code tree declares the full class name of a
+    /// JVM or .NET test, whatever its folders or its file name are.
+    fn declared_elsewhere(&self, id: &Identity, case: &Case, read: Read) -> bool {
+        let Some(chain) = id.classes().filter(|c| !c.is_empty()) else {
+            return false;
+        };
+        let top = chain.split('.').next().unwrap_or(&chain);
+        let index = self.classes(read);
+        if let Package::Line(p) = &id.package {
+            return index.elsewhere(id.path, p, top);
+        }
+        // With no `package` line, the namespace is the default one, or the one
+        // that the `classname` gives.
+        let cn = case.classname.as_deref().unwrap_or("");
+        let cn = cn.replace(['$', '+'], ".");
+        index.elsewhere(id.path, "", top)
+            || cn
+                .strip_suffix(&chain)
+                .and_then(|r| r.strip_suffix('.'))
+                .is_some_and(|p| index.elsewhere(id.path, p, top))
+    }
+
+    /// The same for a case that `case:` names. The last part of its `classname`
+    /// is a class, and so is each part before it that the tag file declares.
+    /// `own` are the classes of the tag file.
+    fn classname_elsewhere(
+        &self,
+        path: &str,
+        own: &HashSet<String>,
+        classname: &str,
+        read: Read,
+    ) -> bool {
+        let cn = classname.replace(['$', '+'], ".");
+        let index = self.classes(read);
+        let mut end = cn.len();
+        loop {
+            let start = cn[..end].rfind('.').map_or(0, |i| i + 1);
+            let class = &cn[start..end];
+            if end < cn.len() && !own.contains(class) {
+                return false;
+            }
+            if index.elsewhere(path, &cn[..start.saturating_sub(1)], class) {
+                return true;
+            }
+            if start == 0 {
+                return false;
+            }
+            end = start - 1;
+        }
+    }
+
     /// True if the field that names the test file names more than one file of
-    /// the path list.
+    /// the path list, or if another file declares the class of a JVM or .NET
+    /// test.
     fn ambiguous(&self, id: &Identity, row: Row, case: &Case, read: Read) -> bool {
+        if is_indexed(id.path) && self.declared_elsewhere(id, case, read) {
+            return true;
+        }
         let file = case.file.as_deref().map(report_path);
         let cn = case.classname.as_deref().unwrap_or("");
         let n = match row {
@@ -3525,6 +3872,28 @@ impl<'a> Binder<'a> {
                 .collect(),
             package: package_line(lines),
         };
+        let own_classes: HashSet<String> = if is_indexed(path) {
+            Declared::read(path, &lines.join("\n"))
+                .classes
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect()
+        } else {
+            HashSet::new()
+        };
+        // A `classname` to the answer of the class index, read once for each.
+        let mut declared: HashMap<&str, bool> = HashMap::new();
+        let mut tie = |c: &'a Case| {
+            let fit = self.tie(&file, c, read)?;
+            let twin = is_indexed(path)
+                && c.file.is_none()
+                && c.classname.as_deref().is_some_and(|cn| {
+                    *declared
+                        .entry(cn)
+                        .or_insert_with(|| self.classname_elsewhere(path, &own_classes, cn, read))
+                });
+            if twin { Err(Why::NotUnique) } else { Ok(fit) }
+        };
         let mut out: Vec<Judged> = self
             .lookup(value)
             .iter()
@@ -3536,7 +3905,7 @@ impl<'a> Binder<'a> {
                     .is_none_or(|f| same_file(&report_path(f), path))
             })
             .map(|c| {
-                let mut judged = Judged::new(c, &c.name, self.tie(&file, c, read));
+                let mut judged = Judged::new(c, &c.name, tie(c));
                 // The projects of Playwright run one test more than once.
                 judged.repeats =
                     judged.own.is_some() && c.file.is_none() && c.name.contains(" \u{203a} ");
@@ -7585,6 +7954,480 @@ mod matrix {
                 "passed+not-unique",
             ),
         ]
+    }
+
+    /// A file of the code tree with its text.
+    type Source = (&'static str, &'static str);
+
+    /// A cell of the class index: the tag file, the other files of the code
+    /// tree, and the `classname` and the name of the test under the tag.
+    struct Indexed {
+        id: &'static str,
+        tag: Source,
+        others: Vec<Source>,
+        classname: &'static str,
+        name: &'static str,
+        /// True when another file declares the full class name.
+        weak: bool,
+    }
+
+    fn indexed_cells() -> Vec<Indexed> {
+        // .NET: the folders of no file show the namespace.
+        const CS: Source = (
+            "unit/ValveTest.cs",
+            "namespace Plant.Cold;\n\npublic class ValveTest\n{\n    // covers: a#b\n    [Fact]\n    public void Closes()\n    {\n    }\n}\n",
+        );
+        const CS_NESTED: Source = (
+            "unit/OuterTest.cs",
+            "namespace Plant.Cold;\n\npublic class Outer\n{\n    public class Inner\n    {\n        // covers: a#b\n        [Fact]\n        public void Closes()\n        {\n        }\n    }\n}\n",
+        );
+        const CS_ABC: Source = (
+            "unit/CTest.cs",
+            "namespace A.B;\n\npublic class C\n{\n    // covers: a#b\n    [Fact]\n    public void Closes()\n    {\n    }\n}\n",
+        );
+        const CS_SHOWN: Source = (
+            "a/Plant/Cold/ValveTest.cs",
+            "namespace Plant.Cold;\n\npublic class ValveTest\n{\n    // covers: a#b\n    [Fact]\n    public void Closes()\n    {\n    }\n}\n",
+        );
+        const JAVA: Source = (
+            "a/ValveTest.java",
+            "package com.cold;\n\nclass ValveTest {\n    // covers: a#b\n    @Test\n    void closes() {\n    }\n}\n",
+        );
+        const JAVA_SHOWN: Source = (
+            "a/src/test/java/com/cold/ValveTest.java",
+            "package com.cold;\n\nclass ValveTest {\n    // covers: a#b\n    @Test\n    void closes() {\n    }\n}\n",
+        );
+        const KT: Source = (
+            "a/ValveTest.kt",
+            "package com.cold\n\nclass ValveTest {\n    // covers: a#b\n    @Test\n    fun closes() {\n    }\n}\n",
+        );
+        const JAVA_NESTED: Source = (
+            "a/Outer.java",
+            "package com.cold;\n\nclass Outer {\n    @Nested\n    class Inner {\n        // covers: a#b\n        @Test\n        void closes() {\n        }\n    }\n}\n",
+        );
+        const JAVA_INNER: Source = (
+            "a/Inner.java",
+            "package com.cold;\n\nclass Inner {\n    // covers: a#b\n    @Test\n    void closes() {\n    }\n}\n",
+        );
+        const JAVA_DEFAULT: Source = (
+            "a/ValveTest.java",
+            "class ValveTest {\n    // covers: a#b\n    @Test\n    void closes() {\n    }\n}\n",
+        );
+        const TWIN_CS: &str = "namespace Plant.Cold;\n\npublic class ValveTest\n{\n}\n";
+        const TWIN_JAVA: &str = "package com.cold;\n\nclass ValveTest {\n}\n";
+        fn cell(
+            weak: bool,
+            id: &'static str,
+            tag: Source,
+            classname: &'static str,
+            name: &'static str,
+            others: Vec<Source>,
+        ) -> Indexed {
+            Indexed {
+                id,
+                tag,
+                others,
+                classname,
+                name,
+                weak,
+            }
+        }
+        let net = |weak, id, path, text| {
+            cell(
+                weak,
+                id,
+                CS,
+                "Plant.Cold.ValveTest",
+                "Closes",
+                vec![(path, text)],
+            )
+        };
+        let jvm = |weak, id, path, text| {
+            cell(
+                weak,
+                id,
+                JAVA,
+                "com.cold.ValveTest",
+                "closes",
+                vec![(path, text)],
+            )
+        };
+        let abc = |id, text| {
+            cell(
+                true,
+                id,
+                CS_ABC,
+                "A.B.C",
+                "Closes",
+                vec![("other/Specs.cs", text)],
+            )
+        };
+        vec![
+            net(
+                true,
+                ".NET: one namespace in 2 files, folders that do not show it",
+                "other/ValveTest.cs",
+                TWIN_CS,
+            ),
+            cell(
+                true,
+                ".NET: one namespace in 2 files, folders that show it",
+                CS_SHOWN,
+                "Plant.Cold.ValveTest",
+                "Closes",
+                vec![("b/Plant/Cold/ValveTest.cs", TWIN_CS)],
+            ),
+            net(
+                true,
+                ".NET: the file name of the twin differs from the class",
+                "other/Specs.cs",
+                TWIN_CS,
+            ),
+            net(
+                true,
+                ".NET: the twin is outside the test files",
+                "src/Production.cs",
+                TWIN_CS,
+            ),
+            net(
+                true,
+                ".NET: a namespace block",
+                "other/Specs.cs",
+                "namespace Plant.Cold\n{\n    public class ValveTest\n    {\n    }\n}\n",
+            ),
+            abc(
+                ".NET: nested namespace blocks on one line",
+                "namespace A { namespace B {\n    public class C { }\n} }\n",
+            ),
+            abc(
+                ".NET: nested namespace blocks with an indent",
+                "namespace A\n{\n    namespace B\n    {\n        public class C\n        {\n        }\n    }\n}\n",
+            ),
+            abc(
+                ".NET: nested namespace blocks with no indent",
+                "namespace A {\nnamespace B {\npublic class C {\n}\n}\n}\n",
+            ),
+            abc(
+                ".NET: the whole twin on one line",
+                "namespace A { namespace B { public class C { } } }\n",
+            ),
+            net(
+                true,
+                ".NET: a file-scoped namespace after a byte order mark",
+                "other/Specs.cs",
+                "\u{feff}namespace Plant.Cold;\npublic class ValveTest { }\n",
+            ),
+            net(
+                true,
+                ".NET: a twin file in UTF-16, as it reads",
+                "other/Specs.cs",
+                "\u{fffd}\u{fffd}n\0a\0m\0e\0s\0p\0a\0c\0e\0 \0P\0l\0a\0n\0t\0.\0C\0o\0l\0d\0;\0\n\0c\0l\0a\0s\0s\0 \0V\0a\0l\0v\0e\0T\0e\0s\0t\0 \0{\0 \0}\0\n\0",
+            ),
+            net(
+                true,
+                ".NET: a second namespace of a file with 2",
+                "other/Specs.cs",
+                "namespace Plant.Hot\n{\n    public class Pump { }\n}\nnamespace Plant.Cold\n{\n    public class ValveTest { }\n}\n",
+            ),
+            net(
+                true,
+                ".NET: a twin `record class`",
+                "other/Specs.cs",
+                "namespace Plant.Cold;\n\npublic record class ValveTest;\n",
+            ),
+            net(
+                true,
+                ".NET: a twin `partial class`",
+                "other/Specs.cs",
+                "namespace Plant.Cold;\n\npublic partial class ValveTest { }\n",
+            ),
+            net(
+                false,
+                "GAP .NET: a twin bare `record`, which is no line of the page",
+                "other/Specs.cs",
+                "namespace Plant.Cold;\n\npublic record ValveTest(int Id);\n",
+            ),
+            net(
+                true,
+                ".NET: attributes and modifiers on the line of the class",
+                "other/Specs.cs",
+                "namespace Plant.Cold;\n\n[Collection(\"db\")] [Trait(\"a\", \"b\")] public sealed class ValveTest : Base<int>\n{\n}\n",
+            ),
+            cell(
+                true,
+                ".NET: a twin nested class chain",
+                CS_NESTED,
+                "Plant.Cold.Outer+Inner",
+                "Closes",
+                vec![(
+                    "other/Specs.cs",
+                    "namespace Plant.Cold;\n\npublic class Outer\n{\n    public class Inner\n    {\n    }\n}\n",
+                )],
+            ),
+            jvm(
+                true,
+                "JVM: one full class name in 2 modules, folders that do not show the package",
+                "b/ValveTest.java",
+                TWIN_JAVA,
+            ),
+            cell(
+                true,
+                "JVM: one full class name in 2 modules, folders that show the package",
+                JAVA_SHOWN,
+                "com.cold.ValveTest",
+                "closes",
+                vec![("b/src/test/java/com/cold/ValveTest.java", TWIN_JAVA)],
+            ),
+            jvm(
+                true,
+                "JVM: a Kotlin twin in Specs.kt",
+                "b/Specs.kt",
+                "package com.cold\n\nclass ValveTest {\n}\n",
+            ),
+            cell(
+                true,
+                "JVM: a Kotlin tag and a Java twin",
+                KT,
+                "com.cold.ValveTest",
+                "closes",
+                vec![("b/Other.java", TWIN_JAVA)],
+            ),
+            jvm(
+                true,
+                "JVM: a twin `data class`",
+                "b/Specs.kt",
+                "package com.cold\n\ndata class ValveTest(val id: Int)\n",
+            ),
+            jvm(
+                true,
+                "JVM: a twin `object`",
+                "b/Specs.kt",
+                "package com.cold\n\nobject ValveTest {\n}\n",
+            ),
+            jvm(
+                true,
+                "JVM: a twin `interface`",
+                "b/Specs.kt",
+                "package com.cold\n\ninterface ValveTest\n",
+            ),
+            jvm(
+                true,
+                "JVM: a .kt file with 2 classes",
+                "b/Specs.kt",
+                "package com.cold\n\nclass PumpTest {\n}\n\nclass ValveTest {\n}\n",
+            ),
+            jvm(
+                true,
+                "JVM: Java annotations and modifiers on the line of the class",
+                "b/Specs.java",
+                "package com.cold;\n\n@ExtendWith(Ext.class) @Tag(\"db\") public final class ValveTest {\n}\n",
+            ),
+            jvm(
+                true,
+                "JVM: an annotation between the modifiers",
+                "b/Specs.java",
+                "package com.cold;\n\npublic @Tag(\"db\") final class ValveTest {\n}\n",
+            ),
+            jvm(
+                true,
+                "JVM: Kotlin annotations and modifiers on the line of the class",
+                "b/Specs.kt",
+                "package com.cold\n\n@Tag(\"db\") internal open class ValveTest : Base() {\n}\n",
+            ),
+            jvm(
+                true,
+                "JVM: a block comment before the class on its line",
+                "b/Specs.java",
+                "package com.cold;\n\n/* made */ class ValveTest {\n}\n",
+            ),
+            jvm(
+                true,
+                "JVM: the name on the line below the keyword",
+                "b/Specs.java",
+                "package com.cold;\n\npublic class\n    ValveTest {\n}\n",
+            ),
+            cell(
+                true,
+                "JVM: a twin nested class chain",
+                JAVA_NESTED,
+                "com.cold.Outer$Inner",
+                "closes",
+                vec![(
+                    "b/Specs.kt",
+                    "package com.cold\n\nclass Outer {\n    inner class Inner {\n    }\n}\n",
+                )],
+            ),
+            cell(
+                true,
+                "JVM: the default package in 2 modules",
+                JAVA_DEFAULT,
+                "ValveTest",
+                "closes",
+                vec![("b/Specs.kt", "class ValveTest {\n}\n")],
+            ),
+            cell(
+                true,
+                "JVM: no package line, a twin with the package of the classname",
+                JAVA_DEFAULT,
+                "a.ValveTest",
+                "closes",
+                vec![("b/Specs.kt", "package a\n\nclass ValveTest {\n}\n")],
+            ),
+            cell(
+                true,
+                "JVM: the default package, a twin below prose with the word package",
+                JAVA_DEFAULT,
+                "ValveTest",
+                "closes",
+                vec![(
+                    "b/Specs.java",
+                    "/*\n  This package holds the valves.\n*/\nclass ValveTest {\n}\n",
+                )],
+            ),
+            // The silent cells.
+            cell(
+                false,
+                ".NET: a single file",
+                CS,
+                "Plant.Cold.ValveTest",
+                "Closes",
+                vec![],
+            ),
+            net(
+                false,
+                ".NET: one class name in 2 namespaces",
+                "other/ValveTest.cs",
+                "namespace Plant.Hot;\n\npublic class ValveTest\n{\n}\n",
+            ),
+            cell(
+                false,
+                "JVM: a single file",
+                JAVA,
+                "com.cold.ValveTest",
+                "closes",
+                vec![],
+            ),
+            jvm(
+                false,
+                "JVM: one class name in 2 packages",
+                "b/ValveTest.java",
+                "package com.hot;\n\nclass ValveTest {\n}\n",
+            ),
+            cell(
+                false,
+                "JVM: the default package and a named package",
+                JAVA_DEFAULT,
+                "ValveTest",
+                "closes",
+                vec![("b/Specs.kt", "package com.hot\n\nclass ValveTest {\n}\n")],
+            ),
+            cell(
+                false,
+                "JVM: 2 outer classes with one name of a nested class",
+                JAVA_NESTED,
+                "com.cold.Outer$Inner",
+                "closes",
+                vec![(
+                    "b/Specs.kt",
+                    "package com.cold\n\nclass Other {\n    inner class Inner\n}\n",
+                )],
+            ),
+            jvm(
+                false,
+                "JVM: uses of the class in a second file",
+                "b/Uses.kt",
+                "package com.cold\n\nimport com.cold.ValveTest\n\nval a = ValveTest()\nval k = ValveTest::class\nval n = k.simpleName\n",
+            ),
+            jvm(
+                false,
+                "JVM: the class name in line comments",
+                "b/Notes.java",
+                "package com.cold;\n\n// class ValveTest is in module a\nclass Notes {} // class ValveTest\n",
+            ),
+            jvm(
+                false,
+                "JVM: the class name in a block comment with stars",
+                "b/Notes.java",
+                "package com.cold;\n\n/**\n * class ValveTest is in module a\n */\nclass Notes { /* class ValveTest */ }\n",
+            ),
+            jvm(
+                false,
+                "JVM: the class name in a string",
+                "b/Notes.java",
+                "package com.cold;\n\nclass Notes {\n    String a = \"class ValveTest {\";\n    String b = \"\\\" class ValveTest\";\n    char c = '\"';\n    Class<?> d = ValveTest.class;\n}\n",
+            ),
+            net(
+                false,
+                ".NET: the class name in comments and strings",
+                "other/Notes.cs",
+                "namespace Plant.Cold;\n\n// class ValveTest\n/// <summary>class ValveTest</summary>\npublic class Notes\n{\n    string a = \"class ValveTest\";\n    string b = @\"C:\\\" + \"class ValveTest\";\n    string c = $@\"say \"\"class ValveTest\"\"\";\n}\n",
+            ),
+            // What the line reader counts although it is no declaration: each of
+            // these gives a weak bind, never a silent one.
+            jvm(
+                true,
+                "OVER JVM: a block comment line with no star",
+                "b/Notes.java",
+                "package com.cold;\n\n/*\nclass ValveTest\n*/\nclass Notes {}\n",
+            ),
+            jvm(
+                true,
+                "OVER JVM: a line of a text block",
+                "b/Notes.java",
+                "package com.cold;\n\nclass Notes {\n    String a = \"\"\"\n        class ValveTest {}\n        \"\"\";\n}\n",
+            ),
+            cell(
+                true,
+                "OVER JVM: a nested class with the name of a top class",
+                JAVA_INNER,
+                "com.cold.Inner",
+                "closes",
+                vec![(
+                    "b/Specs.kt",
+                    "package com.cold\n\nclass Outer {\n    class Inner\n}\n",
+                )],
+            ),
+        ]
+    }
+
+    /// The class index of step 5. For each cell: the tagged test is skipped and
+    /// a case passed in another report; the report holds only the passed case;
+    /// and `case:` names that case.
+    #[test]
+    fn the_class_index_finds_each_other_file_that_declares_the_class() {
+        use Outcome::{Pass, Skip};
+        let mut red = Vec::new();
+        for n in indexed_cells() {
+            let mut sources = vec![n.tag];
+            sources.extend(n.others);
+            let files: Vec<&str> = sources.iter().map(|s| s.0).collect();
+            let skip = c(n.name, Some(n.classname), None, Skip);
+            let pass = c(n.name, Some(n.classname), None, Pass);
+            let two = [skip, second(pass.clone())];
+            let one = [pass];
+            let want = if n.weak {
+                [
+                    "skipped+not-unique",
+                    "passed+not-unique",
+                    "passed+not-unique",
+                ]
+            } else {
+                ["passed"; 3]
+            };
+            let forms = [
+                ("skip and pass", &two[..], None),
+                ("one case", &one[..], None),
+                ("case:", &one[..], Some(n.name)),
+            ];
+            for ((form, cases, case), want) in forms.into_iter().zip(want) {
+                let (proof, bind) = run(n.tag.0, n.tag.1, case, cases, &files, &sources);
+                let got = word(&proof, &bind);
+                if got != want {
+                    red.push(format!("{} [{form}]: want {want}, got {got}", n.id));
+                }
+            }
+        }
+        assert!(red.is_empty(), "{} red\n{}", red.len(), red.join("\n"));
     }
 
     /// The same identity 2 times: in one report only the projects of
