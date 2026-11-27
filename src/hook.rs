@@ -617,6 +617,33 @@ fn said_file(count: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
+/// Takes the one message of a count. `create_new` gives the file of the message
+/// to one call only. A pass of the command can delete the count at the same
+/// time. So the call then looks for the count. If it is gone, the call removes
+/// its file and prints nothing: the problem ended, and a call that removes the
+/// file must not speak, because another call can then create it again.
+///
+/// A pass removes the count first and this file second. So if the look is
+/// before the first removal, the pass removes the file. If the look is after it,
+/// the call finds no count and removes the file, unless another call started a
+/// new count in between (`docs/harness.md` lists this case). The look rests on a
+/// rule of `rename`: no lookup misses a path while a new file replaces it. So
+/// with no pass, the count is there, and no call removes the file of a message.
+fn claim(count: &Path, step: &mut dyn FnMut(&'static str)) -> bool {
+    let said = said_file(count);
+    step("claim");
+    if create_file(&said).is_err() {
+        return false;
+    }
+    step("look");
+    if !fs::symlink_metadata(count).is_err_and(|e| e.kind() == ErrorKind::NotFound) {
+        return true;
+    }
+    step("withdraw");
+    let _ = fs::remove_file(said);
+    false
+}
+
 /// Handles one event of `Bash`, `Edit` or `Write`. A failed fix is a failure
 /// of a command after the same agent made an edit since its last failure. At
 /// the limit, the hook returns the JSON that tells the agent to stop, once for
@@ -631,6 +658,19 @@ pub fn fix_limit(
     opts: &FixOpts,
     project: Option<&Path>,
     state_dir: &Path,
+) -> Option<String> {
+    fix_limit_steps(input, opts, project, state_dir, &mut |_| {})
+}
+
+/// `fix_limit`, with a call of `step` before each file step on a count, its
+/// message file and the edit mark of a failure. A unit test holds a call
+/// there, so it can run calls at the same time in a given order.
+fn fix_limit_steps(
+    input: &str,
+    opts: &FixOpts,
+    project: Option<&Path>,
+    state_dir: &Path,
+    step: &mut dyn FnMut(&'static str),
 ) -> Option<String> {
     if opts.limit == 0 {
         return None;
@@ -660,13 +700,9 @@ pub fn fix_limit(
             state_folder(state_dir)?;
             remove_stale(state_dir);
             // Each failure uses up the mark, so one edit counts once.
+            step("mark");
             let edited = fs::remove_file(&mark).is_ok();
-            // A pass at the same time as a failure can leave the file of the
-            // message with no count file. A new count removes it. A count file
-            // that cannot be read keeps it, so the message stays said.
-            if fs::symlink_metadata(&path).is_err_and(|e| e.kind() == ErrorKind::NotFound) {
-                let _ = fs::remove_file(said_file(&path));
-            }
+            step("read");
             let old = fs::read_to_string(&path)
                 .ok()
                 .and_then(|t| t.parse::<u64>().ok());
@@ -675,22 +711,28 @@ pub fn fix_limit(
                 Some(n) if edited => n.saturating_add(1),
                 Some(_) => return None,
             };
+            step("write");
             replace_file(state_dir, &path, &count.to_string())?;
             if count != opts.limit {
                 return None;
             }
-            // Calls at the same time can read the same count. Only the call
-            // that creates this file speaks.
-            create_file(&said_file(&path)).ok()?;
+            // Calls at the same time can read the same count. One call speaks.
+            if !claim(&path, step) {
+                return None;
+            }
             let text = MSG_FIX_LIMIT.replace("{n}", &opts.limit.to_string());
             Some(output("PostToolUseFailure", "additionalContext", &text))
         }
         ("PostToolUse", "Bash") => {
             let path = count_file()?;
             // Most calls pass with no count, and then the folder needs no test.
+            step("pass look");
             if fs::symlink_metadata(&path).is_ok() && own_dir(state_dir) {
+                // The count goes first: see `claim`.
+                step("pass count");
+                let _ = fs::remove_file(&path);
+                step("pass said");
                 let _ = fs::remove_file(said_file(&path));
-                let _ = fs::remove_file(path);
             }
             None
         }
@@ -2797,6 +2839,7 @@ fn artifact_of(path: &str, intent: &[String]) -> Option<(String, &'static str, &
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc::{Receiver, Sender, channel};
 
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -2878,6 +2921,241 @@ mod tests {
             }
             assert_eq!(messages, 1, "round {round}");
         }
+    }
+
+    /// One call of `fix-limit` in a thread of its own. It stops before each
+    /// file step, until the test lets it go on.
+    struct Held {
+        go: Sender<()>,
+        stops: Receiver<Stop>,
+        /// The step before which the call stops. `None`: the call ended.
+        next: Option<&'static str>,
+        spoke: bool,
+    }
+
+    enum Stop {
+        Before(&'static str),
+        End(bool),
+    }
+
+    impl Held {
+        fn new(state: PathBuf, input: String) -> Held {
+            let (go, wait) = channel::<()>();
+            let (send, stops) = channel();
+            std::thread::spawn(move || {
+                let mut step = |name| {
+                    let _ = send.send(Stop::Before(name));
+                    // A test that fails drops `go`. Then the call runs to its end.
+                    let _ = wait.recv();
+                };
+                let out = fix_limit_steps(&input, &limit_3(), None, &state, &mut step);
+                let _ = send.send(Stop::End(out.is_some()));
+            });
+            let mut held = Held {
+                go,
+                stops,
+                next: None,
+                spoke: false,
+            };
+            held.wait_for_stop();
+            held
+        }
+
+        fn wait_for_stop(&mut self) {
+            match self.stops.recv().expect("the call did not panic") {
+                Stop::Before(name) => self.next = Some(name),
+                Stop::End(spoke) => (self.next, self.spoke) = (None, spoke),
+            }
+        }
+
+        /// Runs the next step, and returns its name. `None`: the call ended.
+        fn step(&mut self) -> Option<&'static str> {
+            let name = self.next?;
+            self.go.send(()).expect("the call waits");
+            self.wait_for_stop();
+            Some(name)
+        }
+
+        fn run(&mut self, steps: usize) {
+            for _ in 0..steps {
+                self.step();
+            }
+        }
+
+        /// Runs the call to its end. True if it printed the message.
+        fn finish(&mut self) -> bool {
+            while self.step().is_some() {}
+            self.spoke
+        }
+    }
+
+    fn limit_3() -> FixOpts {
+        FixOpts {
+            limit: 3,
+            intent: Vec::new(),
+        }
+    }
+
+    fn tool_event(event: &str, tool: &str, input: &str) -> String {
+        format!(
+            r#"{{"session_id":"s1","cwd":"/p","hook_event_name":"{event}","tool_name":"{tool}","tool_input":{input}}}"#
+        )
+    }
+
+    /// The calls of the command `make` in one state folder. Each function that
+    /// returns a number gives the number of messages of its calls.
+    struct Make(Tmp);
+
+    impl Make {
+        fn new() -> Make {
+            Make(Tmp::new())
+        }
+
+        fn event(event: &str) -> String {
+            tool_event(event, "Bash", r#"{"command":"make"}"#)
+        }
+
+        fn call(&self, input: &str) -> usize {
+            usize::from(fix_limit(input, &limit_3(), None, &self.0.state()).is_some())
+        }
+
+        fn fail(&self) -> usize {
+            self.call(&Make::event("PostToolUseFailure"))
+        }
+
+        fn edit(&self) {
+            self.call(&tool_event(
+                "PostToolUse",
+                "Edit",
+                r#"{"file_path":"/p/src/a.c"}"#,
+            ));
+        }
+
+        /// `n` fixes that fail: an edit, then a failure, `n` times.
+        fn fixes(&self, n: usize) -> usize {
+            (0..n)
+                .map(|_| {
+                    self.edit();
+                    self.fail()
+                })
+                .sum()
+        }
+
+        fn pass(&self) {
+            self.call(&Make::event("PostToolUse"));
+        }
+
+        fn held(&self, event: &str) -> Held {
+            Held::new(self.0.state(), Make::event(event))
+        }
+
+        /// True if the state has a count file, and if it has a message file.
+        fn files(&self) -> (bool, bool) {
+            let names: Vec<String> = fs::read_dir(self.0.state())
+                .unwrap()
+                .map(|e| e.unwrap().file_name().into_string().unwrap())
+                .collect();
+            let said = names.iter().any(|n| n.ends_with(".said"));
+            let count = names
+                .iter()
+                .any(|n| !n.ends_with(".said") && !n.ends_with(".edit"));
+            (count, said)
+        }
+    }
+
+    #[test]
+    fn fix_limit_speaks_once_with_2_failures_held_before_any_step() {
+        // More than the file steps of one failure.
+        const STEPS: usize = 9;
+        // No pass runs. 2 failures run at the same time as the other calls, and
+        // the test holds each one before each of its steps in turn.
+        for first in 0..STEPS {
+            for second in 0..STEPS {
+                let make = Make::new();
+                // The first one starts before the count exists.
+                let mut a = make.held("PostToolUseFailure");
+                a.run(first);
+                let mut messages = make.fail() + make.fixes(2);
+                // The second one and the next call both can reach the limit.
+                make.edit();
+                let mut b = make.held("PostToolUseFailure");
+                b.run(second);
+                assert!(
+                    (first < STEPS - 1 || a.next.is_none())
+                        && (second < STEPS - 1 || b.next.is_none()),
+                    "give STEPS a higher value"
+                );
+                messages += make.fixes(1);
+                messages += usize::from(a.finish());
+                messages += usize::from(b.finish());
+                // Then calls in sequence, so each case reaches the limit.
+                messages += make.fixes(5);
+                assert_eq!(messages, 1, "held after {first} and {second} steps");
+            }
+        }
+    }
+
+    #[test]
+    fn fix_limit_leaves_no_message_file_after_a_pass_in_any_order() {
+        // A pass and the failure that reaches the limit, in each order of the
+        // steps of the 2 calls. `choices` says which call runs at each point
+        // where both can run.
+        let mut choices: Vec<bool> = Vec::new();
+        let mut withdrawn = 0;
+        loop {
+            let make = Make::new();
+            assert_eq!(make.fail() + make.fixes(2), 0);
+            make.edit();
+            let mut speaker = make.held("PostToolUseFailure");
+            let mut pass = make.held("PostToolUse");
+            let mut ran = Vec::new();
+            let mut depth = 0;
+            while speaker.next.or(pass.next).is_some() {
+                let take_pass = if speaker.next.is_some() && pass.next.is_some() {
+                    if depth == choices.len() {
+                        choices.push(false);
+                    }
+                    depth += 1;
+                    choices[depth - 1]
+                } else {
+                    pass.next.is_some()
+                };
+                let call = if take_pass { &mut pass } else { &mut speaker };
+                ran.push(call.step().unwrap());
+            }
+            let at = |name: &str| ran.iter().position(|&s| s == name).unwrap();
+            // The setup leaves a count, so the pass always removes one.
+            let removed = at("pass count");
+            let (count, said) = make.files();
+            if !count {
+                assert!(!said, "a message file with no count: {ran:?}");
+            } else if removed < at("read") {
+                // The failure came after the pass: a new count.
+                assert!(!said, "a new count with a message file: {ran:?}");
+            } else {
+                // The count came back: the pass removed it after the failure
+                // read it, and before the failure wrote it. The next pass ends
+                // this count.
+                assert!(removed < at("write"), "{ran:?}");
+                make.pass();
+                assert_eq!(make.files(), (false, false), "{ran:?}");
+            }
+            // A call that removes its message file prints nothing.
+            if ran.contains(&"withdraw") {
+                assert!(!speaker.spoke, "{ran:?}");
+                withdrawn += 1;
+            }
+            // The next problem has its own message.
+            assert_eq!(make.fail() + make.fixes(5), 1, "{ran:?}");
+            while choices.last() == Some(&true) {
+                choices.pop();
+            }
+            let Some(last) = choices.last_mut() else {
+                break;
+            };
+            *last = true;
+        }
+        assert!(withdrawn > 0);
     }
 
     // ----- fan-out bound -----

@@ -1182,25 +1182,6 @@ fn fix_limit_writes_no_count_in_place() {
 }
 
 #[test]
-fn fix_limit_speaks_again_after_a_message_file_with_no_count() {
-    // A pass and a failure of one command at the same time can leave the file
-    // of the message with no count. It must not silence the next count.
-    let fix = Fix::new();
-    assert_eq!(fix.fail(), "");
-    let count = fix.state()[0].0.clone();
-    let folder = fix.dir.0.join("tmp/spec-dna-fix");
-    fix.pass(COMMAND);
-    fs::write(folder.join(format!("{count}.said")), "").unwrap();
-    assert_eq!(fix.fail(), "");
-    for _ in 0..2 {
-        fix.edit();
-        assert_eq!(fix.fail(), "");
-    }
-    fix.edit();
-    assert_ne!(fix.fail(), "");
-}
-
-#[test]
 fn fix_limit_is_off_at_0_and_silent_on_input_that_it_does_not_know() {
     for args in [
         &["fix-limit", "--limit", "0"][..],
