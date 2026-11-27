@@ -46,5 +46,6 @@ This page lists each page of the documentation. The [README](../README.md) gives
 - [Design of 0.8.1, part A: evidence and context](design/0.8.1-a-evidence-and-context.md): the binding of a test tag, the summary tier of `context`, the pins of the roll-up and the untracked tests.
 - [Design of 0.8.1, part A: lifecycle and harness](design/0.8.1-a-lifecycle-and-harness.md): the friction of the change process, the context meter, the default harness and the eval runner.
 - [Harness additions of 0.8.1](design/0.8.1-harness-additions.md): the design of 5 harness additions: the subagent card, the limit of failed fixes, lessons, the cost report and `outline`.
+- [Design of 0.8.1, part B](design/0.8.1-b.md): the summaries of the areas in `context` for a source file (D101).
 - [Research matrix](research/matrix.md): standards and prior art.
 - [Changelog](../CHANGELOG.md), [Contributing](../CONTRIBUTING.md), [Security](../SECURITY.md).
