@@ -275,7 +275,9 @@ Each hook is a subcommand of the spec-dna binary. A hook reads the event of Clau
 
 Each teammate needs spec-dna 0.5.0 or later on `PATH` for the hooks. The hook `protect-tests` needs 0.6.0 or later, and the hook `protect-approvals` needs 0.7.0 or later. The hooks `subagent-card`, `return-state` and `fix-limit` need 0.8.1 or later. The command uses POSIX shell syntax. On Windows, Claude Code must run hooks in a POSIX shell, such as Git Bash.
 
-A live check on Claude Code 2.1.332 tested some facts that the hooks `subagent-card`, `return-state` and `fix-limit` need. It used 2 headless sessions (`claude -p`) with the model `haiku`. Its hooks did not run spec-dna. They recorded names, the presence of keys and the length of a report, and they printed nothing. In the first session, the command `false` failed and the command `true` passed. The session also started an agent of the project and the built-in `general-purpose`. The live check recorded no tool call of these 2 agents. The second session started with `--agent <name>` and ran the command `true`. The sections of the 3 hooks say what the live check showed. It showed nothing about the effect of an output of a hook. Another version or mode of Claude Code can differ.
+A live check on Claude Code 2.1.332 tested some facts that the hooks `subagent-card`, `return-state` and `fix-limit` need. It used 2 headless sessions (`claude -p`) with the model `haiku`. Its hooks did not run spec-dna. They recorded names, the presence of keys and the length of a report, and they printed nothing. In the first session, the command `false` failed and the command `true` passed. The session also started an agent of the project and the built-in `general-purpose`. The live check recorded no tool call of these 2 agents. The second session started with `--agent <name>` and ran the command `true`. The live check showed nothing about the effect of an output of a hook.
+
+A live test on the same version then ran the 3 hooks of spec-dna in headless sessions with the model `haiku`, with no `--agent` and with `--agent <name>`. The settings had the entries that `init` writes for these hooks, with the path of the build in place of the name `spec-dna`. The test removed the generated agent files, skills, team page, `CLAUDE.md` line and `REVIEW.md`, so only a hook could give the card or the message of the fix limit. The sections of the 3 hooks say what the live check and the live test showed. Another version or mode of Claude Code can differ.
 
 ### `spec-dna hook context-meter`
 
@@ -390,15 +392,14 @@ Subagent card. Your agent file and your brief have priority over this card.
 
 For the agent `acceptor`, line 3 is ``3. Commit only `acceptance.toml`, and do not push.``, and the card has 791 bytes. The team page prints the card, so a pull request shows each change of it. The card adds nothing to the output of `spec-dna accept --brief`.
 
-The hook reads `agent_type` of the input, and it gives no output for an empty or absent one. In the [live check](#hooks), the input of `SubagentStart` had the keys `agent_type` and `agent_id`. The event occurred for the agent of the project and for `general-purpose`, and `agent_type` was the name of the agent. A hook with the matcher `.+` ran for both. The hooks reference of Claude Code states that a `SubagentStart` hook cannot block, and that it can add `additionalContext`.
+The hook reads `agent_type` of the input, and it gives no output for an empty or absent one. In the [live check](#hooks), the input of `SubagentStart` had the keys `agent_type` and `agent_id`. The event occurred for the agent of the project and for `general-purpose`, and `agent_type` was the name of the agent. A hook with the matcher `.+` ran for both. In the live test, a subagent copied a sentence and the form of a lesson line from the card. Its task, its agent file and the files of the project did not hold them, and the test recorded no tool call of that subagent. So the card reached its context. The hooks reference of Claude Code states that a `SubagentStart` hook cannot block, and that it can add `additionalContext`.
 
 The hook cannot prove these things:
 
-- That the card reaches a subagent. The hooks of the live check printed nothing. Only the hooks reference states that the subagent gets the `additionalContext` of this event.
 - That a subagent obeys the card. The card is text in its context.
 - That an agent other than Claude Code gets the card. That agent gets it only when the main session pastes it into the task brief.
-- That the main agent of a session with `--agent <name>` gets the card. In the live check, such a session gave no `SubagentStart` and no `SubagentStop` event. So do not rely on the card, or on `return-state`, for an agent that you start in this way, such as an acceptor in a session of its own.
-- That it skips each internal agent of Claude Code. The live check saw no event of an internal agent, also not in the session with `--agent`. Only the hooks reference states the `agent_type` of an internal agent. It is empty, which the matcher `.+` skips, or it is the name of the `--agent` of the session. So an internal agent of a session that starts with `--agent <name>` can get the card, and one block from `return-state`.
+- That the main agent of a session with `--agent <name>` gets the card. In the live check and in the live test, such a session gave no `SubagentStart` and no `SubagentStop` event for its main agent. So do not rely on the card, or on `return-state`, for an agent that you start in this way, such as an acceptor in a session of its own.
+- That it skips each internal agent of Claude Code. The live check and the live test saw no event of an internal agent, also not with `--agent`. Only the hooks reference states the `agent_type` of an internal agent. It is empty, which the matcher `.+` skips, or it is the name of the `--agent` of the session. So an internal agent of a session that starts with `--agent <name>` can get the card, and one block from `return-state`.
 
 Each subagent gets 800 bytes or fewer in its context, and each of its requests sends them again from the cache. The request of the main session gets no byte.
 
@@ -414,12 +415,14 @@ The hook blocks only when `stop_hook_active` is `false`. Thus it adds one reques
 
 In the [live check](#hooks), the input of `SubagentStop` had the keys `agent_type`, `agent_id`, `agent_transcript_path`, `last_assistant_message` and `stop_hook_active`. `last_assistant_message` was a text that was not empty. The event occurred for the agent of the project and for `general-purpose`, and a hook with the matcher `.+` ran for both.
 
-The hooks reference of Claude Code states that with the tool `SubagentHandback`, the report is the `message` input of that tool. After such a call, the hook reads the `message` of the last call in the transcript of the subagent. It reads from the end of the file, 4 MiB at most. A subagent can give a later report in plain text. So if an assistant text follows the last call in the transcript, a state line at the end of `last_assistant_message` also passes. A final text with no state line does not replace the message of the call. The live check showed no call of `SubagentHandback`, so no live run confirmed this form of the transcript.
+In the live test, a subagent gave a report with no state line. At its first `SubagentStop`, `stop_hook_active` was the boolean `false`, and the hook blocked. The subagent then gave one more report, which ended with a state line. At the second `SubagentStop`, `stop_hook_active` was the boolean `true`, the hook printed nothing, and the subagent ended. So the block gave the subagent one more instruction.
+
+The hooks reference of Claude Code states that with the tool `SubagentHandback`, the report is the `message` input of that tool. After such a call, the hook reads the `message` of the last call in the transcript of the subagent. It reads from the end of the file, 4 MiB at most. A subagent can give a later report in plain text. So if an assistant text follows the last call in the transcript, a state line at the end of `last_assistant_message` also passes. A final text with no state line does not replace the message of the call. The live check and the live test showed no call of `SubagentHandback`, so no live run confirmed this form of the transcript.
 
 The hook cannot prove these things:
 
-- That it ever blocks. It blocks only when `stop_hook_active` is the boolean `false`. The live check showed that the key is there, but it did not record the type or the value. If Claude Code sends another form, the hook never blocks, and it gives no message.
-- That a block gives the subagent one more instruction. The hooks of the live check printed nothing. Only the hooks reference states that `decision: "block"` prevents the stop of the subagent, and that the subagent gets the reason as its next instruction.
+- That it blocks on each version of Claude Code. It blocks only when `stop_hook_active` is the boolean `false`. If a version sends another form, the hook never blocks, and it gives no message.
+- That the second report has a state line. A subagent can give none again, and the hook then lets it end.
 - That the state is true. A subagent can write `COMPLETE` for work that fails. The verifier and the acceptance record stay the controls.
 - That one more request is useful. A subagent with a structured output, such as an agent of a workflow with a schema, can get it, because its last text has no state line.
 
@@ -447,15 +450,17 @@ The command is `spec-dna hook fix-limit --limit <n> --intent '<dir>'...`, with o
 
 In the [live check](#hooks), the command `false` gave `PostToolUseFailure` and no `PostToolUse`. The command `true` gave `PostToolUse` and no `PostToolUseFailure`. Both inputs of the first session had `session_id`, `tool_name` and `tool_input.command`, and no `agent_id`. In the session with `--agent`, the input of `PostToolUse` had `agent_type` and no `agent_id`. So for that input, the hook uses the counts of the main session.
 
+In the live test, one command failed again and again, with a `Write` call between 2 failures. The hook printed the message at the failure after the third `Write`, and not at the next failure. The last reply of the agent held 2 phrases that only the message has, so the message reached its context. Each of these failures had `is_interrupt` with the boolean `false`. In a subagent, the inputs of `PreToolUse` and `PostToolUse` of a `Bash` call had `agent_id` and `agent_type`.
+
 The state is one file for each count, one for each edit mark and one for each message, in `<temporary directory>/spec-dna-fix/`. A count file holds a number, and the other files are empty. The file of a message keeps the message single when calls run at the same time. The name of a file has the session id and the agent. The name of a count also has the first 8 bytes of SHA-256 of the session id, a zero byte and the command. The files hold no text of a command. The session id salts the hash, but a person who has the session id can test a guess of a short command. The hook removes a file that is older than 3 days ([ADR 0004](adr/0004-harness.md)). It uses the folder only if it is a folder, and no symlink, that your user owns. No write follows a symlink.
 
 The hook cannot prove these things:
 
 - That it runs. In a shared temporary directory, another user can make the folder `spec-dna-fix` first. Then the hook counts nothing, and it gives no message.
-- That the agent gets the message. The hooks of the live check printed nothing. Only the hooks reference states that the agent gets the `additionalContext` of `PostToolUseFailure`.
 - That the agent stops. The message is context, and the hook cannot block.
-- That 2 subagents have 2 counts in Claude Code. The hook takes the agent from `agent_id` of a tool event. The live check recorded no tool event of a subagent. So it showed neither that such an event reaches the hook nor that the event has `agent_id`. With no `agent_id`, the hook uses the counts of the main session.
-- That an edit sets the edit mark in Claude Code. The live check had no `Edit` or `Write` call.
+- That 2 subagents have 2 counts in Claude Code. The hook takes the agent from `agent_id` of a tool event. The live test saw `agent_id` on a call of a subagent that passed, but no call of a subagent failed. With no `agent_id`, the hook uses the counts of the main session.
+- That an `Edit` call sets the edit mark in Claude Code. The live test used only `Write`.
+- That an interrupted call has `is_interrupt` set to `true`. No live run gave such a failure.
 - That it sees each fix. A fix through `Bash`, such as `sed -i`, sets no edit mark.
 - That it sees each failure. A command in a pipe, such as `cargo test | tail`, has the exit code of the last command.
 - That 2 commands are 2 problems. A changed command, such as `pytest -x` after `pytest`, starts a new count.
