@@ -1,5 +1,5 @@
 ---
-status: draft
+status: accepted
 class: higher-risk
 ---
 # A failed test case never proves a requirement, a case of another language never fails a test, and 2,000 tags on one title add at most 1 s
