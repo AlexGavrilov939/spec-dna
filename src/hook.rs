@@ -652,6 +652,10 @@ pub fn fix_limit(
     let event = v.get("hook_event_name").as_str()?;
     match (event, v.get("tool_name").as_str()?) {
         ("PostToolUseFailure", "Bash") => {
+            // An abort, not an error of the tool: it tells nothing about a fix.
+            if v.get("is_interrupt") == &Value::Bool(true) {
+                return None;
+            }
             let path = count_file()?;
             state_folder(state_dir)?;
             remove_stale(state_dir);

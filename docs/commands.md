@@ -1333,6 +1333,8 @@ A deny is `permissionDecision: "deny"` with a reason. The reason of rule 3 names
 | `PostToolUse` | `Bash` | Deletes the count of the command, and the file of its message |
 | `PostToolUse` | `Edit` or `Write` | Sets the edit mark of the agent, except for a `file_path` below an `--intent` folder |
 
+When `is_interrupt` of a `PostToolUseFailure` input is the boolean `true`, the hook reads and writes no state, and it prints nothing.
+
 The key of a count has 3 parts. They are the session id, the agent (`main`, else `agent_id`) and a hash. The hash is the first 8 bytes of SHA-256 of the session id, a zero byte and the command, in hexadecimal. In the command, each run of white space counts as one space. The hook removes no space at the start or the end. The state is one file for each count, one for each mark and one for each message, in `<temporary directory>/spec-dna-fix/`. A count file holds a number, and the other files are empty. A call prints the message only if it can create the file of the message. No file holds text of a command. The hook removes a file that is older than 3 days. It uses the folder only if it is a folder, and no symlink, that your user owns. To test the owner, it makes an empty file in a real folder and removes it. In a folder that it does not use, it keeps no state, it changes no other file, and it prints nothing. No write follows a symlink, and the hook replaces a count file in one step. The `session_id` and the `agent_id` must have 1 to 64 characters of `A-Za-z0-9_-`.
 
 ## upgrade

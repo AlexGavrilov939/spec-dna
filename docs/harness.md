@@ -432,6 +432,7 @@ An agent can fix a failure by guesses, one after the other, and each try makes i
 - The same problem is the same shell command that fails again. Each run of white space in the command counts as one space.
 - A failed fix is a failure of that command after the same agent made an edit since its last failure. The first failure is the problem and not a fix, so a red test run does not count.
 - One edit counts for one failure only. A run with no edit between 2 failures counts nothing.
+- An input of `PostToolUseFailure` with `is_interrupt` set to the boolean `true` is no failure, because an abort tells nothing about a fix: the hook changes no state, so the edit mark stays, and it gives no message.
 - When the command passes, the hook deletes its count, and the file of its message.
 - An edit below a folder of the layer `intent` is no fix. So the record of the acceptor and an edit of `plan.md` count nothing.
 - The main session and each subagent have counts of their own.

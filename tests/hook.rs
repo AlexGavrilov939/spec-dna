@@ -768,6 +768,13 @@ impl Fix {
         self.fail_as(COMMAND, None)
     }
 
+    /// A failed `Bash` call with the key `is_interrupt`. `value` is raw JSON.
+    fn fail_with_interrupt(&self, value: &str) -> String {
+        let event = tool_event("PostToolUseFailure", "Bash", &bash_input(COMMAND), None);
+        let key = format!(r#""session_id":"s1","is_interrupt":{value},"#);
+        self.run(&event.replace(r#""session_id":"s1","#, &key))
+    }
+
     /// A `Bash` call that passed.
     fn pass(&self, command: &str) {
         let input = bash_input(command);
@@ -819,6 +826,47 @@ fn fix_limit_speaks_once_at_the_third_failed_fix() {
     for _ in 0..4 {
         fix.edit();
         assert_eq!(fix.fail(), "", "the message comes once for each key");
+    }
+}
+
+#[test]
+fn fix_limit_counts_no_interrupted_failure() {
+    let fix = Fix::new();
+    assert_eq!(fix.fail(), "");
+    for _ in 0..2 {
+        fix.edit();
+        assert_eq!(fix.fail(), "");
+    }
+    fix.edit();
+    // An abort tells nothing about the fix: the count and the edit mark stay.
+    let before = fix.state();
+    assert_eq!(fix.fail_with_interrupt("true"), "");
+    assert_eq!(fix.state(), before);
+    // The next failure uses the mark of the same edit.
+    assert_eq!(fix.fail_with_interrupt("false"), limit_output(3));
+    fix.edit();
+    assert_eq!(fix.fail_with_interrupt("false"), "");
+}
+
+#[test]
+fn fix_limit_makes_no_file_for_a_first_interrupted_failure() {
+    let fix = Fix::new();
+    assert_eq!(fix.fail_with_interrupt("true"), "");
+    assert!(fix.state().is_empty(), "{:?}", fix.state());
+}
+
+#[test]
+fn fix_limit_counts_a_failure_whose_is_interrupt_is_no_boolean_true() {
+    // Only the boolean `true` skips a failure.
+    for value in [r#""true""#, "1", "null"] {
+        let fix = Fix::new();
+        assert_eq!(fix.fail_with_interrupt(value), "", "{value}");
+        for _ in 0..2 {
+            fix.edit();
+            assert_eq!(fix.fail_with_interrupt(value), "", "{value}");
+        }
+        fix.edit();
+        assert_eq!(fix.fail_with_interrupt(value), limit_output(3), "{value}");
     }
 }
 
