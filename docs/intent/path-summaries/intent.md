@@ -1,5 +1,5 @@
 ---
-status: draft
+status: accepted
 class: higher-risk
 ---
 # `context` for a source file serves the summaries of its areas
