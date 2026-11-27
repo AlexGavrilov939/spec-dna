@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 ---
 # `context` for a source file serves the summaries of its areas: spec
 
