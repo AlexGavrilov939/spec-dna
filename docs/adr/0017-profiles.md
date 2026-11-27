@@ -136,3 +136,14 @@ See ADR 0032.
 Status: accepted under the owner's word of 2026-11-25 for "ADR amendments that the fixes below need".
 
 SD646 (`summary-rests-on-nothing`) is a warning in `strict`, as in `standard`, and it stays off in `lite`. This replaces the severity of SD646 in the amendment of 2026-11-24 of [ADR 0028](0028-roll-up-and-summaries.md), which is 13 characters under its hard budget. A change that removes the last requirement of an area leaves the summary of the area with no pin. The level above must still pin that summary (SD642), and a layer with `keep = "forever"` keeps its id (SD202). As an error, SD646 thus stopped `finish` in `strict`, and no edit could clear it. The change `part-a-leftovers` makes the fix.
+
+### 2026-11-27: the level of SD621 in `strict`
+
+Status: accepted under the owner's word of 2026-11-25 for "ADR amendments that the fixes below need" (item 7 of part B of 0.8.1).
+
+This rule refines "At run time, the profile sets the severity of each code". In `strict`, with no rule for SD621 or for the group `reports`, the severity of SD621 depends on the weak bind. It is an error only where a documented setting of the runner gives a strong bind, that is, where the setting gives each weak case of the bind a full locator. Elsewhere it is a warning. A rule for SD621 or for the group `reports` gives its severity to each line, as for each other code. [Section 4 of the design](../design/0.8.1-b-binding.md#4-item-7-the-level-of-sd621-in-strict) gives the closed list of the settings, and [Test reports](../test-report.md) gives the table for users.
+
+Consequences:
+
+- Good: `strict` stops only on a weak bind that a setting of the runner removes, so a fix is always possible.
+- Bad: one code has 2 levels in one profile. The field `severity` of each line of the JSON output gives the level.
