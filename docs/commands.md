@@ -1325,7 +1325,7 @@ A deny is `permissionDecision: "deny"` with a reason. The reason of rule 3 names
 | Flag | Meaning |
 | --- | --- |
 | `--limit <n>` | The number of failed fixes at which the hook speaks. `0`, or no `--limit`, turns the hook off |
-| `--intent <dir>` | A folder from the root of the project. An edit below it is no fix. The root is `CLAUDE_PROJECT_DIR`, else the `cwd` of the event. `init` writes one flag for each folder of the layer `intent` |
+| `--intent <dir>` | A folder from the root of the project. An edit below it is no fix. The root is `CLAUDE_PROJECT_DIR`, else the `cwd` of the event. A relative `file_path` starts at the `cwd` of the event. For a `file_path` with `.` or `..`, the system resolves the folder of the file, also through a link. Another `file_path` below the root is compared as text, so the hook does not follow a link in it. A path that the hook cannot resolve is below no folder. `init` writes one flag for each folder of the layer `intent` |
 
 | Event | Tool | What the hook does |
 | --- | --- | --- |

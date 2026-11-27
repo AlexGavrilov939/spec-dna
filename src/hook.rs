@@ -535,18 +535,45 @@ fn command_hash(session: &str, command: &str) -> String {
 }
 
 /// True if the edit of `file` is below one of the `--intent` folders of the
-/// project.
+/// project. For a path that the hook cannot resolve, it is false, so the edit
+/// counts.
 fn below_intent(v: &Value, opts: &FixOpts, project: Option<&Path>, file: &str) -> bool {
+    let cwd = v.get("cwd").as_str().filter(|c| !c.is_empty());
     let root = project
         .and_then(Path::to_str)
         .filter(|p| !p.is_empty())
-        .or_else(|| v.get("cwd").as_str().filter(|c| !c.is_empty()));
-    let Some((_, rel)) = root.and_then(|r| relative_to(r, file)) else {
+        .or(cwd);
+    let Some((_, rel)) = root
+        .zip(plain_path(cwd, file))
+        .and_then(|(r, f)| relative_to(r, &f))
+    else {
         return false;
     };
     opts.intent
         .iter()
         .any(|d| below(d.trim_end_matches('/'), &rel).is_some())
+}
+
+/// The path of an edit for `relative_to`. A relative path starts at the `cwd`
+/// of the event. For a path with a `.` or `..` segment, the system resolves the
+/// folder of the file, because a rule on the text gives another folder for a
+/// `..` after a link. It returns `None` for a folder that it cannot resolve.
+fn plain_path(cwd: Option<&str>, file: &str) -> Option<String> {
+    let mut file = slashes(file);
+    if !is_absolute(&file) {
+        file = format!("{}/{file}", slashes(cwd?).trim_end_matches('/'));
+    }
+    // A relative `cwd` names no folder: the system would take it from the folder
+    // of this process.
+    if !is_absolute(&file) {
+        return None;
+    }
+    if !file.split('/').any(|s| s == "." || s == "..") {
+        return Some(file);
+    }
+    let path = Path::new(&file);
+    let folder = fs::canonicalize(path.parent()?).ok()?;
+    Some(slashes(&folder.join(path.file_name()?).to_string_lossy()))
 }
 
 /// A path in `dir` for a short-lived file. No other call that runs now has it.

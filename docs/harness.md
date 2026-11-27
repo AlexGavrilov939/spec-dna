@@ -438,6 +438,7 @@ An agent can fix a failure by guesses, one after the other, and each try makes i
 - An input of `PostToolUseFailure` with `is_interrupt` set to the boolean `true` is no failure, because an abort tells nothing about a fix: the hook changes no state, so the edit mark stays, and it gives no message.
 - When the command passes, the hook deletes its count, and the file of its message.
 - An edit below a folder of the layer `intent` is no fix. So the record of the acceptor and an edit of `plan.md` count nothing.
+- A relative path of an edit starts at the `cwd` of the event. For a path with `.` or `..`, the system resolves the folder of the file, also through a link. Another path below the root is compared as text, so the hook does not follow a link in it. An edit with a path that the hook cannot resolve counts.
 - The main session and each subagent have counts of their own.
 
 At the limit, the hook adds this message to the context of the agent, once for each command:

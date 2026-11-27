@@ -1003,6 +1003,80 @@ fn fix_limit_marks_no_edit_below_an_intent_folder() {
     assert_eq!(fix.fail(), limit_output(3));
 }
 
+/// True if the edit of `file`, in an event with this `cwd`, sets the edit mark.
+/// `{root}` in `file` is the root of the project.
+fn edit_sets_a_mark(fix: &Fix, cwd: Option<&str>, file: &str) -> bool {
+    let root = fix.dir.0.to_str().unwrap();
+    let cwd = cwd.map_or(String::new(), |c| {
+        format!(r#""cwd":{},"#, quoted(&c.replace("{root}", root)))
+    });
+    let input = format!(
+        r#"{{"file_path":{}}}"#,
+        quoted(&file.replace("{root}", root))
+    );
+    let event = tool_event("PostToolUse", "Edit", &input, None);
+    let key = format!(r#""session_id":"s1",{cwd}"#);
+    assert_eq!(
+        fix.run(&event.replace(r#""session_id":"s1","#, &key)),
+        "",
+        "{file}"
+    );
+    fix.state().iter().any(|(name, _)| name == "s1.main.edit")
+}
+
+#[test]
+fn fix_limit_finds_an_intent_file_by_a_relative_path_or_a_path_with_dots() {
+    let (at_root, below) = (Some("{root}"), Some("{root}/docs/intent/dose"));
+    for (cwd, file) in [
+        (at_root, "docs/intent/dose/plan.md"),
+        (at_root, "./docs/intent/dose/plan.md"),
+        (at_root, "src/../docs/intent/dose/plan.md"),
+        (below, "plan.md"),
+        (below, "../dose/acceptance.toml"),
+        (None, "{root}/docs/intent/dose/../dose/plan.md"),
+        (None, "{root}/./docs/intent/dose/plan.md"),
+    ] {
+        assert!(!edit_sets_a_mark(&Fix::new(), cwd, file), "{cwd:?} {file}");
+    }
+    // Each of these edits counts: it is below no intent folder, or the hook
+    // cannot tell which file it is.
+    for (cwd, file) in [
+        (at_root, "src/valve.py"),
+        (at_root, "docs/intent/../../src/valve.py"),
+        (Some("{root}/src"), "valve.py"),
+        (None, "{root}/docs/intent/dose/../../../src/valve.py"),
+        (None, "docs/intent/dose/plan.md"),
+        (Some("src"), "../docs/intent/dose/plan.md"),
+        (None, "{root}/docs/intent/dose/.."),
+    ] {
+        assert!(edit_sets_a_mark(&Fix::new(), cwd, file), "{cwd:?} {file}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn fix_limit_takes_a_dot_dot_after_a_link_as_the_system_does() {
+    // `src/jump` is a link to `docs/intent/dose`, so `src/jump/..` is
+    // `docs/intent`. A rule on the text alone gives `src`.
+    let fix = Fix::new();
+    let jump = fix.dir.0.join("src/jump");
+    std::os::unix::fs::symlink(fix.dir.0.join("docs/intent/dose"), jump).unwrap();
+    assert!(!edit_sets_a_mark(
+        &fix,
+        Some("{root}"),
+        "src/jump/../plan.md"
+    ));
+    // The reverse: a link in an intent folder that leads out of it.
+    let fix = Fix::new();
+    let jump = fix.dir.0.join("docs/intent/jump");
+    std::os::unix::fs::symlink(fix.dir.0.join("src"), jump).unwrap();
+    assert!(edit_sets_a_mark(
+        &fix,
+        Some("{root}"),
+        "docs/intent/jump/../valve.py"
+    ));
+}
+
 #[test]
 fn fix_limit_takes_the_root_of_the_cwd_of_the_input() {
     let fix = Fix::new();
