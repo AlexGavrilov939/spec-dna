@@ -340,6 +340,10 @@ fn the_json_report_has_the_documented_keys() {
 
 const LESSONS: &str = "note: list the lessons of this change for the person: the target file, the text and the evidence of each; edit no target file before the person accepts the lesson";
 
+/// The whole `--json` line of the success of `ready`. `finish` printed the same
+/// bytes before it got the note.
+const JSON_OF_A_SUCCESS: &str = r#"{"slug":"dose","ok":true,"dry_run":false,"step":6,"diagnostics":[],"files":[{"path":"docs/requirements/valves.md","action":"write","diff":"--- a/docs/requirements/valves.md\n+++ b/docs/requirements/valves.md\n@@ -8,2 +8,3 @@\n - **close**: The controller SHALL close the valve in 5 seconds.\n - **open**: The controller SHALL open the valve in 5 seconds.\n+- **flush**: The controller SHALL flush the line before it closes.\n"},{"path":"docs/intent/dose/intent.md","action":"remove","diff":""},{"path":"docs/intent/dose/plan.md","action":"remove","diff":""},{"path":"docs/intent/dose/spec.md","action":"remove","diff":""}],"deviations":[],"hours":null,"actual":null}"#;
+
 /// The number of lines of `text` that are the note.
 fn notes_in(text: &str) -> usize {
     text.lines().filter(|l| *l == LESSONS).count()
@@ -388,11 +392,7 @@ fn a_dry_run_a_stop_json_and_lite_print_no_note_on_the_lessons() {
     let (code, out, err) = fin(&r, &["--json"]);
     assert_eq!(code, 0, "{out}{err}");
     silent("--json", &out, &err);
-    assert!(
-        out.starts_with("{\"slug\":\"dose\",\"ok\":true,\"dry_run\":false,\"step\":6,")
-            && out.lines().count() == 1,
-        "{out}"
-    );
+    assert_eq!(out, format!("{JSON_OF_A_SUCCESS}\n"));
     // A stop: the delta adds a requirement with no evidence.
     let r = Fx {
         delta: &[ADD_FLUSH],
