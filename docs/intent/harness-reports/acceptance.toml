@@ -1,0 +1,198 @@
+format = 2
+change = "harness-reports"
+scope = ["CHANGELOG.md", "docs/adr/0004-harness.md", "docs/commands.md", "docs/config.md", "docs/design/0.8.1-harness-additions.md", "docs/evals.md", "docs/glossary.md", "docs/guides/change.md", "docs/harness.md", "docs/init.md", "docs/profiles.md", "schema/spec-dna.schema.json", "src/config.rs", "src/finish.rs", "src/harness.rs", "src/harness_text.rs", "src/hook.rs", "src/init.rs", "src/main.rs", "tests/cli.rs", "tests/eval_run.rs", "tests/finish.rs", "tests/golden/harness/model-team-additions.md", "tests/golden/harness/model-team-no-advisor.md", "tests/golden/harness/model-team.md", "tests/golden/harness/settings-additions.json", "tests/golden/harness/settings-lite.json", "tests/golden/harness/settings-standard.json", "tests/golden/harness/settings-strict.json", "tests/golden/harness/skills/spec-dna-execute.md", "tests/harness.rs", "tests/harness_check_step4.rs", "tests/harness_roles.rs", "tests/harness_skills.rs", "tests/hook.rs", "tests/init_profiles.rs", "tests/upgrade_cli.rs"]
+paths = ["src/config.rs", "src/finish.rs", "src/harness.rs", "src/harness_text.rs", "src/hook.rs", "src/init.rs", "src/main.rs", "tests/cli.rs", "tests/eval_run.rs", "tests/finish.rs", "tests/golden/harness/settings-additions.json", "tests/golden/harness/settings-lite.json", "tests/golden/harness/settings-standard.json", "tests/golden/harness/settings-strict.json", "tests/harness.rs", "tests/harness_check_step4.rs", "tests/harness_roles.rs", "tests/harness_skills.rs", "tests/hook.rs", "tests/init_profiles.rs", "tests/upgrade_cli.rs"]
+tree = "2d9ab756d7752f23"
+result = "accepted"
+acknowledged-by = []
+
+[[acceptor]]
+roles = ["acceptor"]
+brief = "ecfa7d88887f072c"
+session = "5c4d3fe5-7173-495d-a590-ea1849350359"
+agent = "unknown"
+result = "accepted"
+model = "claude-opus-5-5"
+
+[[attempt]]
+acceptor = 1
+text = "Proof: pre-commit run --all-files passed each hook, cargo fmt --check passed, and cargo clippy --all-targets -- -D warnings gave no issue. The tree stayed clean."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "Proof: cargo test --no-fail-fast, 2 full runs at a load average of 50 to 230. 83 of 84 test binaries passed. In the unit test binary, only evidence::matrix::no_cell_of_the_matrix_gives_a_silent_false_proof_or_hides_a_fail failed, at its time limit of 1.0 s (675 binds took 1.17 s and 1.35 s). src/evidence.rs has no change in this branch."
+outcome = "broke"
+
+[[attempt]]
+acceptor = 1
+text = "The unit test binary again, 3 full runs at a load average of about 40: 1059 passed and 0 failed each time. The evidence matrix test alone took 0.14 s."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "The blocker of the rejected record: the 4 fix_limit unit tests (with fix_limit_speaks_once_for_calls_at_the_same_time, 50 rounds of 32 threads) in 30 runs of the unit test binary at a load average of up to 230: 30 passed, 0 failed. The code read agrees: with no pass, no call removes a .said file, because claim withdraws only when the count is gone, and only a pass or the 3-day removal deletes a count."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "The 2 new held-call tests: fix_limit_speaks_once_with_2_failures_held_before_any_step holds 2 failures before each of their steps (mark, read, write, claim, look, withdraw), and fix_limit_leaves_no_message_file_after_a_pass_in_any_order walks each order of a pass and the failure at the limit. Both passed in each run. The 4 cases with a pass in docs/harness.md match the code order: the pass removes the count first and the .said file second."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "fix-limit with the built binary, --limit 2, a scratch TMPDIR and CLAUDE_PROJECT_DIR: edits of docs/intent/dose/plan.md as a relative path, as ./plan.md and plan.md from the cwd docs/intent/dose set no mark, and the next failure counted nothing. A relative edit src/a.c counted. The message came at the third failure only, after the limit no more came, and the pass removed the count and the .said file. No state file held a byte of the command."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "fix-limit paths through a link: CLAUDE_PROJECT_DIR and cwd under /tmp, which is a link to /private/tmp. An edit with src/../docs/intent/dose/plan.md, the plain path and ../intent/dose/plan.md from docs/intent set no mark. A relative path from a cwd that does not exist, an empty file_path and a chain of 3000 ../ set a mark, exit 0 and no output. A file_path that is a number gave no output and no mark."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "subagent-card and return-state with the built binary: the acceptor card has 791 bytes and the other card 788 bytes. An empty agent_type, a SubagentStop event and bad JSON gave no card. return-state blocked with the reason of 149 bytes for a report with no state line, a lowercase state: and 2 spaces after State:. A state line in ** before blank lines, stop_hook_active true or absent, and an empty agent_type gave no output. Exit code 0 each time."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "spec-dna check --all gave no error but the SD928 of this skeleton, and no SD102. check --base 181dc62 gave 0 new errors and 0 new warnings. git diff --name-only 181dc62 HEAD lists only paths of scope and the plan. spec-dna next lists no stale summary."
+outcome = "held"
+
+[[attempt]]
+acceptor = 1
+text = "tests/finish.rs now compares the whole --json line of a success with a constant, so the note of the rejected record on a prefix check is closed. d12 no longer describes the code: fix_limit_steps has no removal of a .said file in the failure branch, and d19 replaces it."
+outcome = "held"
+
+[[finding]]
+acceptor = 1
+severity = "note"
+path = "src/evidence.rs"
+line = 7170
+text = "Outside this change: evidence::matrix::no_cell_of_the_matrix_gives_a_silent_false_proof_or_hides_a_fail has a wall clock limit of 1.0 s. It failed in 2 of 2 full cargo test runs at a load average of 50 to 230 (1.17 s and 1.35 s), and passed alone and in 3 runs of the unit test binary at a lower load. A time limit in a unit test is not stable under load."
+
+[[finding]]
+acceptor = 1
+severity = "note"
+path = "docs/intent/harness-reports/plan.md"
+text = "d12 stays in Deviations with no mark that it no longer applies. Only d19 says that it replaces d12. The design page marks d12 with 'd19 replaces this'."
+
+[[deviation]]
+id = "d1"
+kind = "plan"
+text = "check gives SD502, not SD504 as t9 and Proof say, for an absent entry. check keeps its code, and SD502 is the documented meaning."
+verdict = "accepted"
+
+[[deviation]]
+id = "d2"
+kind = "plan"
+text = "t1a and t1b did not run before t4 to t6, so t18, t19 and t23 lack their facts."
+verdict = "accepted"
+
+[[deviation]]
+id = "d3"
+kind = "plan"
+text = "the fix-limit hash has a zero byte between session id and command, and does not trim the command."
+verdict = "accepted"
+
+[[deviation]]
+id = "d4"
+kind = "plan"
+text = "return-state blocks only when stop_hook_active is the boolean false. With no report it prints nothing."
+verdict = "accepted"
+
+[[deviation]]
+id = "d5"
+kind = "plan"
+text = "--reconfigure from level none adds no key, unlike the advisor preset. The case with no [harness] table has no test for these keys."
+verdict = "accepted"
+
+[[deviation]]
+id = "d6"
+kind = "plan"
+text = "the new lite team page is pinned by the hash that master writes. model-team-0.7.1.md is proven with answers that match it."
+verdict = "accepted"
+
+[[deviation]]
+id = "d7"
+kind = "plan"
+text = "question 12 now says \"up to 7 hooks\" (names). A strict preview prints 8, because it counts entries."
+verdict = "accepted"
+
+[[deviation]]
+id = "d8"
+kind = "plan"
+text = "2 extra commits (formatting with a module comment, and a docs correction). The context meter's reader is now the shared scan_back. fmt and clippy first ran after t12, and the full cargo test did not run before each commit."
+verdict = "accepted"
+
+[[deviation]]
+id = "d9"
+kind = "plan"
+text = "fix-limit uses its state folder only if it is a folder, and no symlink, that the user owns. std gives no user id, so the owner of a new file there is the test. It makes the mark with create_new and replaces the count with a rename. The context meter has no such test of its folder."
+verdict = "accepted"
+
+[[deviation]]
+id = "d10"
+kind = "plan"
+text = "t6 gives one file for each count and one for each mark. fix-limit also makes one empty file for each message, `<session>.<agent>.<hash>.said`, and only the call that creates it speaks. With the rename alone, 32 threads still gave 5 to 8 messages for one key."
+verdict = "accepted"
+
+[[deviation]]
+id = "d11"
+kind = "plan"
+text = "t5 takes the message of the last SubagentHandback call as the report. A state line at the end of last_assistant_message now also passes when an assistant text follows that call in the transcript. So a message with no state line gets no block if such a final text has one. No live run confirmed this form of the transcript."
+verdict = "accepted"
+
+[[deviation]]
+id = "d12"
+kind = "plan"
+text = "a failure that starts a count with no count file removes a `.said` file that a pass at the same time left, so the next message is not silenced."
+verdict = "accepted"
+
+[[deviation]]
+id = "d13"
+kind = "plan"
+text = "t1a and t1b ran on 2026-11-27, after t4 to t6, with the yes of the owner. 2 paid sessions cover the 3 cases. The first session has the run of t1a, and the named agent and `general-purpose` of t1b. The second session is the run with `--agent <name>`. It also ran the command `true`, so its log shows that the hooks ran."
+verdict = "accepted"
+
+[[deviation]]
+id = "d14"
+kind = "plan"
+text = "beside the 4 logging hooks with no matcher, the scratch settings had a group with the matcher `.+` on `SubagentStart` and `SubagentStop`. It wrote a second log, to test the matcher of the 2 entries of spec-dna."
+verdict = "accepted"
+
+[[deviation]]
+id = "d15"
+kind = "plan"
+text = "the logging hooks also wrote the key names inside `tool_input` and `tool_response`, with no value."
+verdict = "accepted"
+
+[[deviation]]
+id = "d16"
+kind = "plan"
+text = "no observed key name or event differs from what t4 to t6 assume. The runs recorded that `stop_hook_active` is there, not its type or value, so no run confirmed the boolean of d4. The runs showed no internal agent, no call of `SubagentHandback` (d11), no tool event of a subagent, no `Edit` or `Write` call and no effect of a hook output. t18 and t19 keep the statements of the hooks reference for these points, and say so."
+verdict = "accepted"
+
+[[deviation]]
+id = "d17"
+kind = "plan"
+text = "t6 counts each `PostToolUseFailure` of `Bash`, and the live runs showed the key `is_interrupt` in its input. The hooks reference says that the key is true when the failure reached Claude Code as an abort, not as an error that the tool reported, and that a cancel of a running tool gives no such event. An abort tells nothing about a fix. Decision of `architect`, 2026-11-27: when `is_interrupt` is the boolean `true`, `fix-limit` does nothing. No count starts or grows, the edit mark stays, no message prints and no file changes. An absent key, `false` or a value of another type keeps the rule of t6. No run gave an input with `true`. The section of the deviations of the build of the design keeps the rule. The spec gives no rule of what counts, because it names the design for the contract, so it does not change."
+verdict = "accepted"
+
+[[deviation]]
+id = "d18"
+kind = "plan"
+text = "the plan has no task for a live run of the hooks of spec-dna. On 2026-11-27, with the yes of the owner, a build of d17 ran the 3 hooks in 2 paid sessions. The section of the deviations of the build of the design gives the result. It settles the boolean of d4 and d16."
+verdict = "accepted"
+
+[[deviation]]
+id = "d19"
+kind = "plan"
+text = "this replaces d12, which was wrong. With d12, the look for the count and the removal of the `.said` file were 2 steps. A failure that saw no count could remove the `.said` file of a message that other calls gave between these steps, so a later call at the limit gave the message again. A test that holds 2 failures before each of their file steps gives 2 messages with d12, and 1 without it. Now no new count removes a file. A pass removes the count first and the `.said` file second. The call that creates `.said` then looks for the count. If it is gone, the call removes that file and gives no message, because a second call could else give it too. 2 unit tests replace the test that built a `.said` file by hand. They hold calls before each file step, through the new function `fix_limit_steps`. With a pass at the same time as a failure, 4 cases stay. 2 of them can give a second message, and 2 only lose one. harness.md lists them."
+verdict = "accepted"
+
+[[deviation]]
+id = "d20"
+kind = "plan"
+text = "fix-limit takes a relative file_path from the cwd of the event, and the system resolves the folder of a file_path with `.` or `..`. Before, such an edit of plan.md counted as a fix, which differs from harness.md. A path that does not resolve still counts."
+verdict = "accepted"
