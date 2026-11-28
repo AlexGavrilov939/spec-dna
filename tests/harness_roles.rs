@@ -179,6 +179,61 @@ fn the_agent_files_match_the_golden_files() {
     }
 }
 
+/// The team page with the section of the subagent card and the sentences of the
+/// 3 hooks of 0.8.1.
+#[test]
+fn the_team_page_prints_the_card_and_the_report_hooks() {
+    let base = "[harness]\nlevel = \"lean\"\nskills = [\"review\"]\nreview-md = true\n";
+    let r = project_with(&format!("{base}subagent-card = true\nfix-limit = 3\n"));
+    let (code, out, err) = r.run(&["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let page = r.read(".claude/agents/model-team.md");
+    assert_eq!(
+        normalize_marker(&page),
+        golden("model-team-additions.md"),
+        "{page}"
+    );
+    assert_eq!(md_lint(&golden("model-team-additions.md")), []);
+    // Each key writes its own part. The limit is the limit of the key.
+    for (keys, card, limit) in [
+        ("subagent-card = true\nfix-limit = 0\n", true, None),
+        ("subagent-card = false\nfix-limit = 5\n", false, Some(5)),
+        ("", false, None),
+    ] {
+        let r = project_with(&format!("{base}{keys}"));
+        let (code, out, err) = r.run(&["init"]);
+        assert_eq!(code, 0, "{keys}: {out}{err}");
+        let page = r.read(".claude/agents/model-team.md");
+        for part in [
+            "\n## Subagent card\n",
+            "`subagent-card` gives each subagent the card above when it starts. ",
+            "`return-state` asks a subagent once for the last line `State: <state>` when its report has none. ",
+        ] {
+            assert_eq!(page.contains(part), card, "{keys}: {part}\n{page}");
+        }
+        match limit {
+            Some(n) => assert!(
+                page.contains(&format!(
+                    "`fix-limit` tells an agent to stop after {n} failed fixes of one shell command. "
+                )),
+                "{keys}: {page}"
+            ),
+            None => assert!(!page.contains("fix-limit"), "{keys}: {page}"),
+        }
+    }
+    // With no other hook, the section "Hooks" still shows.
+    let r = project_with(
+        "[harness]\nlevel = \"lean\"\ncontext-meter = []\nsubagent-meter = 0\nfanout-cap = 0\nfix-limit = 2\n",
+    );
+    let (code, out, err) = r.run(&["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let page = r.read(".claude/agents/model-team.md");
+    assert!(
+        page.contains("\n## Hooks\n\n`fix-limit` tells an agent to stop after 2 failed fixes of one shell command. Each teammate needs spec-dna 0.8.1 or later on `PATH`."),
+        "{page}"
+    );
+}
+
 /// The model-team line that spec-dna 0.8.0 wrote for the default team of a
 /// project of 0.8.0, with its marker.
 const LINE_0_8_0: &str = "Model team: opus builds. The advisor (fable) gives advice and writes no code. `verifier` (opus) tests finished work. `Explore` (haiku) searches. Consult the advisor before you choose an approach, before you say that a task is done, and when the same error occurs twice. Each consult sends the whole context at the advisor price, so consult before the context grows large. If the advisor tool is missing, fails or declines, brief `fallback-advisor`. Run `verifier` before you say that a task is done. A trivial task needs only the one command that proves it. Send a search that needs more than one command, and a docs search, to `Explore`. Run a one-command search yourself. Give a subagent that writes code or reviews work the model `sonnet` or `opus`, not `haiku`. For a small task that fits in this session, use no subagent. If a file disagrees with the advice, tell the advisor in a second consult. <!-- spec-dna harness v0.8.0 h:4db0568726b9b2cd -->";

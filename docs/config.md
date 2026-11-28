@@ -118,6 +118,8 @@ skills = ["brainstorm", "specify", "clarify", "write-plan", "review", "finish", 
 review-md = true                # write REVIEW.md (default false)
 protect-tests = "fix-branches"  # "fix-branches", "always" or "off" (default "off")
 protect-approvals = true        # the hook `protect-approvals` denies an approval by an agent (default false)
+subagent-card = true            # the hooks `subagent-card` and `return-state` (no key = off)
+fix-limit = 3                   # failed fixes of one command before the hook `fix-limit` speaks; 0 or no key = off
 
 [harness.roles]                 # a role that is not here takes its default
 orchestrator = { claude-code = "opus", effort = "xhigh", fallback = ["opus", "sonnet"] }
@@ -225,6 +227,8 @@ sonnet = "high"
 | `harness.review-md` | boolean | `false` | `true`: `init` writes `REVIEW.md`, the review policy. With `none`, spec-dna reads the key and ignores it. |
 | `harness.protect-tests` | string | `"off"` | When the hook `protect-tests` asks the person before an edit of a test file that git tracks: `"fix-branches"` (on a branch whose name starts with `fix/`), `"always"` or `"off"`. The test files are the globs of `[evidence] tests`. With `none`, spec-dna reads the key and ignores it. |
 | `harness.protect-approvals` | boolean | `false` | `true`: the harness writes the hook `protect-approvals`. The hook denies a `Bash` call that runs `spec-dna approve`, and a `git commit` that sets the status of an artifact of a change to its approval value ([harness.md](harness.md#spec-dna-hook-protect-approvals)). `init` writes `true` for `strict`, and it keeps the key of a file that has it. The hook needs a layer of the type `intent`. With `none`, spec-dna reads the key and ignores it. |
+| `harness.subagent-card` | boolean | none | `true`: the harness writes the hooks [`subagent-card`](harness.md#spec-dna-hook-subagent-card) and [`return-state`](harness.md#spec-dna-hook-return-state), and the section "Subagent card" of the team page. A file with no key has the effect of `false`. `init` writes the key in a new configuration only: `true` for `standard` and `strict`, and `false` for `lite`. `init --reconfigure` and `spec-dna upgrade` keep the key of the file, and add none. With `none`, spec-dna reads the key and ignores it. |
+| `harness.fix-limit` | integer | none | A number above `0` writes the hook [`fix-limit`](harness.md#spec-dna-hook-fix-limit): after that number of failed fixes of one shell command, the hook tells the agent to stop. `0` writes no hook. A file with no key has the effect of `0`. `init` writes the key in a new configuration only: `3` for `standard` and `strict`, and `0` for `lite`. `init --reconfigure` and `spec-dna upgrade` keep the key of the file, and add none. With `none`, spec-dna reads the key and ignores it. |
 | `harness.roles.<role>` | table | the default of the role | The model and the effort of a role. The role `acceptor` also has the key `advisor`. See [The table `harness`](#the-table-harness). |
 | `harness.efforts` | table | `{ sonnet = "high" }` | Claude Code adapter. The effort for each model alias or model id. Claude Code uses it when the person selects another model with `/model`. A value is `low`, `medium`, `high`, `xhigh` or `inherit`. A table in the file replaces the default. The effort of the orchestrator applies to its own model, so an entry for the main model has no effect, and `init` prints a warning. |
 

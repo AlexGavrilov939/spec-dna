@@ -143,6 +143,13 @@ A code edit after the acceptance makes the record stale (SD929), so accept again
 
 `--dry-run` prints the diff and writes nothing. `finish` does not commit. Commit its result in the pull request of the code.
 
+At the end of a change, list its [lessons](../harness.md#lessons). A lesson is one fact that a rule, an instruction file or a skill of the project does not state yet. In `standard` and `strict`, a success of `finish` prints a note that asks the agent for this list.
+
+1. The agent lists each lesson of the change, with the lessons of its subagents: the target file, the text and the evidence.
+2. The agent puts the list in the body of the pull request. No lesson enters the repository yet.
+3. You accept or reject each lesson in the chat.
+4. An accepted lesson enters by the class of its target ([the 3 classes](../harness.md#lessons)). For example, a new rule is a change of its own.
+
 If the project has summaries, `next` prints a note that names the summaries that the delta makes due. Edit the text of each summary whose meaning changes, in a commit of the build. If the text still holds, name the summary in `finish`, for example `spec-dna finish sensor-timeout --holds summaries/valves`. Give one `--holds` for each summary ([finish](../commands.md#finish)).
 
 `finish` writes the new pins of a summary that you edited, also if the edit merged in an earlier pull request. It writes the pins of a summary that you name with `--holds`, and `check` then gives SD645, a warning that shows the claim. It leaves each other due summary as it is, and it prints the summary as stale. `check` then gives SD641 until you edit the summary and run `spec-dna refresh <id>`, or run `spec-dna refresh <id> --holds`.

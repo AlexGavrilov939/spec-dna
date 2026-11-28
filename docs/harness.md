@@ -1,6 +1,6 @@
 # Agent harness
 
-This page is the reference of the Claude Code adapter of the harness: models, the 11 skills of the workflow pack, a review policy and up to 3 hooks. It is for people who configure or check the files that `spec-dna init` writes for Claude Code. [Agents](agents.md) describes the other agents.
+This page is the reference of the Claude Code adapter of the harness: models, the 11 skills of the workflow pack, a review policy and up to 7 hooks. It is for people who configure or check the files that `spec-dna init` writes for Claude Code. [Agents](agents.md) describes the other agents.
 
 One model builds. A stronger model advises. A verifier checks finished work. A small model searches. The skills of the workflow pack carry the steps of a change ([change guide](guides/change.md)). `spec-dna check` reports a generated file that differs from the configuration.
 
@@ -11,7 +11,7 @@ The harness is optional. `init` asks for a level.
 | Level | What `init` writes |
 | --- | --- |
 | `none` | Nothing |
-| `lean` | The main model and its effort, `verifier`, `Explore`, the default model of other subagents, 2 hooks, a model-team line in `CLAUDE.md` and a page for people. With [the advisor](#the-advisor-of-the-team) on, also the advisor and `fallback-advisor`. The keys `skills`, `review-md` and `protect-tests` add the skills, `REVIEW.md` and a third hook. A new configuration sets all 3 keys. It proposes the skills that are on by default (`spec-dna skill list`; [ADR 0023](adr/0023-default-skills-from-the-release-table.md)) |
+| `lean` | The main model and its effort, `verifier`, `Explore`, the default model of other subagents, 2 hooks, a model-team line in `CLAUDE.md` and a page for people. With [the advisor](#the-advisor-of-the-team) on, also the advisor and `fallback-advisor`. The keys `skills`, `review-md` and `protect-tests` add the skills, `REVIEW.md` and a third hook. A new configuration sets all 3 keys. The keys `subagent-card` and `fix-limit` add 3 more hooks, and a new configuration of `standard` or `strict` turns them on. It proposes the skills that are on by default (`spec-dna skill list`; [ADR 0023](adr/0023-default-skills-from-the-release-table.md)) |
 | `full` | `lean`, and `implementer` and `code-simplifier`. It proposes the 11 skills, also the skills that are off by default. The profile `lite` writes no agent `acceptor` at any level |
 
 A new configuration gets `lean` by default. A configuration from spec-dna 0.4 or older has no `[harness]` table, so an upgrade adds no harness. Run `spec-dna init --reconfigure` to add it.
@@ -92,6 +92,8 @@ skills = ["brainstorm", "specify", "clarify", "write-plan", "tdd", "review", "fi
 review-md = true
 protect-tests = "fix-branches"
 protect-approvals = true
+subagent-card = true
+fix-limit = 3
 context-meter = [300000, 600000]
 subagent-meter = 250000
 fanout-cap = 10
@@ -110,6 +112,8 @@ sonnet = "high"
 
 A key that the file does not have adds nothing: no skill, no `REVIEW.md` and no `protect-tests` hook. A new configuration from `spec-dna init` has all 3 keys. It has the skills that are on by default (`spec-dna skill list`; [ADR 0023](adr/0023-default-skills-from-the-release-table.md)) if the change policy is not `none` (the level `full` has all 11), `review-md = true` and `protect-tests = "fix-branches"`. The profile `lite` has fewer skills, no `REVIEW.md` and `protect-tests = "off"`. [init.md](init.md#parts-of-the-harness) gives the defaults.
 
+The keys `subagent-card` and `fix-limit` follow the same rule: a file with no key gets no hook of them. `init` writes the 2 keys in a new configuration only: `true` and `3` for `standard` and `strict`, and `false` and `0` for `lite`. `init --reconfigure` and `spec-dna upgrade` keep the keys of the file, and add none. In a new `lite` project, `spec-dna.toml` has the 2 lines, and each other generated file keeps its bytes. A key that you set to `true` in `lite` writes the hooks, because the key decides and not the profile.
+
 | Key | Meaning |
 | --- | --- |
 | `level` | `none`, `lean` or `full` |
@@ -118,6 +122,8 @@ A key that the file does not have adds nothing: no skill, no `REVIEW.md` and no 
 | `review-md` | `true` writes `REVIEW.md`. `false` writes no file |
 | `protect-tests` | `fix-branches`, `always` or `off`. It selects the hook that asks before an edit of a test file. See [`spec-dna hook protect-tests`](#spec-dna-hook-protect-tests) |
 | `protect-approvals` | `true` or `false`. `true` adds the hook that denies an approval by an agent. See [`spec-dna hook protect-approvals`](#spec-dna-hook-protect-approvals). `init` writes `true` for the profile `strict`. A file with no key has the same effect as `false` |
+| `subagent-card` | `true` or `false`. `true` adds the hooks [`spec-dna hook subagent-card`](#spec-dna-hook-subagent-card) and [`spec-dna hook return-state`](#spec-dna-hook-return-state), and the section "Subagent card" of the team page. A file with no key has the same effect as `false` |
+| `fix-limit` | A number of failed fixes. A number above `0` adds the hook [`spec-dna hook fix-limit`](#spec-dna-hook-fix-limit), and `0` adds no hook. A file with no key has the same effect as `0` |
 | `context-meter` | The context sizes, in tokens, at which the main session gets a message. `[]` disables the meter for the main session |
 | `subagent-meter` | The context size at which a subagent gets a message. `0` disables it |
 | `fanout-cap` | The largest number of agents that a workflow can start without a question to the person. `0` disables the cap |
@@ -153,6 +159,10 @@ Entries in `.claude/settings.json`:
 | `hooks.PreToolUse` (matcher `Workflow`) | `spec-dna hook fanout-cap ...` |
 | `hooks.PreToolUse` (matcher `Edit\|Write`) | `spec-dna hook protect-tests ...`, only if `protect-tests` is not `off` and `[evidence] tests` is not empty |
 | `hooks.PreToolUse` (matcher `Bash`) | `spec-dna hook protect-approvals ...`, only if `protect-approvals` is `true` and the project has a layer of the type `intent` |
+| `hooks.SubagentStart` (matcher `.+`) | `spec-dna hook subagent-card`, only if `subagent-card` is `true` |
+| `hooks.SubagentStop` (matcher `.+`) | `spec-dna hook return-state`, only if `subagent-card` is `true` |
+| `hooks.PostToolUseFailure` (matcher `Bash`) | `spec-dna hook fix-limit --limit <n> ...`, only if `fix-limit` is above `0` |
+| `hooks.PostToolUse` (matcher `Bash\|Edit\|Write`) | The same command as in `hooks.PostToolUseFailure` |
 
 spec-dna writes the settings file again with a 2-space indent. A number form such as `1e3` becomes `1000`, and an integer above 2^53 loses precision.
 
@@ -263,7 +273,11 @@ Claude Code does not load `REVIEW.md` for a task, so the file adds no bytes to a
 
 Each hook is a subcommand of the spec-dna binary. A hook reads the event of Claude Code from stdin. It does not read `spec-dna.toml`, so the generated command contains the values. It never fails: an error gives no output and exit code 0. The command ends with `2>/dev/null || true`, so a teammate with an older spec-dna, or without spec-dna, gets no error and no hook.
 
-Each teammate needs spec-dna 0.5.0 or later on `PATH` for the hooks. The hook `protect-tests` needs 0.6.0 or later, and the hook `protect-approvals` needs 0.7.0 or later. The command uses POSIX shell syntax. On Windows, Claude Code must run hooks in a POSIX shell, such as Git Bash.
+Each teammate needs spec-dna 0.5.0 or later on `PATH` for the hooks. The hook `protect-tests` needs 0.6.0 or later, and the hook `protect-approvals` needs 0.7.0 or later. The hooks `subagent-card`, `return-state` and `fix-limit` need 0.8.1 or later. The command uses POSIX shell syntax. On Windows, Claude Code must run hooks in a POSIX shell, such as Git Bash.
+
+A live check on Claude Code 2.1.332 tested some facts that the hooks `subagent-card`, `return-state` and `fix-limit` need. It used 2 headless sessions (`claude -p`) with the model `haiku`. Its hooks did not run spec-dna. They recorded names, the presence of keys and the length of a report, and they printed nothing. In the first session, the command `false` failed and the command `true` passed. The session also started an agent of the project and the built-in `general-purpose`. The live check recorded no tool call of these 2 agents. The second session started with `--agent <name>` and ran the command `true`. The live check showed nothing about the effect of an output of a hook.
+
+A live test on the same version then ran the 3 hooks of spec-dna in headless sessions with the model `haiku`, with no `--agent` and with `--agent <name>`. The settings had the entries that `init` writes for these hooks, with the path of the build in place of the name `spec-dna`. The test removed the generated agent files, skills, team page and `REVIEW.md`. It also removed the file `CLAUDE.md`, which held only generated lines. So only a hook could give the card or the message of the fix limit. The sections of the 3 hooks say what the live check and the live test showed. Another version or mode of Claude Code can differ.
 
 ### `spec-dna hook context-meter`
 
@@ -362,6 +376,169 @@ These limits apply:
 
 To remove the entry, set `protect-approvals = false` and run `spec-dna init --reconfigure`.
 
+### `spec-dna hook subagent-card`
+
+A prompt in free form lets a subagent grow the scope, commit and return a long text with no clear result. The hook runs on `SubagentStart` and adds one fixed card to the context of each subagent, as `additionalContext`. Thus the card also reaches a subagent with no agent file, and an agent file of the project. The agent file and the task brief have priority over the card, and its first line says so. The card has 788 bytes:
+
+```text
+Subagent card. Your agent file and your brief have priority over this card.
+1. Do only the task of the brief. Change only the files of `Files`. If the task needs more, stop and report it.
+2. Read the brief, then the files that it names. Run `spec-dna context <file>` before an edit. Search only for a fact that these do not give.
+3. Do not commit, push or change the git state.
+4. Report the result, the changed files, each command that you ran with its result, and the open issues.
+5. For a rule that the project files do not state, add `Lessons:` before the last line, with one line for each: `- Target: <file>. Text: <sentence>. Evidence: <what happened>.`
+6. End the report with one line: `State: COMPLETE`, `State: COMPLETE_WITH_CONCERNS`, `State: NEEDS_CONTEXT` or `State: BLOCKED`.
+```
+
+For the agent `acceptor`, line 3 is ``3. Commit only `acceptance.toml`, and do not push.``, and the card has 791 bytes. The team page prints the card, so a pull request shows each change of it. The card adds nothing to the output of `spec-dna accept --brief`.
+
+The hook reads `agent_type` of the input, and it gives no output for an empty or absent one. In the [live check](#hooks), the input of `SubagentStart` had the keys `agent_type` and `agent_id`. The event occurred for the agent of the project and for `general-purpose`, and `agent_type` was the name of the agent. A hook with the matcher `.+` ran for both. In the live test, a subagent copied a sentence and the form of a lesson line from the card. Its task, its agent file and the files of the project did not hold them, and the test recorded no tool call of that subagent. So the card reached its context. The hooks reference of Claude Code states that a `SubagentStart` hook cannot block, and that it can add `additionalContext`.
+
+The hook cannot prove these things:
+
+- That a subagent obeys the card. The card is text in its context.
+- That an agent other than Claude Code gets the card. That agent gets it only when the main session pastes it into the task brief.
+- That the main agent of a session with `--agent <name>` gets the card. In the live check and in the live test, such a session gave no `SubagentStart` and no `SubagentStop` event for its main agent. So do not rely on the card, or on `return-state`, for an agent that you start in this way, such as an acceptor in a session of its own.
+- That it skips each internal agent of Claude Code. The live check and the live test saw no event of an internal agent, also not with `--agent`. Only the hooks reference states the `agent_type` of an internal agent. It is empty, which the matcher `.+` skips, or it is the name of the `--agent` of the session. So an internal agent of a session that starts with `--agent <name>` can get the card, and one block from `return-state`.
+
+Each subagent gets 800 bytes or fewer in its context, and each of its requests sends them again from the cache. The request of the main session gets no byte.
+
+### `spec-dna hook return-state`
+
+The hook runs on `SubagentStop`. It reads the last line of the report that is not empty. A state line is that line, after the removal of white space and of `*` and `` ` `` at its 2 ends. It is the word `State:`, one space and one of the [4 return states](#return-states), with this case. If the line is no state line, the hook gives `decision: "block"` with this reason, and the subagent gets it as its next instruction:
+
+```text
+spec-dna return state: end your report with one line: `State: COMPLETE`, `State: COMPLETE_WITH_CONCERNS`, `State: NEEDS_CONTEXT` or `State: BLOCKED`.
+```
+
+The hook blocks only when `stop_hook_active` is `false`. Thus it adds one request at most. It also gives no output for an empty `agent_type`, or for an input that it cannot read. It stores nothing and prints no text of the report.
+
+In the [live check](#hooks), the input of `SubagentStop` had the keys `agent_type`, `agent_id`, `agent_transcript_path`, `last_assistant_message` and `stop_hook_active`. `last_assistant_message` was a text that was not empty. The event occurred for the agent of the project and for `general-purpose`, and a hook with the matcher `.+` ran for both.
+
+In the live test, a subagent gave a report with no state line. At its first `SubagentStop`, `stop_hook_active` was the boolean `false`, and the hook blocked. The subagent then gave one more report, which ended with a state line. At the second `SubagentStop`, `stop_hook_active` was the boolean `true`, the hook printed nothing, and the subagent ended. So the block gave the subagent one more instruction.
+
+The hooks reference of Claude Code states that with the tool `SubagentHandback`, the report is the `message` input of that tool. After such a call, the hook reads the `message` of the last call in the transcript of the subagent. It reads from the end of the file, 4 MiB at most. A subagent can give a later report in plain text. So if an assistant text follows the last call in the transcript, a state line at the end of `last_assistant_message` also passes. A final text with no state line does not replace the message of the call. The live check and the live test showed no call of `SubagentHandback`, so no live run confirmed this form of the transcript.
+
+The hook cannot prove these things:
+
+- That it blocks on each version of Claude Code. It blocks only when `stop_hook_active` is the boolean `false`. If a version sends another form, the hook never blocks, and it gives no message.
+- That the second report has a state line. A subagent can give none again, and the hook then lets it end.
+- That the state is true. A subagent can write `COMPLETE` for work that fails. The verifier and the acceptance record stay the controls.
+- That one more request is useful. A subagent with a structured output, such as an agent of a workflow with a schema, can get it, because its last text has no state line.
+
+`Explore`, `verifier`, `fallback-advisor` and `acceptor` keep the report form of their agent files, which have priority over the card. Line 6 of the card still asks each of them for a state line. A report with no state line costs one more request over the whole context of the subagent.
+
+### `spec-dna hook fix-limit`
+
+An agent can fix a failure by guesses, one after the other, and each try makes its context larger. The skill `debug` tells an agent to stop at 3 failed fixes. This hook counts them and speaks at the time of the failure.
+
+- The same problem is the same shell command that fails again. Each run of white space in the command counts as one space.
+- A failed fix is a failure of that command after the same agent made an edit since its last failure. The first failure is the problem and not a fix, so a red test run does not count.
+- One edit counts for one failure only. A run with no edit between 2 failures counts nothing.
+- An input of `PostToolUseFailure` with `is_interrupt` set to the boolean `true` is no failure, because an abort tells nothing about a fix: the hook changes no state, so the edit mark stays, and it gives no message.
+- When the command passes, the hook deletes its count, and the file of its message.
+- An edit below a folder of the layer `intent` is no fix. So the record of the acceptor and an edit of `plan.md` count nothing.
+- A relative path of an edit starts at the `cwd` of the event. For a path with `.` or `..`, the system resolves the folder of the file, also through a link. Another path below the root is compared as text, so the hook does not follow a link in it. An edit with a path that the hook cannot resolve counts.
+- The main session and each subagent have counts of their own.
+
+At the limit, the hook adds this message to the context of the agent, once for each command:
+
+```text
+spec-dna fix limit: this command failed after 3 fixes. Stop the fixes of this problem. Tell the person the command, the cause that each fix assumed, the error now, and the next step that you propose. A subagent ends its report with `State: BLOCKED`.
+```
+
+The command is `spec-dna hook fix-limit --limit <n> --intent '<dir>'...`, with one `--intent` for each folder of the layer `intent`. It has 2 settings entries: `PostToolUseFailure` of `Bash` counts a failure, and `PostToolUse` of `Bash`, `Edit` and `Write` sees a pass or an edit. The hooks reference of Claude Code states that a `Bash` call with an exit code other than 0 gives `PostToolUseFailure` and no `PostToolUse`. It also states that the hook cannot block this event.
+
+In the [live check](#hooks), the command `false` gave `PostToolUseFailure` and no `PostToolUse`. The command `true` gave `PostToolUse` and no `PostToolUseFailure`. Both inputs of the first session had `session_id`, `tool_name` and `tool_input.command`, and no `agent_id`. In the session with `--agent`, the input of `PostToolUse` had `agent_type` and no `agent_id`. So for that input, the hook uses the counts of the main session.
+
+In the live test, one command failed again and again, with a `Write` call between 2 failures. The hook printed the message at the failure after the third `Write`, and not at the next failure. The last reply of the agent held 2 phrases that only the message has, so the message reached its context. Each of these failures had `is_interrupt` with the boolean `false`. In a subagent, the inputs of `PreToolUse` and `PostToolUse` of a `Bash` call had `agent_id` and `agent_type`.
+
+The state is one file for each count, one for each edit mark and one for each message, in `<temporary directory>/spec-dna-fix/`. A count file holds a number, and the other files are empty. Only the call that creates the file of a message can print the message. That call then looks for the count. If a pass removed the count, the call removes its file and prints nothing. A pass removes the count first and the file of the message second. So failures that run at the same time, with no pass, print one message. The cases with a pass are below. The name of a file has the session id and the agent. The name of a count also has the first 8 bytes of SHA-256 of the session id, a zero byte and the command. The files hold no text of a command. The session id salts the hash, but a person who has the session id can test a guess of a short command. The hook removes a file that is older than 3 days ([ADR 0004](adr/0004-harness.md)). It uses the folder only if it is a folder, and no symlink, that your user owns. No write follows a symlink.
+
+The hook cannot prove these things:
+
+- That it runs. In a shared temporary directory, another user can make the folder `spec-dna-fix` first. Then the hook counts nothing, and it gives no message.
+- That the agent stops. The message is context, and the hook cannot block.
+- That one problem gets one message when a pass of the command runs at the same time as a failure of it. This needs 2 or more calls of one command from one agent at the same time. These cases stay:
+  - A failure reads the count before a pass, and writes it after the pass. Then the old count comes back. That call can print the message after the pass, also as a second message for one problem. The next problem can get its message early, or none until the command passes again.
+  - A call wrote the count of the limit. Before it creates the file of the message, a whole pass runs. Before it looks for the count, a new failure starts a new count. Then the next problem gets no message until the command passes again.
+  - A call finds no count. Before it removes its file, the pass ends, and a whole new problem reaches the limit. Then the call removes the file of the new message, and a later call can print that message again. This needs many tool calls between 2 steps of one hook.
+  - Something stops a pass between its 2 removals, so the file of the message stays with no count. Then the next problem gets no message until the command passes again.
+- That 2 subagents have 2 counts in Claude Code. The hook takes the agent from `agent_id` of a tool event. The live test saw `agent_id` on a call of a subagent that passed, but no call of a subagent failed. With no `agent_id`, the hook uses the counts of the main session.
+- That an `Edit` call sets the edit mark in Claude Code. The live test used only `Write`.
+- That an interrupted call has `is_interrupt` set to `true`. No live run gave such a failure.
+- That it sees each fix. A fix through `Bash`, such as `sed -i`, sets no edit mark.
+- That it sees each failure. A command in a pipe, such as `cargo test | tail`, has the exit code of the last command.
+- That 2 commands are 2 problems. A changed command, such as `pytest -x` after `pytest`, starts a new count.
+- That a project stops at 3 fixes in total. 3 fixes by 3 subagents in sequence count as 1 fix for each. The text rule of the skill `debug` covers this case.
+- That one count is one problem. A command that runs the whole test suite counts different defects as one problem, until the command passes once.
+
+## Task brief, return states and lessons
+
+These 3 forms tie the work of a subagent to the main session. The skill `spec-dna-execute` of `standard` and `strict` has a short form of the task brief and of the actions. The skill of `lite` has none.
+
+### Task brief
+
+The task brief is the text that the main session writes for a subagent:
+
+```text
+Task: <the result, in one sentence>
+Files: <the paths to change>
+Out of scope: <the paths and the work to leave>
+Read first: <the documents and the files>
+Done when: <the command, and its expected result>
+```
+
+`spec-dna next <slug> --json` gives the next task of the plan in `next_task`. 3 lines of the task brief come from it.
+
+| Line | What it tells the subagent | Source |
+| --- | --- | --- |
+| `Task` | The result that it must give | `next_task.text` |
+| `Files` | The only paths that it changes | `next_task.files` |
+| `Out of scope` | The paths and the work that it leaves | The main session |
+| `Read first` | What it reads before an edit | The main session, with `spec-dna context <file>...` for the files of `Files` |
+| `Done when` | The command that proves the task, and its expected result | `next_task.verify` |
+
+The acceptor gets no task brief. Its prompt stays the line that `spec-dna next` prints, and the main session adds no word. An agent other than Claude Code gets the card only when the main session pastes [it](#spec-dna-hook-subagent-card) into the task brief.
+
+### Return states
+
+A subagent ends its report with one line: `State: <state>`.
+
+| State | Meaning | The main session |
+| --- | --- | --- |
+| `COMPLETE` | The task is done, and the check of `Done when` passes | Verifies the work as usual |
+| `COMPLETE_WITH_CONCERNS` | The task is done. The report lists each concern: a risk, a skipped check or a doubt | Reads each concern before the verification |
+| `NEEDS_CONTEXT` | The subagent stopped, because it does not have a fact. The report names the fact | Gives the fact, then starts the task again |
+| `BLOCKED` | The subagent cannot complete the task. For example, a check fails outside the scope, the agent host denies a tool, the [fix limit](#spec-dna-hook-fix-limit) occurs, or the task needs more scope | Does not send the same task brief again. Removes the cause, or asks the person |
+
+A report with no state line gets the same review as each other report. A state is never an input of a gate: `spec-dna next` and the acceptance record stay the source of truth. An acceptor that commits a record with `result = "rejected"` ends with `State: COMPLETE`.
+
+### Lessons
+
+A lesson is one fact that a rule, an instruction file or a skill of the project does not state yet. Its form in a report:
+
+```text
+Lessons:
+- Target: <file>. Text: <the sentence to add>. Evidence: <what happened>.
+```
+
+A subagent that has a lesson adds this part before its state line. At the end of a change, the main session lists the lessons of the change, with the lessons of its subagents, and puts them in the body of the pull request. After a success, `spec-dna finish` prints [a note](commands.md#finish) that asks for this list in `standard` and `strict`. Thus no lesson file is in the repository.
+
+The person accepts or rejects each lesson in the chat. No lesson enters the repository before that. An agent never edits a target on its own initiative. An accepted lesson enters by the class of its target:
+
+| Target | Example | How the lesson enters |
+| --- | --- | --- |
+| An instruction file or a skill that a person writes | `AGENTS.md`, the text of `CLAUDE.md` outside the generated lines, a skill of the project | The agent edits the file in a commit of its own, after the word of the person in the chat |
+| A document with a status | A rule or a decision | The change process of the project: `spec-dna new intent <slug>` |
+| A generated file | A file with a spec-dna marker line | No edit, because `check` reports SD501. The person sends the lesson to the maintainers of spec-dna |
+
+The lessons cannot prove these things:
+
+- That a lesson is true or general. The person decides.
+- That an agent writes its lessons. The note and the card ask for them, and no check reads a report.
+- That a lesson stays. A lesson that the person does not answer stays only in the pull request.
+
 ## Check
 
 `spec-dna check` reads the generated files when `[harness] level` is not `none`. It reports these findings:
@@ -372,6 +549,8 @@ To remove the entry, set `protect-approvals = false` and run `spec-dna init --re
 | SD501 | A generated file or line was edited by hand, or has text after its marker. Delete the file or the line and run `spec-dna init`. The same code covers a file with a marker that the configuration does not generate (an old `checker.md`, or a skill or `REVIEW.md` that you turned off) and that has an edit. Delete the file, or delete its marker line to keep it as a file of the project |
 | SD502 | `CLAUDE.md` has a second model-team line. Delete it. A generated file, the line or a settings entry differs from what this version generates for the configuration. This includes a second `spec-dna hook <name>` handler with another command. A file with a marker that the configuration does not generate, and that has no edit, also gives SD502. Run `spec-dna init --reconfigure` to remove it. The scan covers `.claude/agents/`, `.claude/skills/` and `REVIEW.md`, but not the adapter skill |
 | SD505 | `.claude/settings.json` is not valid JSON, or a key that spec-dna writes into has a value of the wrong type |
+
+The entries of the hooks `subagent-card`, `return-state` and `fix-limit` follow the same rules. An absent entry, a changed command, or a second handler of the name with another command gives SD502. The message names the event and the hook. `check` reports nothing for the entry of a key that is off.
 
 As for the other adapters, only findings that are new against the base fail the gate. The check of the base uses the `[harness]` table of the base. Thus a change of the table, without a change of the files, gives new findings. To change the team, change `[harness]` and run `spec-dna init --reconfigure`. Do not edit the generated files.
 

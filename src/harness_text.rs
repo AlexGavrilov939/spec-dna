@@ -150,14 +150,15 @@ const EXECUTE_PARTS: &str = r"When to use: The plan is `approved` and a task is 
 Commands:
 
 1. Work in your own git worktree or branch. Run `spec-dna next <slug>`.
-2. Take the first open task. A task with `By: person` is not yours: never tick it. Only the review of the owner ends the task `Review by the owner`: never tick it or write `Skip:` for it. Start one fresh subagent for the task. Give the subagent the task and `spec-dna context <file>...` for its files. The subagent changes only the files of the task.
-3. Review the diff in 2 passes. Pass 1, compliance: compare the diff with the task, `spec.md` and the rules of the project. Pass 2, quality: compare it with the style of the code, the tests and the simplicity.
-4. Fix each gap that a pass finds. Run the `Verify:` of the task. Then change its box to `- [x]`.
-5. If the work differs from the plan or the spec, add an item to `Deviations` of `plan.md`. Write it in the commit of the work. Use `- <id> (plan): <text>` or `- <id> (spec): <text>. Delta: <verb> <doc-id>#<key>` (or `Follow-up: <slug>`). Give each item its own id, for example `d1`, `d2`. A task with 2 deviations has 2 items.
+2. Take the first open task. A task with `By: person` is not yours: never tick it. Only the review of the owner ends the task `Review by the owner`: never tick it or write `Skip:` for it. Start one fresh subagent for the task. Give it a brief with the lines `Task:`, `Files:`, `Out of scope:`, `Read first:` and `Done when:`, and `spec-dna context <file>...` for its files. The subagent changes only the files of the task.
+3. If the report ends with `State: <state>`, act on it. `COMPLETE_WITH_CONCERNS`: read each concern first. `NEEDS_CONTEXT`: give the fact and start again. `BLOCKED`: remove the cause or ask the person. Do not send the same brief again.
+4. Review the diff in 2 passes. Pass 1, compliance: compare the diff with the task, `spec.md` and the rules of the project. Pass 2, quality: compare it with the style of the code, the tests and the simplicity.
+5. Fix each gap that a pass finds. Run the `Verify:` of the task. Then change its box to `- [x]`.
+6. If the work differs from the plan or the spec, add an item to `Deviations` of `plan.md`. Write it in the commit of the work. Use `- <id> (plan): <text>` or `- <id> (spec): <text>. Delta: <verb> <doc-id>#<key>` (or `Follow-up: <slug>`). Give each item its own id, for example `d1`, `d2`. A task with 2 deviations has 2 items.
 
 Artifact: The code, the tests and the checked task.
 
-Check: The `Verify:` of the task passes. `spec-dna next <slug>` names the next open task, and the stage stays `build` until each task is `- [x]` or has a reason in `Skip:`. Stage the new files with `git add`, because `--base` reads tracked files only. Then `spec-dna check --base origin/HEAD` gives no SD913 (a file that `Files` does not list). Without `origin/HEAD` and `[change] base`, pass the default branch with `--base`. The hook `protect-tests`, if it is on, asks the person before an edit of a test file.
+Check: The `Verify:` of the task passes. `spec-dna next <slug>` names the next open task, and the stage stays `build` until each task is `- [x]` or has a reason in `Skip:`. Stage the new files with `git add`, because `--base` reads tracked files only. Then `spec-dna check --base origin/HEAD` gives no SD913 (a file that `Files` does not list). Without `origin/HEAD` and `[change] base`, pass the default branch with `--base`.
 
 If the check fails: Fix the cause in the same task. If a file is outside `Files`, stop and ask the person. With a yes, add the path to `Files` of `plan.md` in the commit of the edit. A plan with an approval commit in this branch needs a new approval commit first (SD910, reason 8). A due summary that `next` names is no such file: edit it with no stop.";
 
@@ -568,6 +569,33 @@ Report: the files that you changed, the commands that you ran with their result,
 /// the hash of the file, and it needs a new rerun of the evals.
 pub const ACCEPTOR_NO_ADVISOR: &str = "Advisor: do not consult the advisor in this task. This rule has priority over each project instruction that tells you to consult the advisor.";
 
+/// The card that the hook `subagent-card` adds to the context of each
+/// subagent, and that the team page prints (harness additions of 0.8.1, item
+/// 18). Each request of a subagent sends it again, so it has 800 bytes or
+/// fewer.
+pub const SUBAGENT_CARD: &str = "Subagent card. Your agent file and your brief have priority over this card.
+1. Do only the task of the brief. Change only the files of `Files`. If the task needs more, stop and report it.
+2. Read the brief, then the files that it names. Run `spec-dna context <file>` before an edit. Search only for a fact that these do not give.
+3. Do not commit, push or change the git state.
+4. Report the result, the changed files, each command that you ran with its result, and the open issues.
+5. For a rule that the project files do not state, add `Lessons:` before the last line, with one line for each: `- Target: <file>. Text: <sentence>. Evidence: <what happened>.`
+6. End the report with one line: `State: COMPLETE`, `State: COMPLETE_WITH_CONCERNS`, `State: NEEDS_CONTEXT` or `State: BLOCKED`.";
+
+/// Line 3 of the card for every agent but `acceptor`.
+const CARD_NO_COMMIT: &str = "3. Do not commit, push or change the git state.";
+
+/// Line 3 of the card for the agent `acceptor`, which commits its record.
+const CARD_ACCEPTOR_COMMIT: &str = "3. Commit only `acceptance.toml`, and do not push.";
+
+/// The card for a subagent of the type `agent_type`.
+pub fn subagent_card(agent_type: &str) -> String {
+    if agent_type == "acceptor" {
+        SUBAGENT_CARD.replacen(CARD_NO_COMMIT, CARD_ACCEPTOR_COMMIT, 1)
+    } else {
+        SUBAGENT_CARD.to_string()
+    }
+}
+
 /// The body of an agent file: `current`, the text of this release, or the
 /// frozen text of 0.7.1 for the profile `lite` (D76), when 0.8.0 changed the
 /// text of the role.
@@ -673,6 +701,40 @@ mod tests {
             // The rule of Q5 is in each body, once.
             assert_eq!(b.matches(rule_of(s)).count(), 1, "{s:?}");
         }
+    }
+
+    /// The room of `execute` is small, so its size is fixed: a change of the
+    /// text is a change of the golden file and of this number.
+    #[test]
+    fn execute_has_2485_bytes_and_the_brief_and_the_states() {
+        assert_eq!(body(Skill::Execute, Profile::Standard).len(), 2485);
+        let c = part(Skill::Execute, "Commands:");
+        assert!(
+            c.contains("Give it a brief with the lines `Task:`, `Files:`, `Out of scope:`, `Read first:` and `Done when:`, and `spec-dna context <file>...` for its files."),
+            "{c}"
+        );
+        assert!(
+            c.contains("3. If the report ends with `State: <state>`, act on it. `COMPLETE_WITH_CONCERNS`: read each concern first. `NEEDS_CONTEXT`: give the fact and start again. `BLOCKED`: remove the cause or ask the person. Do not send the same brief again.\n4. Review the diff in 2 passes."),
+            "{c}"
+        );
+        assert!(!body(Skill::Execute, Profile::Standard).contains("protect-tests"));
+    }
+
+    #[test]
+    fn the_subagent_card_has_800_bytes_or_fewer_in_both_forms() {
+        for (agent_type, size) in [("general-purpose", 788), ("acceptor", 791)] {
+            let card = subagent_card(agent_type);
+            assert!(card.len() <= 800, "{agent_type}: {} bytes", card.len());
+            assert_eq!(card.len(), size, "{agent_type}");
+            assert!(card.is_ascii() && !card.contains("{{"), "{agent_type}");
+            assert!(
+                !card.ends_with('\n') && !card.contains('\r'),
+                "{agent_type}"
+            );
+            assert_eq!(card.lines().count(), 7, "{agent_type}");
+        }
+        assert!(subagent_card("acceptor").contains(CARD_ACCEPTOR_COMMIT));
+        assert!(!subagent_card("acceptor").contains(CARD_NO_COMMIT));
     }
 
     #[test]

@@ -1389,6 +1389,252 @@ fn a_new_strict_project_has_the_advisor() {
     );
 }
 
+// ---- The keys of the 3 hooks (harness additions of 0.8.1) ----
+
+/// The keys `subagent-card` and `fix-limit` of the file.
+fn report_keys(r: &Repo) -> (Option<bool>, Option<i64>) {
+    let t = table(r);
+    let h = t.get("harness").unwrap();
+    (
+        h.get("subagent-card").and_then(toml::Value::as_bool),
+        h.get("fix-limit").and_then(toml::Value::as_integer),
+    )
+}
+
+/// Replaces the harness keys `from` of the file with `to`, and commits.
+fn set_keys(r: &Repo, from: &str, to: &str) {
+    let cfg = r.read("spec-dna.toml");
+    assert_eq!(cfg.matches(from).count(), 1, "{from}\n{cfg}");
+    r.write("spec-dna.toml", &cfg.replace(from, to));
+    r.commit("set the keys");
+}
+
+#[test]
+fn a_new_project_gets_the_report_keys_of_its_profile() {
+    for (profile, card, limit) in [
+        ("lite", false, 0),
+        ("standard", true, 3),
+        ("strict", true, 3),
+    ] {
+        for level in ["lean", "full"] {
+            let r = repo();
+            let answers = format!("profile = \"{profile}\"\nharness = \"{level}\"\n");
+            let (code, out, err) = init_with(&r, &answers, &[]);
+            assert_eq!(code, 0, "{profile} {level}: {out}{err}");
+            assert_eq!(
+                report_keys(&r),
+                (Some(card), Some(limit)),
+                "{profile} {level}"
+            );
+            let settings = r.read(".claude/settings.json");
+            assert_eq!(settings.contains("spec-dna hook subagent-card"), card);
+            assert_eq!(settings.contains("spec-dna hook return-state"), card);
+            assert_eq!(settings.contains("spec-dna hook fix-limit"), limit > 0);
+        }
+    }
+    // The level `none` writes no key.
+    let r = repo();
+    let (code, out, err) = init_with(&r, "harness = \"none\"\n", &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let cfg = r.read("spec-dna.toml");
+    assert!(
+        !cfg.contains("subagent-card") && !cfg.contains("fix-limit"),
+        "{cfg}"
+    );
+}
+
+#[test]
+fn reconfigure_keeps_the_report_keys_of_the_file() {
+    const NEW: &str = "subagent-card = true\nfix-limit = 3\n";
+    // The keys of a new project stay with another profile, and with no flag.
+    let r = project_of("standard");
+    reconfigure(&r, "profile = \"lite\"\n");
+    assert_eq!(report_keys(&r), (Some(true), Some(3)));
+    assert!(
+        r.read(".claude/settings.json")
+            .contains("spec-dna hook fix-limit --limit 3 ")
+    );
+    // A value that a person set stays, in each direction.
+    set_keys(&r, NEW, "subagent-card = false\nfix-limit = 5\n");
+    for profile in ["standard", "strict"] {
+        reconfigure(&r, &format!("profile = \"{profile}\"\n"));
+        assert_eq!(report_keys(&r), (Some(false), Some(5)), "{profile}");
+    }
+    let (code, out, err) = run(&r, &["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(report_keys(&r), (Some(false), Some(5)));
+    // A key that a person sets to `true` in `lite` writes the hooks.
+    let r = project_of("lite");
+    assert_eq!(report_keys(&r), (Some(false), Some(0)));
+    set_keys(
+        &r,
+        "subagent-card = false\nfix-limit = 0\n",
+        "subagent-card = true\nfix-limit = 2\n",
+    );
+    reconfigure(&r, "");
+    let settings = r.read(".claude/settings.json");
+    assert!(
+        settings.contains("spec-dna hook subagent-card"),
+        "{settings}"
+    );
+    assert!(
+        settings.contains("spec-dna hook fix-limit --limit 2 "),
+        "{settings}"
+    );
+}
+
+/// A project of 0.8.0 has a file with no key. `init` and `--reconfigure` add
+/// none, so it gets no hook.
+#[test]
+fn a_file_with_no_report_key_gets_none() {
+    const NEW: &str = "subagent-card = true\nfix-limit = 3\n";
+    let r = project_of("standard");
+    // The positive control: the file of a new project has the keys.
+    set_keys(&r, NEW, "");
+    let no_key = |r: &Repo, what: &str| {
+        assert_eq!(report_keys(r), (None, None), "{what}");
+    };
+    reconfigure(&r, "");
+    no_key(&r, "reconfigure");
+    let settings = r.read(".claude/settings.json");
+    for gone in ["subagent-card", "return-state", "fix-limit"] {
+        assert!(!settings.contains(gone), "{gone}\n{settings}");
+    }
+    let (code, out, err) = run(&r, &["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    no_key(&r, "init");
+    reconfigure(&r, "profile = \"strict\"\n");
+    no_key(&r, "reconfigure to strict");
+    // A new harness in an existing file is no new configuration.
+    let r = repo();
+    let (code, out, err) = init_with(&r, "harness = \"none\"\n", &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    r.commit("adopt spec-dna");
+    reconfigure(&r, "harness = \"lean\"\n");
+    no_key(&r, "from the level none");
+}
+
+// ---- `lite` keeps its files (harness additions of 0.8.1) ----
+
+/// The adapter line of 0.8.0, in `AGENTS.md` and `CLAUDE.md`. `{V}` stands for
+/// the version of the binary.
+const LITE_ADAPTER_LINE: &str = "If a task edits code or docs, run `spec-dna context <files>` once. Before a commit, run `spec-dna check`. Rules: test first (tdd), cause first (debug), proof before done (verify), review is data (review), isolated work (execute). Detail: `spec-dna skill show <name>`. An agent writes an approval commit only when the owner says so explicitly in the chat.<!-- spec-dna v{V} h:b9b4ed5ebfbbd534 -->";
+
+/// The model-team lines of 0.8.0 for a new project of `lite`, by level.
+const LITE_TEAM_LINES: [(&str, &str); 2] = [
+    (
+        "lean",
+        "Model team: opus builds. `verifier` (opus) tests finished work. `Explore` (haiku) searches. Run `verifier` before you say that a task is done. A trivial task needs only the one command that proves it. Send a search that needs more than one command, and a docs search, to `Explore`. Run a one-command search yourself. Give a subagent that writes code or reviews work the model `sonnet` or `opus`, not `haiku`. For a small task that fits in this session, use no subagent. <!-- spec-dna harness v{V} h:3d5380c9b5698d17 -->",
+    ),
+    (
+        "full",
+        "Model team: opus builds. `verifier` (opus) tests finished work. `Explore` (haiku) searches. Run `verifier` before you say that a task is done. A trivial task needs only the one command that proves it. Send a search that needs more than one command, and a docs search, to `Explore`. Run a one-command search yourself. Give a code change to `implementer`. After the checks pass, give the diff to `code-simplifier`. Give a subagent that writes code or reviews work the model `sonnet` or `opus`, not `haiku`. For a small task that fits in this session, use no subagent. <!-- spec-dna harness v{V} h:025cb55ceb82cd0b -->",
+    ),
+];
+
+/// The hash of the team page that 0.8.0 wrote for a new project of `lite`, by
+/// level. The page of a new project has no advisor, so it is not the file
+/// `model-team-0.7.1.md`.
+const LITE_PAGE_HASHES: [(&str, &str); 2] =
+    [("lean", "ab92f591110b9695"), ("full", "c52a50a56812fa89")];
+
+/// The names of the entries of a folder, in order.
+fn names_in(r: &Repo, dir: &str) -> Vec<String> {
+    let mut out: Vec<String> = fs::read_dir(r.dir.join(dir))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    out.sort();
+    out
+}
+
+/// Guard: each generated file of a new project of `lite` keeps its bytes. Only
+/// `spec-dna.toml` gets new lines, and this test does not read it.
+#[test]
+fn a_new_lite_project_keeps_the_files_of_0_8_0() {
+    let version = |line: &str| line.replace("{V}", VERSION);
+    for (level, team_line) in LITE_TEAM_LINES {
+        let r = repo();
+        let answers = format!("profile = \"lite\"\nharness = \"{level}\"\n");
+        let (code, out, err) = init_with(&r, &answers, &[]);
+        assert_eq!(code, 0, "{level}: {out}{err}");
+        assert_eq!(
+            r.read(".claude/settings.json"),
+            harness_golden("settings-lite.json"),
+            "{level}"
+        );
+        assert_eq!(
+            r.read("AGENTS.md"),
+            format!("{}\n", version(LITE_ADAPTER_LINE)),
+            "{level}"
+        );
+        assert_eq!(
+            r.read("CLAUDE.md"),
+            format!("{}\n\n{}\n", version(LITE_ADAPTER_LINE), version(team_line)),
+            "{level}"
+        );
+        let agents: &[&str] = match level {
+            "lean" => &["Explore.md", "model-team.md", "verifier.md"],
+            _ => &[
+                "Explore.md",
+                "code-simplifier.md",
+                "implementer.md",
+                "model-team.md",
+                "verifier.md",
+            ],
+        };
+        assert_eq!(names_in(&r, ".claude/agents"), agents, "{level}");
+        for name in agents.iter().filter(|n| **n != "model-team.md") {
+            assert_eq!(
+                normalize_marker(&r.read(&format!(".claude/agents/{name}"))),
+                harness_golden(&format!("agents-0.7.1/{name}")),
+                "{level}: {name}"
+            );
+        }
+        let page = r.read(".claude/agents/model-team.md");
+        let hash = LITE_PAGE_HASHES.iter().find(|h| h.0 == level).unwrap().1;
+        assert!(
+            page.ends_with(&format!(
+                "\n<!-- spec-dna harness v{VERSION} h:{hash} -->\n"
+            )),
+            "{level}:\n{page}"
+        );
+        let skills: Vec<String> = names_in(&r, ".claude/skills")
+            .into_iter()
+            .filter(|s| s != "spec-dna")
+            .collect();
+        assert!(skills.len() >= 3, "{level}: {skills:?}");
+        for skill in &skills {
+            assert_eq!(
+                normalize_marker(&r.read(&format!(".claude/skills/{skill}/SKILL.md"))),
+                harness_golden(&format!("skills-0.7.1/{skill}.md")),
+                "{level}: {skill}"
+            );
+        }
+        // A clean tree for `check`.
+        r.commit("adopt spec-dna");
+        let (code, out, err) = run(&r, &["check"]);
+        assert_eq!(code, 0, "{level}: {out}{err}");
+    }
+    // With the parts of the page of 0.7.1, a new project of `lite` writes that
+    // page.
+    let r = repo();
+    let answers = format!(
+        "profile = \"lite\"\nharness = \"full\"\nharness-models = [\"advisor=fable\"]\nharness-skills = [{}]\nharness-review-md = true\nharness-protect-tests = \"fix-branches\"\n",
+        all_skills()
+            .iter()
+            .map(|s| format!("\"{s}\""))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let (code, out, err) = init_with(&r, &answers, &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(
+        normalize_marker(&r.read(".claude/agents/model-team.md")),
+        harness_golden("model-team-0.7.1.md")
+    );
+}
+
 /// A new project of `profile` at the level `lean`, in a commit.
 fn project_of(profile: &str) -> Repo {
     let r = repo();

@@ -191,6 +191,88 @@ fn an_untracked_stray_is_read_too() {
     }
 }
 
+const SETTINGS: &str = ".claude/settings.json";
+
+/// A project with the 3 hooks of 0.8.1 on, that `init` wrote.
+fn with_report_hooks() -> Repo {
+    let r = project_with("[harness]\nlevel = \"lean\"\nsubagent-card = true\nfix-limit = 3\n");
+    let (code, out, err) = r.run(&["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    r.commit("init");
+    r
+}
+
+/// `text` with the occurrence `n` of `from` as `to`.
+fn replace_nth(text: &str, from: &str, to: &str, n: usize) -> String {
+    let (at, _) = text.match_indices(from).nth(n).expect(from);
+    format!("{}{to}{}", &text[..at], &text[at + from.len()..])
+}
+
+/// Guard: `check` compares each entry of the 3 hooks as each other hook entry.
+/// An absent entry and a changed command give SD502 (docs/diagnostics.md).
+#[test]
+fn check_reports_each_entry_of_the_report_hooks() {
+    let r = with_report_hooks();
+    let (code, out) = check_all(&r);
+    assert_eq!(code, 0, "{out}");
+    let clean = r.read(SETTINGS);
+    // The 2 entries of `fix-limit` have one command. The entry of
+    // `PostToolUse` comes first in the file.
+    for (event, name, nth) in [
+        ("SubagentStart", "subagent-card", 0),
+        ("SubagentStop", "return-state", 0),
+        ("PostToolUse", "fix-limit", 0),
+        ("PostToolUseFailure", "fix-limit", 1),
+    ] {
+        let own = format!("spec-dna hook {name}");
+        let label = format!("`hooks.{event} (spec-dna hook {name})` is absent or differs");
+        let command = clean
+            .match_indices(&own)
+            .nth(nth)
+            .and_then(|(at, _)| clean[at..].split('"').next())
+            .unwrap();
+        for (what, text) in [
+            ("absent", replace_nth(&clean, command, "true", nth)),
+            (
+                "changed",
+                replace_nth(&clean, command, &format!("{own} --other"), nth),
+            ),
+            (
+                "a second handler",
+                replace_nth(
+                    &clean,
+                    &format!("\"command\": \"{command}\""),
+                    &format!(
+                        "\"command\": \"{command}\"\n          }},\n          {{\n            \"type\": \"command\",\n            \"command\": \"{own} --other\""
+                    ),
+                    nth,
+                ),
+            ),
+        ] {
+            assert_ne!(text, clean, "{event} {what}");
+            r.write(SETTINGS, &text);
+            let (code, out) = check_all(&r);
+            assert_eq!(code, 1, "{event} {what}: {out}");
+            let l = lines_of(&out, SETTINGS);
+            assert_eq!(l.len(), 1, "{event} {what}: {out}");
+            assert!(l[0].contains("error SD502"), "{event} {what}: {}", l[0]);
+            assert!(l[0].contains(&label), "{event} {what}: {}", l[0]);
+        }
+        r.write(SETTINGS, &clean);
+    }
+    // A key that is off has no entry to compare: no finding for an entry that
+    // stays in the file.
+    let cfg = r
+        .read("spec-dna.toml")
+        .replace("subagent-card = true", "subagent-card = false")
+        .replace("fix-limit = 3", "fix-limit = 0");
+    r.write("spec-dna.toml", &cfg);
+    r.commit("the keys are off");
+    r.write(SETTINGS, &clean.replace("--limit 3", "--limit 9"));
+    let (_, out) = check_all(&r);
+    assert!(lines_of(&out, SETTINGS).is_empty(), "{out}");
+}
+
 #[test]
 fn a_file_with_no_marker_at_a_generated_path_gives_sd504_with_the_way_out() {
     for (path, config, way) in [

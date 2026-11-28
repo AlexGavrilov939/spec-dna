@@ -1,0 +1,85 @@
+{
+  "modelSettings": {
+    "claude-sonnet-5-5": {
+      "effortLevel": "high"
+    },
+    "claude-opus-5-5": {
+      "effortLevel": "xhigh"
+    }
+  },
+  "model": "opus",
+  "fallbackModel": [
+    "opus",
+    "sonnet"
+  ],
+  "advisorModel": "fable",
+  "env": {
+    "CLAUDE_CODE_SUBAGENT_MODEL": "haiku"
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "spec-dna hook context-meter --levels 300000,600000 --subagent 250000 2>/dev/null || true"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "spec-dna hook fix-limit --limit 3 --intent 'docs/intent' 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Workflow",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "spec-dna hook fanout-cap --cap 10 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "matcher": ".+",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "spec-dna hook subagent-card 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": ".+",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "spec-dna hook return-state 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "spec-dna hook fix-limit --limit 3 --intent 'docs/intent' 2>/dev/null || true"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -509,6 +509,13 @@ pub struct Harness {
     /// that a file sets, and it writes `true` for `strict` in a file that has
     /// no key.
     pub protect_approvals: Option<bool>,
+    /// `[harness] subagent-card`: the hooks `subagent-card` and `return-state`.
+    /// `None`: the file has no such key, and the hooks are off. `init` writes
+    /// the key in a new configuration only.
+    pub subagent_card: Option<bool>,
+    /// `[harness] fix-limit`: the limit of the hook `fix-limit`, and 0 turns it
+    /// off. `None`: as for `subagent_card`.
+    pub fix_limit: Option<u32>,
     /// The folders of the `intent` layer, from the repository root, one for
     /// each root. `Config::parse` sets them, as it sets `tests`. `parse`
     /// leaves the list empty, and `toml_section` does not write it.
@@ -604,6 +611,8 @@ impl Harness {
             review_md: false,
             protect_tests: Protect::Off,
             protect_approvals: None,
+            subagent_card: None,
+            fix_limit: None,
             intent_dirs: Vec::new(),
             tests: Vec::new(),
             no_change_class: false,
@@ -684,6 +693,18 @@ impl Harness {
         self.level != Level::None
             && self.protect_approvals == Some(true)
             && !self.intent_dirs.is_empty()
+    }
+
+    /// True if the configuration writes the hooks `subagent-card` and
+    /// `return-state`: the key is `true`.
+    pub fn card_hook_on(&self) -> bool {
+        self.level != Level::None && self.subagent_card == Some(true)
+    }
+
+    /// True if the configuration writes the hook `fix-limit`: the key is above
+    /// 0.
+    pub fn fix_hook_on(&self) -> bool {
+        self.level != Level::None && self.fix_limit.is_some_and(|n| n > 0)
     }
 
     /// Reads the `[harness]` table. With level `none`, it still reads the other
@@ -768,6 +789,12 @@ impl Harness {
             Some(Toml::Boolean(b)) => h.protect_approvals = Some(*b),
             Some(_) => return Err("`harness.protect-approvals` must be true or false".into()),
         }
+        match f.take("subagent-card") {
+            None => {}
+            Some(Toml::Boolean(b)) => h.subagent_card = Some(*b),
+            Some(_) => return Err("`harness.subagent-card` must be true or false".into()),
+        }
+        h.fix_limit = f.opt_u32("fix-limit")?;
         if let Some(v) = f.take("roles") {
             let roles = v.as_table().ok_or("`harness.roles` must be a table")?;
             // A role of 0.5 gives its own error, before any other key is read.
@@ -887,6 +914,12 @@ impl Harness {
         s += &format!("protect-tests = {}\n", quote(self.protect_tests.name()));
         if let Some(b) = self.protect_approvals {
             s += &format!("protect-approvals = {b}\n");
+        }
+        if let Some(b) = self.subagent_card {
+            s += &format!("subagent-card = {b}\n");
+        }
+        if let Some(n) = self.fix_limit {
+            s += &format!("fix-limit = {n}\n");
         }
         s += "\n[harness.roles]\n";
         for r in Role::ALL
@@ -1418,7 +1451,20 @@ fn team_page(h: &Harness) -> String {
         }
         s += "\n";
     }
-    if h.context_hook_on() || h.fanout_hook_on() || h.protect_hook_on() || h.approvals_hook_on() {
+    // The page prints the card, so a pull request shows each change of it.
+    if h.card_hook_on() {
+        s += &format!(
+            "\n## Subagent card\n\nThe hook `subagent-card` gives each subagent this card when it starts. The agent file and the brief of the subagent have priority over it. The agent `acceptor` gets another line 3: commit only `acceptance.toml`, and do not push.\n\n```text\n{}\n```\n",
+            harness_text::SUBAGENT_CARD
+        );
+    }
+    if h.context_hook_on()
+        || h.fanout_hook_on()
+        || h.protect_hook_on()
+        || h.approvals_hook_on()
+        || h.card_hook_on()
+        || h.fix_hook_on()
+    {
         s += "\n## Hooks\n\n";
         if h.context_hook_on() {
             s += "`context-meter` tells an agent the size of its context once at each level. ";
@@ -1437,6 +1483,14 @@ fn team_page(h: &Harness) -> String {
         if h.approvals_hook_on() {
             s += "`protect-approvals` denies a call that runs `spec-dna approve`, and a `git commit` that sets the status of an artifact of a change to `accepted` or `approved`. Only a person approves. ";
         }
+        if h.card_hook_on() {
+            s += "`subagent-card` gives each subagent the card above when it starts. `return-state` asks a subagent once for the last line `State: <state>` when its report has none. ";
+        }
+        if let (true, Some(n)) = (h.fix_hook_on(), h.fix_limit) {
+            s += &format!(
+                "`fix-limit` tells an agent to stop after {n} failed fixes of one shell command. "
+            );
+        }
         s += &format!(
             "Each teammate needs spec-dna {} or later on `PATH`. Without it, the hooks do nothing.\n",
             hooks_version(h)
@@ -1454,10 +1508,13 @@ fn team_page(h: &Harness) -> String {
 }
 
 /// The first version of spec-dna that has each hook that the configuration
-/// writes: `protect-approvals` is new in 0.7.0, `protect-tests` is new in
-/// 0.6.0, the other hooks are in 0.5.0.
+/// writes: `subagent-card`, `return-state` and `fix-limit` are new in 0.8.1,
+/// `protect-approvals` is new in 0.7.0, `protect-tests` is new in 0.6.0, the
+/// other hooks are in 0.5.0.
 pub fn hooks_version(h: &Harness) -> &'static str {
-    if h.approvals_hook_on() {
+    if h.card_hook_on() || h.fix_hook_on() {
+        "0.8.1"
+    } else if h.approvals_hook_on() {
         "0.7.0"
     } else if h.protect_hook_on() {
         "0.6.0"
@@ -1825,6 +1882,9 @@ const CONTEXT_HOOK: &str = "context-meter";
 const FANOUT_HOOK: &str = "fanout-cap";
 const PROTECT_HOOK: &str = "protect-tests";
 const APPROVALS_HOOK: &str = "protect-approvals";
+const CARD_HOOK: &str = "subagent-card";
+const STATE_HOOK: &str = "return-state";
+const FIX_HOOK: &str = "fix-limit";
 
 /// One entry that the harness expects in `.claude/settings.json`.
 #[derive(Clone, Debug, PartialEq)]
@@ -1909,6 +1969,22 @@ fn approvals_command(h: &Harness) -> String {
     c + " 2>/dev/null || true"
 }
 
+/// The command of a hook with no flag.
+fn plain_command(name: &str) -> String {
+    format!("spec-dna hook {name} 2>/dev/null || true")
+}
+
+/// The command of the hook `fix-limit`: the limit, and one `--intent` for each
+/// folder of the `intent` layer. Its 2 entries have this one command.
+fn fix_command(h: &Harness) -> String {
+    let limit = h.fix_limit.unwrap_or(0);
+    let mut c = format!("spec-dna hook fix-limit --limit {limit}");
+    for d in &h.intent_dirs {
+        c += &format!(" --intent {}", shell_quote(d));
+    }
+    c + " 2>/dev/null || true"
+}
+
 fn wants(h: &Harness) -> Vec<Want> {
     let mut w = Vec::new();
     if h.level != Level::None {
@@ -1974,6 +2050,28 @@ fn wants(h: &Harness) -> Vec<Want> {
         name: APPROVALS_HOOK,
         command: h.approvals_hook_on().then(|| approvals_command(h)),
     });
+    // The matcher `.+` skips an internal agent with an empty `agent_type`.
+    for (event, name) in [("SubagentStart", CARD_HOOK), ("SubagentStop", STATE_HOOK)] {
+        w.push(Want::Hook {
+            event,
+            matcher: ".+",
+            name,
+            command: h.card_hook_on().then(|| plain_command(name)),
+        });
+    }
+    // One entry for each event: the merge finds a handler by its event and its
+    // name, so 2 entries of one name on one event would become one.
+    for (event, matcher) in [
+        ("PostToolUseFailure", "Bash"),
+        ("PostToolUse", "Bash|Edit|Write"),
+    ] {
+        w.push(Want::Hook {
+            event,
+            matcher,
+            name: FIX_HOOK,
+            command: h.fix_hook_on().then(|| fix_command(h)),
+        });
+    }
     w
 }
 
@@ -3044,6 +3142,75 @@ opus = "xhigh"
     }
 
     #[test]
+    fn the_entries_of_the_report_hooks_and_their_version() {
+        let mut h = lean();
+        h.intent_dirs = vec!["docs/intent".into(), "it's/intent".into()];
+        // Each entry as (event, matcher, command), in the order of the table.
+        let entries = |h: &Harness| -> Vec<(&str, &str, Option<String>)> {
+            wants(h)
+                .into_iter()
+                .filter_map(|w| match w {
+                    Want::Hook {
+                        event,
+                        matcher,
+                        name,
+                        command,
+                    } if ["subagent-card", "return-state", "fix-limit"].contains(&name) => {
+                        Some((event, matcher, command))
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        let off = entries(&h);
+        assert_eq!(off.len(), 4, "{off:?}");
+        assert!(off.iter().all(|e| e.2.is_none()), "{off:?}");
+        h.subagent_card = Some(true);
+        h.fix_limit = Some(4);
+        let fix = "spec-dna hook fix-limit --limit 4 --intent 'docs/intent' --intent 'it'\\''s/intent' 2>/dev/null || true";
+        let want = [
+            (
+                "SubagentStart",
+                ".+",
+                "spec-dna hook subagent-card 2>/dev/null || true",
+            ),
+            (
+                "SubagentStop",
+                ".+",
+                "spec-dna hook return-state 2>/dev/null || true",
+            ),
+            ("PostToolUseFailure", "Bash", fix),
+            ("PostToolUse", "Bash|Edit|Write", fix),
+        ];
+        let got = entries(&h);
+        let got: Vec<(&str, &str, &str)> = got
+            .iter()
+            .map(|e| (e.0, e.1, e.2.as_deref().unwrap_or("")))
+            .collect();
+        assert_eq!(got, want);
+        // With no folder of the `intent` layer, the hook still counts.
+        h.intent_dirs.clear();
+        assert_eq!(
+            entries(&h)[2].2.as_deref(),
+            Some("spec-dna hook fix-limit --limit 4 2>/dev/null || true")
+        );
+        // The first version with the 3 hooks, with either key on.
+        assert_eq!(hooks_version(&h), "0.8.1");
+        h.protect_approvals = Some(true);
+        h.intent_dirs = vec!["docs/intent".into()];
+        for (card, limit) in [(Some(true), Some(0)), (Some(false), Some(1))] {
+            (h.subagent_card, h.fix_limit) = (card, limit);
+            assert_eq!(hooks_version(&h), "0.8.1", "{card:?} {limit:?}");
+        }
+        (h.subagent_card, h.fix_limit) = (Some(false), Some(0));
+        assert_eq!(hooks_version(&h), "0.7.0");
+        // Level `none` writes no handler.
+        (h.subagent_card, h.fix_limit) = (Some(true), Some(3));
+        h.level = Level::None;
+        assert!(entries(&h).iter().all(|e| e.2.is_none()));
+    }
+
+    #[test]
     fn the_harness_gets_the_test_globs_of_evidence() {
         let base = "spec-dna = \"0.1.0\"\n[[roots]]\npath = \"docs\"\n";
         let tests = |extra: &str| {
@@ -3087,6 +3254,64 @@ opus = "xhigh"
         assert_eq!(
             Harness::new(Level::None).toml_section(),
             "[harness]\nlevel = \"none\"\n"
+        );
+    }
+
+    #[test]
+    fn the_keys_of_the_report_hooks_parse_and_turn_the_hooks_on() {
+        // No key: off, and no line in the section.
+        let h = parse("level = \"lean\"").unwrap();
+        assert_eq!((h.subagent_card, h.fix_limit), (None, None));
+        assert!(!h.card_hook_on() && !h.fix_hook_on());
+        let text = h.toml_section();
+        assert!(
+            !text.contains("subagent-card") && !text.contains("fix-limit"),
+            "{text}"
+        );
+        let on = parse("level = \"lean\"\nsubagent-card = true\nfix-limit = 3").unwrap();
+        assert_eq!((on.subagent_card, on.fix_limit), (Some(true), Some(3)));
+        assert!(on.card_hook_on() && on.fix_hook_on());
+        // A key that is off stays in the section.
+        let off = parse("level = \"lean\"\nsubagent-card = false\nfix-limit = 0").unwrap();
+        assert_eq!((off.subagent_card, off.fix_limit), (Some(false), Some(0)));
+        assert!(!off.card_hook_on() && !off.fix_hook_on());
+        // Level `none` writes no hook.
+        let none = parse("level = \"none\"\nsubagent-card = true\nfix-limit = 3").unwrap();
+        assert!(!none.card_hook_on() && !none.fix_hook_on());
+        // A wrong type names the key.
+        for (extra, want) in [
+            (
+                "subagent-card = \"yes\"",
+                "`harness.subagent-card` must be true or false",
+            ),
+            (
+                "fix-limit = true",
+                "`harness.fix-limit` must be a non-negative integer",
+            ),
+            (
+                "fix-limit = -1",
+                "`harness.fix-limit` must be a non-negative integer",
+            ),
+        ] {
+            assert_eq!(
+                parse(&format!("level = \"lean\"\n{extra}")).unwrap_err(),
+                want,
+                "{extra}"
+            );
+        }
+        // A table of 0.8.0 renders the bytes of 0.8.0.
+        assert!(
+            parse("level = \"lean\"")
+                .unwrap()
+                .toml_section()
+                .contains("protect-tests = \"off\"\n\n[harness.roles]")
+        );
+        assert!(
+            on.toml_section().contains(
+                "protect-tests = \"off\"\nsubagent-card = true\nfix-limit = 3\n\n[harness.roles]"
+            ),
+            "{}",
+            on.toml_section()
         );
     }
 
@@ -3137,6 +3362,19 @@ opus = "xhigh"
                 let mut h = lean();
                 h.skills = vec![Skill::WritePlan];
                 h.protect_tests = Protect::FixBranches;
+                h
+            },
+            // The keys of the 3 hooks of 0.8.1: both on, and both off.
+            {
+                let mut h = lean();
+                h.subagent_card = Some(true);
+                h.fix_limit = Some(3);
+                h
+            },
+            {
+                let mut h = full();
+                h.subagent_card = Some(false);
+                h.fix_limit = Some(0);
                 h
             },
             // The key `advisor` of the acceptor: absent, true and false (D81).

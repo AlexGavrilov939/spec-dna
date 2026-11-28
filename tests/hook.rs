@@ -407,6 +407,900 @@ fn fanout_is_silent_on_bad_input() {
     }
 }
 
+// ---- subagent-card ----
+
+/// The card of every role but `acceptor`. The test holds its own copy, so a
+/// change of one byte fails.
+const CARD: &str = "Subagent card. Your agent file and your brief have priority over this card.
+1. Do only the task of the brief. Change only the files of `Files`. If the task needs more, stop and report it.
+2. Read the brief, then the files that it names. Run `spec-dna context <file>` before an edit. Search only for a fact that these do not give.
+3. Do not commit, push or change the git state.
+4. Report the result, the changed files, each command that you ran with its result, and the open issues.
+5. For a rule that the project files do not state, add `Lessons:` before the last line, with one line for each: `- Target: <file>. Text: <sentence>. Evidence: <what happened>.`
+6. End the report with one line: `State: COMPLETE`, `State: COMPLETE_WITH_CONCERNS`, `State: NEEDS_CONTEXT` or `State: BLOCKED`.";
+
+const ACCEPTOR_LINE: &str = "3. Commit only `acceptance.toml`, and do not push.";
+
+fn start_event(agent_type: &str) -> String {
+    format!(
+        r#"{{"session_id":"s1","hook_event_name":"SubagentStart","agent_id":"a1","agent_type":"{agent_type}"}}"#
+    )
+}
+
+/// The output of the card: the card holds no quote and no backslash, so only
+/// its line ends have an escape.
+fn card_output(card: &str) -> String {
+    format!(
+        "{{\"hookSpecificOutput\":{{\"hookEventName\":\"SubagentStart\",\"additionalContext\":\"{}\"}}}}\n",
+        card.replace('\n', "\\n")
+    )
+}
+
+#[test]
+fn subagent_card_gives_the_card_to_each_named_subagent() {
+    let dir = Dir::new();
+    assert_eq!(CARD.len(), 788);
+    for agent_type in ["general-purpose", "verifier", "Explore", "my-own-agent"] {
+        let (code, out, err) = hook(&dir, &["subagent-card"], &start_event(agent_type), &[]);
+        assert_eq!((code, err.as_str()), (0, ""), "{agent_type}");
+        assert_eq!(out, card_output(CARD), "{agent_type}");
+    }
+}
+
+#[test]
+fn subagent_card_gives_the_acceptor_its_own_third_line() {
+    let dir = Dir::new();
+    let card = CARD.replace(
+        "3. Do not commit, push or change the git state.",
+        ACCEPTOR_LINE,
+    );
+    assert_eq!(card.len(), 791);
+    let (code, out, _) = hook(&dir, &["subagent-card"], &start_event("acceptor"), &[]);
+    assert_eq!((code, out), (0, card_output(&card)));
+}
+
+#[test]
+fn subagent_card_is_silent_with_no_agent_type_and_on_bad_input() {
+    let dir = Dir::new();
+    let good = start_event("general-purpose");
+    // The positive control.
+    assert_ne!(hook(&dir, &["subagent-card"], &good, &[]).1, "");
+    for input in [
+        "",
+        "not json",
+        "{}",
+        &start_event(""),
+        r#"{"hook_event_name":"SubagentStart","agent_id":"a1"}"#,
+        r#"{"hook_event_name":"SubagentStart","agent_type":7}"#,
+        &good.replace("SubagentStart", "SubagentStop"),
+        r#"{"agent_type":"general-purpose"}"#,
+    ] {
+        let (code, out, err) = hook(&dir, &["subagent-card"], input, &[]);
+        assert_eq!((code, out.as_str(), err.as_str()), (0, "", ""), "{input}");
+    }
+}
+
+// ---- return-state ----
+
+const REASON: &str = "spec-dna return state: end your report with one line: `State: COMPLETE`, `State: COMPLETE_WITH_CONCERNS`, `State: NEEDS_CONTEXT` or `State: BLOCKED`.";
+
+fn block_output() -> String {
+    format!("{{\"decision\":\"block\",\"reason\":\"{REASON}\"}}\n")
+}
+
+/// A JSON string of `text`. The test texts hold no other control character.
+fn quoted(text: &str) -> String {
+    let t = text
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t");
+    format!("\"{t}\"")
+}
+
+/// A SubagentStop input of a named subagent that never got the reason.
+fn stop_event(report: &str) -> String {
+    format!(
+        r#"{{"session_id":"s1","hook_event_name":"SubagentStop","agent_id":"a1","agent_type":"general-purpose","stop_hook_active":false,"last_assistant_message":{}}}"#,
+        quoted(report)
+    )
+}
+
+fn return_state(dir: &Dir, input: &str) -> String {
+    let (code, out, err) = hook(dir, &["return-state"], input, &[]);
+    assert_eq!((code, err.as_str()), (0, ""), "{input}");
+    out
+}
+
+#[test]
+fn return_state_passes_each_of_the_4_values() {
+    let dir = Dir::new();
+    for value in [
+        "COMPLETE",
+        "COMPLETE_WITH_CONCERNS",
+        "NEEDS_CONTEXT",
+        "BLOCKED",
+    ] {
+        for report in [
+            format!("The work.\n\nState: {value}"),
+            // Empty lines at the end, and white space around the line.
+            format!("The work.\n  State: {value}  \n\n  \n"),
+            format!("The work.\r\nState: {value}\r\n"),
+            format!("The work.\n**State: {value}**"),
+            format!("The work.\n`State: {value}`"),
+            format!("The work.\n **`State: {value}`** \n"),
+        ] {
+            assert_eq!(return_state(&dir, &stop_event(&report)), "", "{report:?}");
+        }
+    }
+}
+
+#[test]
+fn return_state_asks_once_for_a_report_with_no_state_line() {
+    let dir = Dir::new();
+    assert_eq!(REASON.len(), 149);
+    for report in [
+        "The work is done.",
+        "",
+        "State: COMPLETE\nOne more sentence.",
+        "State: DONE",
+        "state: COMPLETE",
+        "State: complete",
+        "State:  COMPLETE",
+        "State:COMPLETE",
+        "State: COMPLETE.",
+        "**State:** COMPLETE",
+        "The report ends with State: COMPLETE",
+    ] {
+        let input = stop_event(report);
+        assert_eq!(return_state(&dir, &input), block_output(), "{report:?}");
+        // After one block, the same input gives nothing.
+        let again = input.replace("\"stop_hook_active\":false", "\"stop_hook_active\":true");
+        assert_ne!(again, input);
+        assert_eq!(return_state(&dir, &again), "", "{report:?}");
+    }
+}
+
+#[test]
+fn return_state_is_silent_on_input_that_it_does_not_know() {
+    let dir = Dir::new();
+    let good = stop_event("The work.");
+    // The positive control.
+    assert_eq!(return_state(&dir, &good), block_output());
+    for input in [
+        "".to_string(),
+        "not json".to_string(),
+        "{}".to_string(),
+        good.replace("\"agent_type\":\"general-purpose\"", "\"agent_type\":\"\""),
+        good.replace("\"agent_type\":\"general-purpose\",", ""),
+        good.replace("SubagentStop", "Stop"),
+        // A key that is absent or not a boolean never blocks.
+        good.replace("\"stop_hook_active\":false,", ""),
+        good.replace(
+            "\"stop_hook_active\":false",
+            "\"stop_hook_active\":\"false\"",
+        ),
+        good.replace(",\"last_assistant_message\":\"The work.\"", ""),
+        good.replace("\"The work.\"", "null"),
+    ] {
+        assert_ne!(input, good);
+        assert_eq!(return_state(&dir, &input), "", "{input}");
+    }
+}
+
+/// An assistant line of a transcript with one tool call.
+fn tool_call(name: &str, input: &str) -> String {
+    format!(
+        r#"{{"type":"assistant","message":{{"role":"assistant","content":[{{"type":"text","text":"x"}},{{"type":"tool_use","id":"t1","name":"{name}","input":{input}}}]}}}}"#
+    )
+}
+
+fn handback(report: &str) -> String {
+    tool_call(
+        "SubagentHandback",
+        &format!(r#"{{"message":{}}}"#, quoted(report)),
+    )
+}
+
+fn with_transcript(event: &str, transcript: &Path) -> String {
+    let path = quoted(transcript.to_str().unwrap());
+    format!(
+        "{},\"agent_transcript_path\":{path}}}",
+        event.strip_suffix('}').unwrap()
+    )
+}
+
+#[test]
+fn return_state_reads_the_message_of_the_last_handback() {
+    let dir = Dir::new();
+    let t = dir.0.join("agent-a1.jsonl");
+    // The report is the `message` of the call. A final text with no state line
+    // does not replace it.
+    write_transcript(
+        &t,
+        &[handback("The work.\nState: BLOCKED"), assistant(10, 5)],
+    );
+    let input = with_transcript(&stop_event("I handed the report back."), &t);
+    assert_eq!(return_state(&dir, &input), "");
+    // No text follows the call in the transcript.
+    write_transcript(&t, &[handback("The work.")]);
+    let input = with_transcript(&stop_event("State: COMPLETE"), &t);
+    assert_eq!(return_state(&dir, &input), block_output());
+    // The last call wins.
+    write_transcript(
+        &t,
+        &[handback("State: COMPLETE"), handback("The second report.")],
+    );
+    let input = with_transcript(&stop_event("State: COMPLETE"), &t);
+    assert_eq!(return_state(&dir, &input), block_output());
+    // No `last_assistant_message`: the call alone is a report.
+    write_transcript(&t, &[handback("State: COMPLETE")]);
+    let input =
+        with_transcript(&stop_event(""), &t).replace(",\"last_assistant_message\":\"\"", "");
+    assert_eq!(return_state(&dir, &input), "");
+    // A far call: the hook reads from the end of the file, past one chunk.
+    write_transcript(&t, &[handback("State: COMPLETE"), assistant(10, 600_000)]);
+    let input = with_transcript(&stop_event("x"), &t);
+    assert_eq!(return_state(&dir, &input), "");
+}
+
+/// An assistant line of a transcript with one text.
+fn text_line(text: &str) -> String {
+    format!(
+        r#"{{"type":"assistant","message":{{"role":"assistant","content":[{{"type":"text","text":{}}}]}}}}"#,
+        quoted(text)
+    )
+}
+
+#[test]
+fn return_state_takes_a_later_report_over_an_old_handback() {
+    let dir = Dir::new();
+    let t = dir.0.join("agent-a1.jsonl");
+    let report = "The new report.\nState: COMPLETE";
+    write_transcript(&t, &[handback("old report"), text_line(report)]);
+    let input = with_transcript(&stop_event(report), &t);
+    assert_eq!(return_state(&dir, &input), "");
+    // A later line that names the tool is a later text too.
+    let named = "SubagentHandback came first.\nState: COMPLETE";
+    write_transcript(&t, &[handback("old report"), text_line(named)]);
+    let input = with_transcript(&stop_event(named), &t);
+    assert_eq!(return_state(&dir, &input), "");
+    // A later text with no state line: the call is still the report.
+    write_transcript(&t, &[handback("old report"), text_line("Sent.")]);
+    let input = with_transcript(&stop_event("Sent."), &t);
+    assert_eq!(return_state(&dir, &input), block_output());
+    // An empty text, a text of a user line and a text before the call are not
+    // after the call.
+    for after in [
+        text_line(" \n "),
+        r#"{"type":"user","message":{"content":[{"type":"text","text":"Go on."}]}}"#.to_string(),
+    ] {
+        write_transcript(&t, &[text_line("A start."), handback("old report"), after]);
+        let input = with_transcript(&stop_event("State: COMPLETE"), &t);
+        assert_eq!(return_state(&dir, &input), block_output());
+    }
+}
+
+#[test]
+fn return_state_takes_the_final_text_when_no_call_is_a_handback() {
+    let dir = Dir::new();
+    let t = dir.0.join("agent-a1.jsonl");
+    // The name in a text or in another tool call is no handback.
+    write_transcript(
+        &t,
+        &[
+            tool_call("Bash", r#"{"command":"echo SubagentHandback","message":"State: COMPLETE"}"#),
+            r#"{"type":"user","message":{"content":[{"type":"tool_use","name":"SubagentHandback","input":{"message":"State: COMPLETE"}}]}}"#.to_string(),
+        ],
+    );
+    let input = with_transcript(&stop_event("The work."), &t);
+    assert_eq!(return_state(&dir, &input), block_output());
+    let input = with_transcript(&stop_event("State: COMPLETE"), &t);
+    assert_eq!(return_state(&dir, &input), "");
+    // A transcript that does not exist.
+    let input = with_transcript(&stop_event("State: COMPLETE"), &dir.0.join("none.jsonl"));
+    assert_eq!(return_state(&dir, &input), "");
+}
+
+// ---- fix-limit ----
+
+const COMMAND: &str = "pytest tests/test_valve.py --maxfail=1";
+
+fn limit_message(n: u32) -> String {
+    format!(
+        "spec-dna fix limit: this command failed after {n} fixes. Stop the fixes of this problem. Tell the person the command, the cause that each fix assumed, the error now, and the next step that you propose. A subagent ends its report with `State: BLOCKED`."
+    )
+}
+
+fn limit_output(n: u32) -> String {
+    format!(
+        "{{\"hookSpecificOutput\":{{\"hookEventName\":\"PostToolUseFailure\",\"additionalContext\":\"{}\"}}}}\n",
+        limit_message(n)
+    )
+}
+
+/// A tool event of the session `s1`. `agent`: the `agent_id` of a subagent.
+fn tool_event(event: &str, tool: &str, input: &str, agent: Option<&str>) -> String {
+    let agent = agent.map_or(String::new(), |a| format!(r#""agent_id":"{a}","#));
+    format!(
+        r#"{{"session_id":"s1",{agent}"hook_event_name":"{event}","tool_name":"{tool}","tool_input":{input}}}"#
+    )
+}
+
+fn bash_input(command: &str) -> String {
+    format!(r#"{{"command":{}}}"#, quoted(command))
+}
+
+/// One project directory and one state folder, with the calls of one hook.
+struct Fix {
+    dir: Dir,
+    args: Vec<String>,
+}
+
+impl Fix {
+    fn new() -> Fix {
+        let dir = Dir::new();
+        fs::create_dir_all(dir.0.join("docs/intent/dose")).unwrap();
+        fs::create_dir_all(dir.0.join("docs/intent-notes")).unwrap();
+        fs::create_dir_all(dir.0.join("src")).unwrap();
+        let args = ["fix-limit", "--limit", "3", "--intent", "docs/intent"]
+            .map(str::to_string)
+            .to_vec();
+        Fix { dir, args }
+    }
+
+    fn run(&self, event: &str) -> String {
+        let args: Vec<&str> = self.args.iter().map(String::as_str).collect();
+        let root = self.dir.0.to_str().unwrap();
+        let (code, out, err) = hook(&self.dir, &args, event, &[("CLAUDE_PROJECT_DIR", root)]);
+        assert_eq!((code, err.as_str()), (0, ""), "{event}");
+        out
+    }
+
+    /// A failed `Bash` call.
+    fn fail_as(&self, command: &str, agent: Option<&str>) -> String {
+        let input = bash_input(command);
+        self.run(&tool_event("PostToolUseFailure", "Bash", &input, agent))
+    }
+
+    fn fail(&self) -> String {
+        self.fail_as(COMMAND, None)
+    }
+
+    /// A failed `Bash` call with the key `is_interrupt`. `value` is raw JSON.
+    fn fail_with_interrupt(&self, value: &str) -> String {
+        let event = tool_event("PostToolUseFailure", "Bash", &bash_input(COMMAND), None);
+        let key = format!(r#""session_id":"s1","is_interrupt":{value},"#);
+        self.run(&event.replace(r#""session_id":"s1","#, &key))
+    }
+
+    /// A `Bash` call that passed.
+    fn pass(&self, command: &str) {
+        let input = bash_input(command);
+        let out = self.run(&tool_event("PostToolUse", "Bash", &input, None));
+        assert_eq!(out, "");
+    }
+
+    /// An edit of the file at `path`, from the root of the project.
+    fn edit_as(&self, tool: &str, path: &str, agent: Option<&str>) {
+        let file = self.dir.0.join(path);
+        let input = format!(r#"{{"file_path":{}}}"#, quoted(file.to_str().unwrap()));
+        let out = self.run(&tool_event("PostToolUse", tool, &input, agent));
+        assert_eq!(out, "");
+    }
+
+    fn edit(&self) {
+        self.edit_as("Edit", "src/valve.py", None);
+    }
+
+    /// The names and the texts of the state files.
+    fn state(&self) -> Vec<(String, String)> {
+        let Ok(entries) = fs::read_dir(self.dir.0.join("tmp/spec-dna-fix")) else {
+            return Vec::new();
+        };
+        let mut out: Vec<(String, String)> = entries
+            .map(|e| {
+                let e = e.unwrap();
+                let name = e.file_name().into_string().unwrap();
+                (name, fs::read_to_string(e.path()).unwrap())
+            })
+            .collect();
+        out.sort();
+        out
+    }
+}
+
+#[test]
+fn fix_limit_speaks_once_at_the_third_failed_fix() {
+    let fix = Fix::new();
+    assert_eq!(limit_message(3).len(), 249);
+    // The first failure is the problem, and not a fix.
+    assert_eq!(fix.fail(), "");
+    for _ in 0..2 {
+        fix.edit();
+        assert_eq!(fix.fail(), "");
+    }
+    fix.edit();
+    assert_eq!(fix.fail(), limit_output(3));
+    for _ in 0..4 {
+        fix.edit();
+        assert_eq!(fix.fail(), "", "the message comes once for each key");
+    }
+}
+
+#[test]
+fn fix_limit_counts_no_interrupted_failure() {
+    let fix = Fix::new();
+    assert_eq!(fix.fail(), "");
+    for _ in 0..2 {
+        fix.edit();
+        assert_eq!(fix.fail(), "");
+    }
+    fix.edit();
+    // An abort tells nothing about the fix: the count and the edit mark stay.
+    let before = fix.state();
+    assert_eq!(fix.fail_with_interrupt("true"), "");
+    assert_eq!(fix.state(), before);
+    // The next failure uses the mark of the same edit.
+    assert_eq!(fix.fail_with_interrupt("false"), limit_output(3));
+    fix.edit();
+    assert_eq!(fix.fail_with_interrupt("false"), "");
+}
+
+#[test]
+fn fix_limit_makes_no_file_for_a_first_interrupted_failure() {
+    let fix = Fix::new();
+    assert_eq!(fix.fail_with_interrupt("true"), "");
+    assert!(fix.state().is_empty(), "{:?}", fix.state());
+}
+
+#[test]
+fn fix_limit_counts_a_failure_whose_is_interrupt_is_no_boolean_true() {
+    // Only the boolean `true` skips a failure.
+    for value in [r#""true""#, "1", "null"] {
+        let fix = Fix::new();
+        assert_eq!(fix.fail_with_interrupt(value), "", "{value}");
+        for _ in 0..2 {
+            fix.edit();
+            assert_eq!(fix.fail_with_interrupt(value), "", "{value}");
+        }
+        fix.edit();
+        assert_eq!(fix.fail_with_interrupt(value), limit_output(3), "{value}");
+    }
+}
+
+#[test]
+fn fix_limit_speaks_once_when_the_count_goes_back() {
+    let fix = Fix::new();
+    assert_eq!(fix.fail(), "");
+    let name = fix.state()[0].0.clone();
+    let count = fix.dir.0.join("tmp/spec-dna-fix").join(name);
+    let reach = |fix: &Fix| -> String {
+        (0..5)
+            .map(|_| {
+                fix.edit();
+                fix.fail()
+            })
+            .collect()
+    };
+    assert_eq!(reach(&fix), limit_output(3));
+    // 2 calls at the same time can lose an update, so the count can go back.
+    for old in ["2", "0", ""] {
+        fs::write(&count, old).unwrap();
+        assert_eq!(reach(&fix), "", "{old:?}");
+    }
+    // A pass ends the problem. The next one has its own message.
+    fix.pass(COMMAND);
+    assert!(fix.state().is_empty(), "{:?}", fix.state());
+    assert_eq!(fix.fail(), "");
+    assert_eq!(reach(&fix), limit_output(3));
+}
+
+#[test]
+fn fix_limit_counts_no_run_without_an_edit() {
+    let fix = Fix::new();
+    // An edit before the first failure is no fix.
+    fix.edit();
+    for _ in 0..8 {
+        assert_eq!(fix.fail(), "");
+    }
+    // One edit counts for one failure, also of another command.
+    let fix = Fix::new();
+    assert_eq!(fix.fail_as("make a", None), "");
+    assert_eq!(fix.fail_as("make b", None), "");
+    fix.edit();
+    assert_eq!(fix.fail_as("make a", None), "");
+    // The failure of `make a` removed the mark.
+    for _ in 0..4 {
+        assert_eq!(fix.fail_as("make b", None), "");
+    }
+    fix.edit();
+    assert_eq!(fix.fail_as("make a", None), "");
+    fix.edit();
+    assert_eq!(fix.fail_as("make a", None), limit_output(3));
+    // `make b` has its own count, which no edit raised.
+    fix.edit();
+    assert_eq!(fix.fail_as("make b", None), "");
+}
+
+#[test]
+fn fix_limit_deletes_the_count_when_the_command_passes() {
+    let fix = Fix::new();
+    assert_eq!(fix.fail(), "");
+    for _ in 0..2 {
+        fix.edit();
+        assert_eq!(fix.fail(), "");
+    }
+    // The pass of another command deletes nothing.
+    fix.pass("ls");
+    fix.pass(COMMAND);
+    // A new problem: 3 more fixes before the message.
+    assert_eq!(fix.fail(), "");
+    for _ in 0..2 {
+        fix.edit();
+        assert_eq!(fix.fail(), "");
+    }
+    fix.edit();
+    assert_eq!(fix.fail(), limit_output(3));
+}
+
+#[test]
+fn fix_limit_takes_runs_of_white_space_as_one_space() {
+    let fix = Fix::new();
+    assert_eq!(fix.fail_as("go test ./pump", None), "");
+    for command in ["go  test ./pump", "go\ttest\n./pump"] {
+        fix.edit();
+        assert_eq!(fix.fail_as(command, None), "");
+    }
+    fix.edit();
+    assert_eq!(fix.fail_as("go test   ./pump", None), limit_output(3));
+    // A changed command starts a new count.
+    fix.edit();
+    assert_eq!(fix.fail_as("go test ./pump -v", None), "");
+}
+
+#[test]
+fn fix_limit_keeps_a_count_for_each_agent() {
+    let fix = Fix::new();
+    let (a, b) = (Some("a1"), Some("b2"));
+    for agent in [a, b, None] {
+        assert_eq!(fix.fail_as(COMMAND, agent), "");
+    }
+    // The edits of one subagent raise only its own count.
+    for _ in 0..2 {
+        fix.edit_as("Write", "src/valve.py", a);
+        assert_eq!(fix.fail_as(COMMAND, b), "");
+        assert_eq!(fix.fail_as(COMMAND, None), "");
+        assert_eq!(fix.fail_as(COMMAND, a), "");
+    }
+    fix.edit_as("Edit", "src/valve.py", a);
+    assert_eq!(fix.fail_as(COMMAND, a), limit_output(3));
+    fix.edit();
+    assert_eq!(fix.fail_as(COMMAND, None), "");
+}
+
+#[test]
+fn fix_limit_marks_no_edit_below_an_intent_folder() {
+    let fix = Fix::new();
+    assert_eq!(fix.fail(), "");
+    for path in [
+        "docs/intent/dose/plan.md",
+        "docs/intent/dose/acceptance.toml",
+        "docs/intent/new.md",
+    ] {
+        for _ in 0..4 {
+            fix.edit_as("Edit", path, None);
+            assert_eq!(fix.fail(), "", "{path}");
+        }
+    }
+    // A folder with a longer name is not below the folder: 3 edits count.
+    for _ in 0..2 {
+        fix.edit_as("Write", "docs/intent-notes/n.md", None);
+        assert_eq!(fix.fail(), "");
+    }
+    fix.edit_as("Write", "docs/intent-notes/n.md", None);
+    assert_eq!(fix.fail(), limit_output(3));
+}
+
+/// True if the edit of `file`, in an event with this `cwd`, sets the edit mark.
+/// `{root}` in `file` is the root of the project.
+fn edit_sets_a_mark(fix: &Fix, cwd: Option<&str>, file: &str) -> bool {
+    let root = fix.dir.0.to_str().unwrap();
+    let cwd = cwd.map_or(String::new(), |c| {
+        format!(r#""cwd":{},"#, quoted(&c.replace("{root}", root)))
+    });
+    let input = format!(
+        r#"{{"file_path":{}}}"#,
+        quoted(&file.replace("{root}", root))
+    );
+    let event = tool_event("PostToolUse", "Edit", &input, None);
+    let key = format!(r#""session_id":"s1",{cwd}"#);
+    assert_eq!(
+        fix.run(&event.replace(r#""session_id":"s1","#, &key)),
+        "",
+        "{file}"
+    );
+    fix.state().iter().any(|(name, _)| name == "s1.main.edit")
+}
+
+#[test]
+fn fix_limit_finds_an_intent_file_by_a_relative_path_or_a_path_with_dots() {
+    let (at_root, below) = (Some("{root}"), Some("{root}/docs/intent/dose"));
+    for (cwd, file) in [
+        (at_root, "docs/intent/dose/plan.md"),
+        (at_root, "./docs/intent/dose/plan.md"),
+        (at_root, "src/../docs/intent/dose/plan.md"),
+        (below, "plan.md"),
+        (below, "../dose/acceptance.toml"),
+        (None, "{root}/docs/intent/dose/../dose/plan.md"),
+        (None, "{root}/./docs/intent/dose/plan.md"),
+    ] {
+        assert!(!edit_sets_a_mark(&Fix::new(), cwd, file), "{cwd:?} {file}");
+    }
+    // Each of these edits counts: it is below no intent folder, or the hook
+    // cannot tell which file it is.
+    for (cwd, file) in [
+        (at_root, "src/valve.py"),
+        (at_root, "docs/intent/../../src/valve.py"),
+        (Some("{root}/src"), "valve.py"),
+        (None, "{root}/docs/intent/dose/../../../src/valve.py"),
+        (None, "docs/intent/dose/plan.md"),
+        (Some("src"), "../docs/intent/dose/plan.md"),
+        (None, "{root}/docs/intent/dose/.."),
+    ] {
+        assert!(edit_sets_a_mark(&Fix::new(), cwd, file), "{cwd:?} {file}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn fix_limit_takes_a_dot_dot_after_a_link_as_the_system_does() {
+    // `src/jump` is a link to `docs/intent/dose`, so `src/jump/..` is
+    // `docs/intent`. A rule on the text alone gives `src`.
+    let fix = Fix::new();
+    let jump = fix.dir.0.join("src/jump");
+    std::os::unix::fs::symlink(fix.dir.0.join("docs/intent/dose"), jump).unwrap();
+    assert!(!edit_sets_a_mark(
+        &fix,
+        Some("{root}"),
+        "src/jump/../plan.md"
+    ));
+    // The reverse: a link in an intent folder that leads out of it.
+    let fix = Fix::new();
+    let jump = fix.dir.0.join("docs/intent/jump");
+    std::os::unix::fs::symlink(fix.dir.0.join("src"), jump).unwrap();
+    assert!(edit_sets_a_mark(
+        &fix,
+        Some("{root}"),
+        "docs/intent/jump/../valve.py"
+    ));
+}
+
+#[test]
+fn fix_limit_takes_the_root_of_the_cwd_of_the_input() {
+    let fix = Fix::new();
+    assert_eq!(fix.fail(), "");
+    let root = fix.dir.0.to_str().unwrap();
+    let args: Vec<&str> = fix.args.iter().map(String::as_str).collect();
+    // No `CLAUDE_PROJECT_DIR`: the `cwd` of the input is the root.
+    let edit = |path: &str| {
+        let file = fix.dir.0.join(path);
+        let event = format!(
+            r#"{{"session_id":"s1","cwd":{},"hook_event_name":"PostToolUse","tool_name":"Edit","tool_input":{{"file_path":{}}}}}"#,
+            quoted(root),
+            quoted(file.to_str().unwrap())
+        );
+        assert_eq!(hook(&fix.dir, &args, &event, &[]).1, "");
+    };
+    for _ in 0..4 {
+        edit("docs/intent/dose/plan.md");
+        assert_eq!(fix.fail(), "");
+    }
+    // The positive control.
+    for _ in 0..2 {
+        edit("src/valve.py");
+        assert_eq!(fix.fail(), "");
+    }
+    edit("src/valve.py");
+    assert_eq!(fix.fail(), limit_output(3));
+}
+
+#[test]
+fn fix_limit_state_holds_no_byte_of_the_command() {
+    let fix = Fix::new();
+    let secret = "deploy --token=hunter2 ./zebra";
+    assert_eq!(fix.fail_as(secret, None), "");
+    fix.edit_as("Edit", "src/valve.py", Some("a1"));
+    fix.edit();
+    assert_eq!(fix.fail_as(secret, Some("a1")), "");
+    let state = fix.state();
+    // 2 counts and no mark of the agent `a1`, which its failure removed, and
+    // the mark of the main agent.
+    assert_eq!(state.len(), 3, "{state:?}");
+    for (name, text) in &state {
+        for word in ["deploy", "token", "hunter2", "zebra", "./"] {
+            assert!(
+                !name.contains(word) && !text.contains(word),
+                "{name}: {text}"
+            );
+        }
+        assert!(text.bytes().all(|b| b.is_ascii_digit()), "{name}: {text:?}");
+        let parts: Vec<&str> = name.split('.').collect();
+        assert_eq!((parts.len(), parts[0]), (3, "s1"), "{name}");
+        assert!(["main", "a1"].contains(&parts[1]), "{name}");
+        assert!(
+            parts[2] == "edit"
+                || (parts[2].len() == 16 && parts[2].bytes().all(|b| b.is_ascii_hexdigit())),
+            "{name}"
+        );
+    }
+    // The session id salts the hash: the same command has another name in
+    // another session.
+    let hash_of = |session: &str| {
+        let fix = Fix::new();
+        let event = tool_event("PostToolUseFailure", "Bash", &bash_input(secret), None)
+            .replace("\"s1\"", &format!("\"{session}\""));
+        assert_eq!(fix.run(&event), "");
+        fix.state()[0].0.rsplit('.').next().unwrap().to_string()
+    };
+    assert_ne!(hash_of("s1"), hash_of("s2"));
+}
+
+#[test]
+fn fix_limit_removes_a_state_file_that_is_older_than_3_days() {
+    let fix = Fix::new();
+    let state = fix.dir.0.join("tmp/spec-dna-fix");
+    fs::create_dir_all(&state).unwrap();
+    let old = state.join("s0.main.0123456789abcdef");
+    fs::write(&old, "2").unwrap();
+    let past = std::time::SystemTime::now() - std::time::Duration::from_secs(4 * 24 * 3600);
+    fs::File::options()
+        .write(true)
+        .open(&old)
+        .unwrap()
+        .set_modified(past)
+        .unwrap();
+    assert_eq!(fix.fail(), "");
+    assert!(!old.exists());
+    assert_eq!(fix.state().len(), 1);
+}
+
+/// A file outside the state folder that no write of the hook may change.
+#[cfg(unix)]
+fn victim(fix: &Fix, name: &str) -> PathBuf {
+    let path = fix.dir.0.join(name);
+    fs::write(&path, "keep this data").unwrap();
+    path
+}
+
+#[cfg(unix)]
+#[test]
+fn fix_limit_writes_no_mark_through_a_symlink() {
+    let fix = Fix::new();
+    let target = victim(&fix, "victim");
+    let state = fix.dir.0.join("tmp/spec-dna-fix");
+    fs::create_dir_all(&state).unwrap();
+    std::os::unix::fs::symlink(&target, state.join("s1.main.edit")).unwrap();
+    fix.edit();
+    assert_eq!(fs::read_to_string(&target).unwrap(), "keep this data");
+}
+
+#[cfg(unix)]
+#[test]
+fn fix_limit_writes_no_count_through_a_symlink() {
+    let fix = Fix::new();
+    let target = victim(&fix, "victim");
+    assert_eq!(fix.fail(), "");
+    let name = fix.state()[0].0.clone();
+    let count = fix.dir.0.join("tmp/spec-dna-fix").join(name);
+    fs::remove_file(&count).unwrap();
+    std::os::unix::fs::symlink(&target, &count).unwrap();
+    fix.edit();
+    assert_eq!(fix.fail(), "");
+    assert_eq!(fs::read_to_string(&target).unwrap(), "keep this data");
+    // A regular file with the new count replaced the link.
+    assert!(fs::symlink_metadata(&count).unwrap().is_file());
+}
+
+#[cfg(unix)]
+#[test]
+fn fix_limit_uses_no_state_folder_that_is_a_symlink() {
+    // The name of the count of `COMMAND` in the session `s1`.
+    let first = Fix::new();
+    assert_eq!(first.fail(), "");
+    let count = first.state()[0].0.clone();
+
+    let fix = Fix::new();
+    let other = fix.dir.0.join("other");
+    fs::create_dir_all(&other).unwrap();
+    for name in ["s1.main.edit", count.as_str(), "old"] {
+        fs::write(other.join(name), "2").unwrap();
+    }
+    let past = std::time::SystemTime::now() - std::time::Duration::from_secs(4 * 24 * 3600);
+    fs::File::options()
+        .write(true)
+        .open(other.join("old"))
+        .unwrap()
+        .set_modified(past)
+        .unwrap();
+    fs::create_dir_all(fix.dir.0.join("tmp")).unwrap();
+    std::os::unix::fs::symlink(&other, fix.dir.0.join("tmp/spec-dna-fix")).unwrap();
+    let before = fix.state();
+    assert_eq!(before.len(), 3);
+    // A pass, a failure and an edit: no one deletes or writes a file there.
+    fix.pass(COMMAND);
+    assert_eq!(fix.state(), before, "pass");
+    assert_eq!(fix.fail(), "");
+    assert_eq!(fix.state(), before, "failure");
+    fix.edit();
+    assert_eq!(fix.state(), before, "edit");
+}
+
+#[test]
+fn fix_limit_writes_no_count_in_place() {
+    // A second name of the count file keeps the old text, so a reader never
+    // sees a count file that is empty or half written.
+    let fix = Fix::new();
+    assert_eq!(fix.fail(), "");
+    let name = fix.state()[0].0.clone();
+    let count = fix.dir.0.join("tmp/spec-dna-fix").join(name);
+    let witness = fix.dir.0.join("witness");
+    fs::hard_link(&count, &witness).unwrap();
+    fix.edit();
+    assert_eq!(fix.fail(), "");
+    assert_eq!(fs::read_to_string(&count).unwrap(), "1");
+    assert_eq!(fs::read_to_string(&witness).unwrap(), "0");
+    // No temporary file stays.
+    assert_eq!(fix.state().len(), 1);
+}
+
+#[test]
+fn fix_limit_is_off_at_0_and_silent_on_input_that_it_does_not_know() {
+    for args in [
+        &["fix-limit", "--limit", "0"][..],
+        &["fix-limit"][..],
+        &["fix-limit", "--limit", "x"][..],
+    ] {
+        let mut fix = Fix::new();
+        fix.args = args.iter().map(|a| a.to_string()).collect();
+        for _ in 0..5 {
+            assert_eq!(fix.fail(), "", "{args:?}");
+            fix.edit();
+        }
+        assert!(fix.state().is_empty(), "{args:?}");
+    }
+    let fix = Fix::new();
+    let good = tool_event("PostToolUseFailure", "Bash", &bash_input(COMMAND), None);
+    for input in [
+        "".to_string(),
+        "not json".to_string(),
+        "{}".to_string(),
+        good.replace("\"s1\"", "\"../s1\""),
+        good.replace("\"session_id\":\"s1\",", ""),
+        good.replace("\"s1\",", "\"s1\",\"agent_id\":\"../a\","),
+        good.replace("\"s1\",", "\"s1\",\"agent_id\":7,"),
+        good.replace("\"Bash\"", "\"Read\""),
+        good.replace("\"Bash\"", "\"Edit\""),
+        good.replace("PostToolUseFailure", "PreToolUse"),
+        good.replace("\"command\"", "\"cmd\""),
+        // An edit with no path.
+        tool_event("PostToolUse", "Edit", "{}", None),
+        tool_event(
+            "PostToolUse",
+            "NotebookEdit",
+            r#"{"file_path":"/x/y"}"#,
+            None,
+        ),
+    ] {
+        assert_eq!(fix.run(&input), "", "{input}");
+        assert!(fix.state().is_empty(), "{input}");
+    }
+    // The positive control.
+    assert_eq!(fix.run(&good), "");
+    assert_eq!(fix.state().len(), 1);
+}
+
 #[test]
 fn hook_help_prints_the_help_of_the_command() {
     let dir = Dir::new();

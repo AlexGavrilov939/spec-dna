@@ -1,20 +1,25 @@
 //! The hooks of the agent harness: `spec-dna hook <name> [flags]`.
 //!
-//! A hook runs on each tool call of an agent. It reads one JSON object from
-//! stdin and one file at most. It never reads `spec-dna.toml`, never checks the
+//! A hook runs on a tool call, or at the start or the stop of a subagent. It
+//! reads one JSON object from stdin and one file at most. It never reads `spec-dna.toml`, never checks the
 //! pin and never scans the repository. Unknown flags and bad values are
 //! ignored, the exit code is always 0, and an error gives no output.
 //! `protect-tests` reads no file. It runs `git` at most 2 times, and only for
 //! a path that matches a test glob. `protect-approvals` runs `git` only for a
 //! command that holds the words `git` and `commit` (see its section).
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
+use sha2::{Digest, Sha256};
+
+use crate::harness_text;
 use crate::json::{self, Obj, Value};
 
 /// The most bytes that a hook reads from stdin or from a script file.
@@ -78,6 +83,17 @@ pub fn run(args: &[String]) {
                     &ApprovalsOpts::parse(flags),
                     project.as_deref(),
                     &mut run_git,
+                )
+            }
+            "subagent-card" => subagent_card(&input),
+            "return-state" => return_state(&input),
+            "fix-limit" => {
+                let project = std::env::var_os("CLAUDE_PROJECT_DIR").map(PathBuf::from);
+                fix_limit(
+                    &input,
+                    &FixOpts::parse(flags),
+                    project.as_deref(),
+                    &std::env::temp_dir().join("spec-dna-fix"),
                 )
             }
             _ => None,
@@ -250,9 +266,15 @@ fn remove_stale(dir: &Path) {
     }
 }
 
-/// Returns the context size of the last assistant message of a transcript. It
-/// reads the file backward and stops after `MAX_SCAN` bytes.
+/// Returns the context size of the last assistant message of a transcript.
 fn last_context(path: &Path) -> Option<u64> {
+    scan_back(path, line_context)
+}
+
+/// Reads the lines of a transcript from the last one to the first one, and
+/// returns the first value that `find` gives. It reads the file backward and
+/// stops after `MAX_SCAN` bytes.
+fn scan_back<T>(path: &Path, find: impl Fn(&[u8]) -> Option<T>) -> Option<T> {
     let mut file = File::open(path).ok()?;
     let len = file.metadata().ok()?.len();
     let stop = len.saturating_sub(MAX_SCAN);
@@ -267,7 +289,7 @@ fn last_context(path: &Path) -> Option<u64> {
         buf.extend_from_slice(&carry);
         let mut end = buf.len();
         while let Some(k) = buf[..end].iter().rposition(|&c| c == b'\n') {
-            if let Some(n) = line_context(&buf[k + 1..end]) {
+            if let Some(n) = find(&buf[k + 1..end]) {
                 return Some(n);
             }
             end = k;
@@ -277,7 +299,7 @@ fn last_context(path: &Path) -> Option<u64> {
         pos = from;
     }
     // At the start of the file, the carry is a whole line.
-    if pos == 0 { line_context(&carry) } else { None }
+    if pos == 0 { find(&carry) } else { None }
 }
 
 fn contains(hay: &[u8], needle: &[u8]) -> bool {
@@ -342,6 +364,417 @@ fn token_sum(usage: &Value) -> u64 {
         .as_u64()
         .saturating_add(usage.get("cache_creation_input_tokens").as_u64())
         .saturating_add(usage.get("cache_read_input_tokens").as_u64())
+}
+
+// ---------------------------------------------------------------------------
+// subagent-card
+// ---------------------------------------------------------------------------
+
+/// Returns the `agent_type` of an event with the name `event`, if it is not
+/// empty. An internal agent of Claude Code can have an empty one.
+fn subagent_type<'a>(v: &'a Value, event: &str) -> Option<&'a str> {
+    if v.get("hook_event_name").as_str() != Some(event) {
+        return None;
+    }
+    v.get("agent_type").as_str().filter(|t| !t.is_empty())
+}
+
+/// Handles one SubagentStart event. It returns the JSON that adds the card to
+/// the context of the subagent. The event cannot block.
+pub fn subagent_card(input: &str) -> Option<String> {
+    let v = json::parse(input).ok()?;
+    let agent_type = subagent_type(&v, "SubagentStart")?;
+    let card = harness_text::subagent_card(agent_type);
+    Some(output("SubagentStart", "additionalContext", &card))
+}
+
+// ---------------------------------------------------------------------------
+// return-state
+// ---------------------------------------------------------------------------
+
+/// The tool with which a subagent can give its report. Its `message` input is
+/// then the report, and `last_assistant_message` is only the text after the
+/// call.
+const HANDBACK: &str = "SubagentHandback";
+
+const RETURN_STATE_REASON: &str = "spec-dna return state: end your report with one line: `State: COMPLETE`, `State: COMPLETE_WITH_CONCERNS`, `State: NEEDS_CONTEXT` or `State: BLOCKED`.";
+
+const STATES: [&str; 4] = [
+    "State: COMPLETE",
+    "State: COMPLETE_WITH_CONCERNS",
+    "State: NEEDS_CONTEXT",
+    "State: BLOCKED",
+];
+
+/// True if the last line of a report that is not empty is a state line. The
+/// white space, `*` and `` ` `` at the 2 ends of the line do not count.
+fn ends_with_state(report: &str) -> bool {
+    report
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .map(|l| l.trim_matches(|c: char| c.is_whitespace() || c == '*' || c == '`'))
+        .is_some_and(|l| STATES.contains(&l))
+}
+
+/// Returns the `message` of the last handback call of a transcript line. The
+/// caller reads the lines from the last one. `text_after` becomes `true` for an
+/// assistant text that is not empty, so it tells if a text follows the call.
+fn line_handback(line: &[u8], text_after: &Cell<bool>) -> Option<String> {
+    if !contains(line, HANDBACK.as_bytes()) && (text_after.get() || !contains(line, br#""text""#)) {
+        return None;
+    }
+    let v = json::parse(std::str::from_utf8(line).ok()?).ok()?;
+    if v.get("type").as_str() != Some("assistant") {
+        return None;
+    }
+    for b in v.get("message").get("content").as_arr().iter().rev() {
+        match b.get("type").as_str() {
+            Some("text") if b.get("text").as_str().is_some_and(|t| !t.trim().is_empty()) => {
+                text_after.set(true);
+            }
+            Some("tool_use") if b.get("name").as_str() == Some(HANDBACK) => {
+                if let Some(message) = b.get("input").get("message").as_str() {
+                    return Some(message.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Handles one SubagentStop event. It returns the JSON that gives the subagent
+/// one more instruction, if its report has no state line. It blocks only when
+/// `stop_hook_active` is `false`, so a subagent gets one more request at most.
+/// An input with no such key never blocks. It stores nothing.
+pub fn return_state(input: &str) -> Option<String> {
+    let v = json::parse(input).ok()?;
+    subagent_type(&v, "SubagentStop")?;
+    if v.get("stop_hook_active") != &Value::Bool(false) {
+        return None;
+    }
+    let text_after = Cell::new(false);
+    let sent = v
+        .get("agent_transcript_path")
+        .as_str()
+        .filter(|p| !p.is_empty())
+        .and_then(|p| scan_back(Path::new(p), |line| line_handback(line, &text_after)));
+    let last = v.get("last_assistant_message").as_str();
+    let has_state = match &sent {
+        // A text after the call is a later report, if it has a state line.
+        // Else the message of the call stays the report.
+        Some(message) => {
+            ends_with_state(message) || (text_after.get() && last.is_some_and(ends_with_state))
+        }
+        None => ends_with_state(last?),
+    };
+    if has_state {
+        return None;
+    }
+    Some(
+        Obj::new()
+            .str("decision", "block")
+            .str("reason", RETURN_STATE_REASON)
+            .end(),
+    )
+}
+
+// ---------------------------------------------------------------------------
+// fix-limit
+// ---------------------------------------------------------------------------
+
+/// The flags of `fix-limit`. A limit of 0 turns the hook off.
+#[derive(Default)]
+pub struct FixOpts {
+    pub limit: u64,
+    /// One `--intent <dir>` for each folder of the `intent` layer, from the
+    /// repository root. An edit below one of them is no fix.
+    pub intent: Vec<String>,
+}
+
+impl FixOpts {
+    fn parse(args: &[String]) -> Self {
+        FixOpts {
+            limit: flag_value(args, "--limit")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
+            intent: flag_values(args, "--intent")
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+        }
+    }
+}
+
+const MSG_FIX_LIMIT: &str = "spec-dna fix limit: this command failed after {n} fixes. Stop the fixes of this problem. Tell the person the command, the cause that each fix assumed, the error now, and the next step that you propose. A subagent ends its report with `State: BLOCKED`.";
+
+/// The first 8 bytes of SHA-256 of the session id and the command, in
+/// hexadecimal. Each run of white space of the command counts as one space.
+/// The session id is the salt. The state holds this hash and no command text
+/// (ADR 0004, amendment of 2026-11-25).
+fn command_hash(session: &str, command: &str) -> String {
+    let mut text = String::with_capacity(command.len());
+    let mut space = false;
+    for ch in command.chars() {
+        if !ch.is_whitespace() {
+            text.push(ch);
+        } else if !space {
+            text.push(' ');
+        }
+        space = ch.is_whitespace();
+    }
+    let mut sha = Sha256::new();
+    sha.update(session);
+    sha.update([0]);
+    sha.update(text);
+    sha.finalize()[..8]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// True if the edit of `file` is below one of the `--intent` folders of the
+/// project. For a path that the hook cannot resolve, it is false, so the edit
+/// counts.
+fn below_intent(v: &Value, opts: &FixOpts, project: Option<&Path>, file: &str) -> bool {
+    let cwd = v.get("cwd").as_str().filter(|c| !c.is_empty());
+    let root = project
+        .and_then(Path::to_str)
+        .filter(|p| !p.is_empty())
+        .or(cwd);
+    let Some((_, rel)) = root
+        .zip(plain_path(cwd, file))
+        .and_then(|(r, f)| relative_to(r, &f))
+    else {
+        return false;
+    };
+    opts.intent
+        .iter()
+        .any(|d| below(d.trim_end_matches('/'), &rel).is_some())
+}
+
+/// The path of an edit for `relative_to`. A relative path starts at the `cwd`
+/// of the event. For a path with a `.` or `..` segment, the system resolves the
+/// folder of the file, because a rule on the text gives another folder for a
+/// `..` after a link. It returns `None` for a folder that it cannot resolve.
+fn plain_path(cwd: Option<&str>, file: &str) -> Option<String> {
+    let mut file = slashes(file);
+    if !is_absolute(&file) {
+        file = format!("{}/{file}", slashes(cwd?).trim_end_matches('/'));
+    }
+    // A relative `cwd` names no folder: the system would take it from the folder
+    // of this process.
+    if !is_absolute(&file) {
+        return None;
+    }
+    if !file.split('/').any(|s| s == "." || s == "..") {
+        return Some(file);
+    }
+    let path = Path::new(&file);
+    let folder = fs::canonicalize(path.parent()?).ok()?;
+    Some(slashes(&folder.join(path.file_name()?).to_string_lossy()))
+}
+
+/// A path in `dir` for a short-lived file. No other call that runs now has it.
+fn temp_path(dir: &Path) -> PathBuf {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    dir.join(format!(".tmp-{}-{n}", std::process::id()))
+}
+
+/// Creates a file that is not there. It never writes through a symlink.
+fn create_file(path: &Path) -> std::io::Result<File> {
+    OpenOptions::new().write(true).create_new(true).open(path)
+}
+
+/// True if `dir` is a folder, and no symlink, that the user of this process
+/// owns. The temporary directory can be a shared one, where another user can
+/// make the folder first.
+fn own_dir(dir: &Path) -> bool {
+    fs::symlink_metadata(dir).is_ok_and(|m| m.is_dir() && same_owner(dir, &m))
+}
+
+/// std gives no id of the user. A new file has the user of the process as its
+/// owner, so the owner of a new file in the folder is the test.
+#[cfg(unix)]
+fn same_owner(dir: &Path, meta: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let probe = temp_path(dir);
+    let Ok(file) = create_file(&probe) else {
+        return false;
+    };
+    let same = file.metadata().is_ok_and(|m| m.uid() == meta.uid());
+    let _ = fs::remove_file(&probe);
+    same
+}
+
+#[cfg(not(unix))]
+fn same_owner(_dir: &Path, _meta: &fs::Metadata) -> bool {
+    true
+}
+
+/// Makes the state folder of `fix-limit`, if it is not there. It returns `None`
+/// for a folder that the hook must not use. Then the hook keeps no state there
+/// and changes no other file. The owner test of `own_dir` makes and removes one
+/// empty file in a real folder.
+fn state_folder(dir: &Path) -> Option<()> {
+    fs::create_dir_all(dir).ok()?;
+    own_dir(dir).then_some(())
+}
+
+/// Puts a new file with `text` at `path` in one step. A reader sees the old
+/// file or the new one. The rename replaces a symlink at `path`, and does not
+/// write to its target.
+fn replace_file(dir: &Path, path: &Path, text: &str) -> Option<()> {
+    let temp = temp_path(dir);
+    let done = create_file(&temp)
+        .and_then(|mut f| f.write_all(text.as_bytes()))
+        .and_then(|()| fs::rename(&temp, path));
+    if done.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    done.ok()
+}
+
+/// The file that says that the message of a count is out.
+fn said_file(count: &Path) -> PathBuf {
+    let mut name = count.as_os_str().to_owned();
+    name.push(".said");
+    PathBuf::from(name)
+}
+
+/// Takes the one message of a count. `create_new` gives the file of the message
+/// to one call only. A pass of the command can delete the count at the same
+/// time. So the call then looks for the count. If it is gone, the call removes
+/// its file and prints nothing: the problem ended, and a call that removes the
+/// file must not speak, because another call can then create it again.
+///
+/// A pass removes the count first and this file second. So if the look is
+/// before the first removal, the pass removes the file. If the look is after it,
+/// the call finds no count and removes the file, unless another call started a
+/// new count in between (`docs/harness.md` lists this case). The look rests on a
+/// rule of `rename`: no lookup misses a path while a new file replaces it. So
+/// with no pass, the count is there, and no call removes the file of a message.
+fn claim(count: &Path, step: &mut dyn FnMut(&'static str)) -> bool {
+    let said = said_file(count);
+    step("claim");
+    if create_file(&said).is_err() {
+        return false;
+    }
+    step("look");
+    if !fs::symlink_metadata(count).is_err_and(|e| e.kind() == ErrorKind::NotFound) {
+        return true;
+    }
+    step("withdraw");
+    let _ = fs::remove_file(said);
+    false
+}
+
+/// Handles one event of `Bash`, `Edit` or `Write`. A failed fix is a failure
+/// of a command after the same agent made an edit since its last failure. At
+/// the limit, the hook returns the JSON that tells the agent to stop, once for
+/// each command. It cannot block.
+///
+/// `state_dir` holds one file for each count, one for the edit mark of each
+/// agent and one for each message. The names are `<session>.<agent>.<hash>`,
+/// `<session>.<agent>.edit` and `<session>.<agent>.<hash>.said`. A count file
+/// holds a number, and the other files are empty.
+pub fn fix_limit(
+    input: &str,
+    opts: &FixOpts,
+    project: Option<&Path>,
+    state_dir: &Path,
+) -> Option<String> {
+    fix_limit_steps(input, opts, project, state_dir, &mut |_| {})
+}
+
+/// `fix_limit`, with a call of `step` before each file step on a count, its
+/// message file and the edit mark of a failure. A unit test holds a call
+/// there, so it can run calls at the same time in a given order.
+fn fix_limit_steps(
+    input: &str,
+    opts: &FixOpts,
+    project: Option<&Path>,
+    state_dir: &Path,
+    step: &mut dyn FnMut(&'static str),
+) -> Option<String> {
+    if opts.limit == 0 {
+        return None;
+    }
+    let v = json::parse(input).ok()?;
+    let session = v.get("session_id").as_str().filter(|s| valid_id(s))?;
+    let agent = match v.get("agent_id") {
+        Value::Null => "main",
+        Value::Str(a) if a.is_empty() => "main",
+        Value::Str(a) if valid_id(a) => a,
+        _ => return None,
+    };
+    let mark = state_dir.join(format!("{session}.{agent}.edit"));
+    let count_file = || {
+        let command = v.get("tool_input").get("command").as_str()?;
+        let hash = command_hash(session, command);
+        Some(state_dir.join(format!("{session}.{agent}.{hash}")))
+    };
+    let event = v.get("hook_event_name").as_str()?;
+    match (event, v.get("tool_name").as_str()?) {
+        ("PostToolUseFailure", "Bash") => {
+            // An abort, not an error of the tool: it tells nothing about a fix.
+            if v.get("is_interrupt") == &Value::Bool(true) {
+                return None;
+            }
+            let path = count_file()?;
+            state_folder(state_dir)?;
+            remove_stale(state_dir);
+            // Each failure uses up the mark, so one edit counts once.
+            step("mark");
+            let edited = fs::remove_file(&mark).is_ok();
+            step("read");
+            let old = fs::read_to_string(&path)
+                .ok()
+                .and_then(|t| t.parse::<u64>().ok());
+            let count = match old {
+                None => 0,
+                Some(n) if edited => n.saturating_add(1),
+                Some(_) => return None,
+            };
+            step("write");
+            replace_file(state_dir, &path, &count.to_string())?;
+            if count != opts.limit {
+                return None;
+            }
+            // Calls at the same time can read the same count. One call speaks.
+            if !claim(&path, step) {
+                return None;
+            }
+            let text = MSG_FIX_LIMIT.replace("{n}", &opts.limit.to_string());
+            Some(output("PostToolUseFailure", "additionalContext", &text))
+        }
+        ("PostToolUse", "Bash") => {
+            let path = count_file()?;
+            // Most calls pass with no count, and then the folder needs no test.
+            step("pass look");
+            if fs::symlink_metadata(&path).is_ok() && own_dir(state_dir) {
+                // The count goes first: see `claim`.
+                step("pass count");
+                let _ = fs::remove_file(&path);
+                step("pass said");
+                let _ = fs::remove_file(said_file(&path));
+            }
+            None
+        }
+        ("PostToolUse", "Edit" | "Write") => {
+            let file = v.get("tool_input").get("file_path").as_str()?;
+            if !below_intent(&v, opts, project, file) {
+                state_folder(state_dir)?;
+                remove_stale(state_dir);
+                // A mark that is there already is the same mark.
+                let _ = create_file(&mark);
+            }
+            None
+        }
+        _ => None,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2433,6 +2866,7 @@ fn artifact_of(path: &str, intent: &[String]) -> Option<(String, &'static str, &
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc::{Receiver, Sender, channel};
 
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -2457,6 +2891,298 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    // ----- fix-limit state -----
+
+    /// `/tmp` belongs to root, and each user can write into it. So it is a
+    /// folder of another user for each test run that is not root.
+    #[cfg(unix)]
+    #[test]
+    fn fix_limit_takes_no_folder_of_another_user() {
+        use std::os::unix::fs::MetadataExt;
+        let tmp = Tmp::new();
+        assert!(own_dir(&tmp.0));
+        let shared = fs::canonicalize("/tmp").unwrap();
+        // A run as root owns `/tmp`, and then this test proves nothing.
+        if fs::metadata(&shared).unwrap().uid() != fs::metadata(&tmp.0).unwrap().uid() {
+            assert!(!own_dir(&shared));
+        }
+    }
+
+    #[test]
+    fn fix_limit_speaks_once_for_calls_at_the_same_time() {
+        let opts = FixOpts {
+            limit: 3,
+            intent: Vec::new(),
+        };
+        let event = |event: &str, tool: &str, input: &str| {
+            format!(
+                r#"{{"session_id":"s1","cwd":"/p","hook_event_name":"{event}","tool_name":"{tool}","tool_input":{input}}}"#
+            )
+        };
+        let fail = event("PostToolUseFailure", "Bash", r#"{"command":"make"}"#);
+        let edit = event("PostToolUse", "Edit", r#"{"file_path":"/p/src/a.c"}"#);
+        for round in 0..50 {
+            let tmp = Tmp::new();
+            let state = tmp.state();
+            let run = |input: &str| fix_limit(input, &opts, None, &state).is_some();
+            // 32 threads make 384 calls, one half edits and one half failures.
+            let mut messages: usize = std::thread::scope(|s| {
+                let threads: Vec<_> = (0..32)
+                    .map(|t| {
+                        let (run, fail, edit) = (&run, &fail, &edit);
+                        s.spawn(move || {
+                            (0..12)
+                                .filter(|i| run(if (t + i) % 2 == 0 { edit } else { fail }))
+                                .count()
+                        })
+                    })
+                    .collect();
+                threads.into_iter().map(|t| t.join().unwrap()).sum()
+            });
+            // Then calls in sequence, so each round reaches the limit.
+            for _ in 0..5 {
+                run(&edit);
+                messages += usize::from(run(&fail));
+            }
+            assert_eq!(messages, 1, "round {round}");
+        }
+    }
+
+    /// One call of `fix-limit` in a thread of its own. It stops before each
+    /// file step, until the test lets it go on.
+    struct Held {
+        go: Sender<()>,
+        stops: Receiver<Stop>,
+        /// The step before which the call stops. `None`: the call ended.
+        next: Option<&'static str>,
+        spoke: bool,
+    }
+
+    enum Stop {
+        Before(&'static str),
+        End(bool),
+    }
+
+    impl Held {
+        fn new(state: PathBuf, input: String) -> Held {
+            let (go, wait) = channel::<()>();
+            let (send, stops) = channel();
+            std::thread::spawn(move || {
+                let mut step = |name| {
+                    let _ = send.send(Stop::Before(name));
+                    // A test that fails drops `go`. Then the call runs to its end.
+                    let _ = wait.recv();
+                };
+                let out = fix_limit_steps(&input, &limit_3(), None, &state, &mut step);
+                let _ = send.send(Stop::End(out.is_some()));
+            });
+            let mut held = Held {
+                go,
+                stops,
+                next: None,
+                spoke: false,
+            };
+            held.wait_for_stop();
+            held
+        }
+
+        fn wait_for_stop(&mut self) {
+            match self.stops.recv().expect("the call did not panic") {
+                Stop::Before(name) => self.next = Some(name),
+                Stop::End(spoke) => (self.next, self.spoke) = (None, spoke),
+            }
+        }
+
+        /// Runs the next step, and returns its name. `None`: the call ended.
+        fn step(&mut self) -> Option<&'static str> {
+            let name = self.next?;
+            self.go.send(()).expect("the call waits");
+            self.wait_for_stop();
+            Some(name)
+        }
+
+        fn run(&mut self, steps: usize) {
+            for _ in 0..steps {
+                self.step();
+            }
+        }
+
+        /// Runs the call to its end. True if it printed the message.
+        fn finish(&mut self) -> bool {
+            while self.step().is_some() {}
+            self.spoke
+        }
+    }
+
+    fn limit_3() -> FixOpts {
+        FixOpts {
+            limit: 3,
+            intent: Vec::new(),
+        }
+    }
+
+    fn tool_event(event: &str, tool: &str, input: &str) -> String {
+        format!(
+            r#"{{"session_id":"s1","cwd":"/p","hook_event_name":"{event}","tool_name":"{tool}","tool_input":{input}}}"#
+        )
+    }
+
+    /// The calls of the command `make` in one state folder. Each function that
+    /// returns a number gives the number of messages of its calls.
+    struct Make(Tmp);
+
+    impl Make {
+        fn new() -> Make {
+            Make(Tmp::new())
+        }
+
+        fn event(event: &str) -> String {
+            tool_event(event, "Bash", r#"{"command":"make"}"#)
+        }
+
+        fn call(&self, input: &str) -> usize {
+            usize::from(fix_limit(input, &limit_3(), None, &self.0.state()).is_some())
+        }
+
+        fn fail(&self) -> usize {
+            self.call(&Make::event("PostToolUseFailure"))
+        }
+
+        fn edit(&self) {
+            self.call(&tool_event(
+                "PostToolUse",
+                "Edit",
+                r#"{"file_path":"/p/src/a.c"}"#,
+            ));
+        }
+
+        /// `n` fixes that fail: an edit, then a failure, `n` times.
+        fn fixes(&self, n: usize) -> usize {
+            (0..n)
+                .map(|_| {
+                    self.edit();
+                    self.fail()
+                })
+                .sum()
+        }
+
+        fn pass(&self) {
+            self.call(&Make::event("PostToolUse"));
+        }
+
+        fn held(&self, event: &str) -> Held {
+            Held::new(self.0.state(), Make::event(event))
+        }
+
+        /// True if the state has a count file, and if it has a message file.
+        fn files(&self) -> (bool, bool) {
+            let names: Vec<String> = fs::read_dir(self.0.state())
+                .unwrap()
+                .map(|e| e.unwrap().file_name().into_string().unwrap())
+                .collect();
+            let said = names.iter().any(|n| n.ends_with(".said"));
+            let count = names
+                .iter()
+                .any(|n| !n.ends_with(".said") && !n.ends_with(".edit"));
+            (count, said)
+        }
+    }
+
+    #[test]
+    fn fix_limit_speaks_once_with_2_failures_held_before_any_step() {
+        // More than the file steps of one failure.
+        const STEPS: usize = 9;
+        // No pass runs. 2 failures run at the same time as the other calls, and
+        // the test holds each one before each of its steps in turn.
+        for first in 0..STEPS {
+            for second in 0..STEPS {
+                let make = Make::new();
+                // The first one starts before the count exists.
+                let mut a = make.held("PostToolUseFailure");
+                a.run(first);
+                let mut messages = make.fail() + make.fixes(2);
+                // The second one and the next call both can reach the limit.
+                make.edit();
+                let mut b = make.held("PostToolUseFailure");
+                b.run(second);
+                assert!(
+                    (first < STEPS - 1 || a.next.is_none())
+                        && (second < STEPS - 1 || b.next.is_none()),
+                    "give STEPS a higher value"
+                );
+                messages += make.fixes(1);
+                messages += usize::from(a.finish());
+                messages += usize::from(b.finish());
+                // Then calls in sequence, so each case reaches the limit.
+                messages += make.fixes(5);
+                assert_eq!(messages, 1, "held after {first} and {second} steps");
+            }
+        }
+    }
+
+    #[test]
+    fn fix_limit_leaves_no_message_file_after_a_pass_in_any_order() {
+        // A pass and the failure that reaches the limit, in each order of the
+        // steps of the 2 calls. `choices` says which call runs at each point
+        // where both can run.
+        let mut choices: Vec<bool> = Vec::new();
+        let mut withdrawn = 0;
+        loop {
+            let make = Make::new();
+            assert_eq!(make.fail() + make.fixes(2), 0);
+            make.edit();
+            let mut speaker = make.held("PostToolUseFailure");
+            let mut pass = make.held("PostToolUse");
+            let mut ran = Vec::new();
+            let mut depth = 0;
+            while speaker.next.or(pass.next).is_some() {
+                let take_pass = if speaker.next.is_some() && pass.next.is_some() {
+                    if depth == choices.len() {
+                        choices.push(false);
+                    }
+                    depth += 1;
+                    choices[depth - 1]
+                } else {
+                    pass.next.is_some()
+                };
+                let call = if take_pass { &mut pass } else { &mut speaker };
+                ran.push(call.step().unwrap());
+            }
+            let at = |name: &str| ran.iter().position(|&s| s == name).unwrap();
+            // The setup leaves a count, so the pass always removes one.
+            let removed = at("pass count");
+            let (count, said) = make.files();
+            if !count {
+                assert!(!said, "a message file with no count: {ran:?}");
+            } else if removed < at("read") {
+                // The failure came after the pass: a new count.
+                assert!(!said, "a new count with a message file: {ran:?}");
+            } else {
+                // The count came back: the pass removed it after the failure
+                // read it, and before the failure wrote it. The next pass ends
+                // this count.
+                assert!(removed < at("write"), "{ran:?}");
+                make.pass();
+                assert_eq!(make.files(), (false, false), "{ran:?}");
+            }
+            // A call that removes its message file prints nothing.
+            if ran.contains(&"withdraw") {
+                assert!(!speaker.spoke, "{ran:?}");
+                withdrawn += 1;
+            }
+            // The next problem has its own message.
+            assert_eq!(make.fail() + make.fixes(5), 1, "{ran:?}");
+            while choices.last() == Some(&true) {
+                choices.pop();
+            }
+            let Some(last) = choices.last_mut() else {
+                break;
+            };
+            *last = true;
+        }
+        assert!(withdrawn > 0);
     }
 
     // ----- fan-out bound -----

@@ -282,7 +282,7 @@ fn init_writes_the_lean_harness_and_check_is_clean() {
     }
     assert!(out.contains("The harness adds about "), "{out}");
     assert!(
-        out.contains("Each teammate needs spec-dna 0.6.0 or later on PATH for the hooks."),
+        out.contains("Each teammate needs spec-dna 0.8.1 or later on PATH for the hooks."),
         "{out}"
     );
     // A team with no advisor: the line names no `/advisor`.
@@ -318,7 +318,7 @@ fn a_dry_run_shows_the_harness_and_writes_nothing() {
         "{out}"
     );
     assert!(
-        out.contains("  create .claude/settings.json (settings: ") && out.contains("3 hooks)\n"),
+        out.contains("  create .claude/settings.json (settings: ") && out.contains("7 hooks)\n"),
         "{out}"
     );
     assert!(
@@ -1449,7 +1449,7 @@ fn strict_init_writes_protect_approvals_and_the_hook_entry() {
     );
     assert_eq!(settings, fs::read_to_string(golden).unwrap());
     assert!(
-        out.contains("spec-dna 0.7.0 or later on PATH for the hooks"),
+        out.contains("spec-dna 0.8.1 or later on PATH for the hooks"),
         "{out}"
     );
     // `check` finds the file that `init` wrote clean: no SD501 and no SD502.
@@ -1471,7 +1471,6 @@ fn standard_init_writes_no_approval_hook() {
     assert!(!r.read("spec-dna.toml").contains("protect-approvals"));
     let settings = r.read(".claude/settings.json");
     assert!(!settings.contains("protect-approvals"), "{settings}");
-    assert!(!settings.contains("\"Bash\""), "{settings}");
     // The positive control: the key, set by hand, writes the entry.
     let cfg = r
         .read("spec-dna.toml")
@@ -1514,6 +1513,117 @@ fn reconfigure_keeps_the_key_of_the_file() {
     assert!(
         !r.read(".claude/settings.json")
             .contains("protect-approvals")
+    );
+}
+
+// The keys `subagent-card` and `fix-limit` and their hook entries (harness
+// additions of 0.8.1, items 18 and 19)
+
+/// A level `lean` configuration with the 3 hooks on.
+const ADDITIONS: &str = "[harness]\nlevel = \"lean\"\nsubagent-card = true\nfix-limit = 3\n";
+
+const NEW_HOOKS: [&str; 3] = [
+    "spec-dna hook subagent-card",
+    "spec-dna hook return-state",
+    "spec-dna hook fix-limit",
+];
+
+#[test]
+fn the_keys_of_the_report_hooks_write_the_4_entries() {
+    let r = Repo::with_harness(ADDITIONS);
+    let (code, out, err) = r.run3(&["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let golden = format!(
+        "{}/tests/golden/harness/settings-additions.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    assert_eq!(
+        r.read(".claude/settings.json"),
+        fs::read_to_string(golden).unwrap()
+    );
+    assert!(
+        out.contains("spec-dna 0.8.1 or later on PATH for the hooks"),
+        "{out}"
+    );
+    r.commit("adopt");
+    // `check` finds no harness finding in the files that `init` wrote.
+    let (_, out) = r.run(&["check", "--all"]);
+    assert!(!out.contains("SD50"), "{out}");
+    // A second `init` has nothing to write.
+    let (code, out, err) = r.run3(&["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("everything is up to date"), "{out}");
+    // One key alone writes its own entries only.
+    for (keys, on) in [
+        ("subagent-card = true\n", [true, true, false]),
+        ("fix-limit = 5\n", [false, false, true]),
+    ] {
+        let r = Repo::with_harness(&format!("[harness]\nlevel = \"lean\"\n{keys}"));
+        let (code, out, err) = r.run3(&["init"]);
+        assert_eq!(code, 0, "{keys}: {out}{err}");
+        assert!(
+            out.contains("spec-dna 0.8.1 or later on PATH for the hooks"),
+            "{keys}: {out}"
+        );
+        let settings = r.read(".claude/settings.json");
+        for (hook, on) in NEW_HOOKS.iter().zip(on) {
+            assert_eq!(settings.contains(hook), on, "{keys}: {hook}\n{settings}");
+        }
+    }
+}
+
+#[test]
+fn reconfigure_removes_the_entries_of_a_report_hook_that_is_off() {
+    let r = Repo::with_harness(ADDITIONS);
+    let (code, out, err) = r.run3(&["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    // The positive control.
+    for hook in NEW_HOOKS {
+        assert!(r.read(".claude/settings.json").contains(hook), "{hook}");
+    }
+    r.commit("adopt");
+    let cfg = r
+        .read("spec-dna.toml")
+        .replace("subagent-card = true", "subagent-card = false")
+        .replace("fix-limit = 3", "fix-limit = 0");
+    r.write("spec-dna.toml", &cfg);
+    r.commit("off");
+    let (code, out, err) = r.run3(&["init", "--reconfigure", "--non-interactive"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let settings = r.read(".claude/settings.json");
+    for hook in NEW_HOOKS {
+        assert!(!settings.contains(hook), "{hook}\n{settings}");
+    }
+    assert!(
+        settings.contains("spec-dna hook context-meter"),
+        "{settings}"
+    );
+    let cfg = r.read("spec-dna.toml");
+    assert!(
+        cfg.contains("\nsubagent-card = false\nfix-limit = 0\n"),
+        "{cfg}"
+    );
+    r.commit("reconfigure");
+    let (_, out) = r.run(&["check", "--all"]);
+    assert!(!out.contains("SD50"), "{out}");
+}
+
+/// Guard: a configuration with no key writes no entry of the 3 hooks.
+#[test]
+fn a_configuration_with_no_key_writes_no_report_hook() {
+    let r = Repo::with_harness("[harness]\nlevel = \"lean\"\n");
+    let (code, out, err) = r.run3(&["init"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let settings = r.read(".claude/settings.json");
+    for gone in ["SubagentStart", "SubagentStop", "PostToolUseFailure"]
+        .into_iter()
+        .chain(NEW_HOOKS)
+    {
+        assert!(!settings.contains(gone), "{gone}\n{settings}");
+    }
+    assert!(
+        out.contains("spec-dna 0.5.0 or later on PATH for the hooks"),
+        "{out}"
     );
 }
 
