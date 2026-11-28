@@ -4,7 +4,7 @@ scope = ["CHANGELOG.md", "docs/adr/0004-harness.md", "docs/commands.md", "docs/c
 paths = ["src/config.rs", "src/finish.rs", "src/harness.rs", "src/harness_text.rs", "src/hook.rs", "src/init.rs", "src/main.rs", "tests/cli.rs", "tests/eval_run.rs", "tests/finish.rs", "tests/golden/harness/settings-additions.json", "tests/golden/harness/settings-lite.json", "tests/golden/harness/settings-standard.json", "tests/golden/harness/settings-strict.json", "tests/harness.rs", "tests/harness_check_step4.rs", "tests/harness_roles.rs", "tests/harness_skills.rs", "tests/hook.rs", "tests/init_profiles.rs", "tests/upgrade_cli.rs"]
 tree = "2d9ab756d7752f23"
 result = "accepted"
-acknowledged-by = []
+acknowledged-by = ["alexgavrilov939@gmail.com"]
 
 [[acceptor]]
 roles = ["acceptor"]
